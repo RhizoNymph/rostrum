@@ -1,0 +1,11 @@
+[package]
+name = "rostrum-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rostrum-core.workspace = true
+
+gpui.workspace = true
+tracing.workspace = true
