@@ -13,8 +13,8 @@ use gpui::{
     ListAlignment, ListState, Subscription, Window, actions, div, list, prelude::*, px, rems,
 };
 use rostrum_core::{
-    Chrome, Feed, FeedFilter, FeedRow, Mergeable, PrIx, RepoId, RepoIx, RepoState, ReviewDecision,
-    Selection, flatten,
+    Chrome, Feed, FeedFilter, FeedRow, PrIx, RepoId, RepoIx, RepoState, ReviewDecision, Selection,
+    flatten,
 };
 use rostrum_ui::{
     ActiveTheme, InputEvent, TextInput,
@@ -519,7 +519,7 @@ impl FeedView {
         let deletions = pull.deletions;
         let checks = pull.checks;
         let decision = pull.review_decision;
-        let conflicting = pull.mergeable == Mergeable::Conflicting;
+        let merge = pull.merge_status();
         let labels: Vec<_> = pull
             .labels
             .iter()
@@ -564,8 +564,15 @@ impl FeedView {
                             .when(is_draft, |el| {
                                 el.child(Chip::new("draft").color(theme.draft))
                             })
-                            .when(conflicting, |el| {
-                                el.child(Chip::new("conflict").color(theme.danger))
+                            // `chip` returns nothing for draft and unstable:
+                            // the draft chip beside this one and the check dot
+                            // at the head of the row already say both.
+                            .when_some(merge.chip(), |el, text| {
+                                el.child(
+                                    Chip::new(text)
+                                        .color(theme.merge_color(merge))
+                                        .tooltip(("merge-status", ix), merge.explanation()),
+                                )
                             })
                             .when_some(review_label(decision), |el, (text, color)| {
                                 el.child(Chip::new(text).color(color(&theme)))
@@ -893,7 +900,8 @@ mod tests {
             additions: 0,
             deletions: 0,
             changed_files: 0,
-            mergeable: Mergeable::Unknown,
+            mergeable: rostrum_core::Mergeable::Unknown,
+            merge_state: rostrum_core::MergeStateStatus::Unknown,
             review_decision: None,
             labels: Vec::new(),
             comment_count: 0,

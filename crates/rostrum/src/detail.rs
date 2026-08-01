@@ -16,9 +16,7 @@ use gpui::{
     prelude::*, px, rems,
 };
 use gpui_tokio::Tokio;
-use rostrum_core::{
-    Conversation, Label, Mergeable, PrNumber, PullRequest, RepoId, ReviewDecision, Side,
-};
+use rostrum_core::{Conversation, Label, PrNumber, PullRequest, RepoId, ReviewDecision, Side};
 use rostrum_db::Db;
 use rostrum_diff::{DiffFile, FileStatus, Highlighter, PatchAvailability, parse_patch};
 use rostrum_github::{
@@ -28,7 +26,7 @@ use rostrum_github::{
 use rostrum_ui::{
     ActiveTheme, TextInput,
     components::{
-        Button, ButtonStyle, Chip, DiffStat, Initial, Tab, h_flex, hex_color, tab_bar, v_flex,
+        Button, ButtonStyle, Chip, DiffStat, Dot, Initial, Tab, h_flex, hex_color, tab_bar, v_flex,
     },
 };
 
@@ -980,8 +978,7 @@ impl PrDetail {
 
     fn render_actions(&self, pull: &PullRequest, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let conflicting = pull.mergeable == Mergeable::Conflicting;
-        let unknown = pull.mergeable == Mergeable::Unknown;
+        let merge = pull.merge_status();
         let busy = self.busy.is_some();
         let pending = self.pending.len();
         let stale = self.drafts_are_stale(pull);
@@ -1076,6 +1073,21 @@ impl PrDetail {
                 )
             })
             .child(self.composer.clone())
+            // Stated in full rather than left to the merge button's tooltip: a
+            // disabled button with no visible reason is the state people file
+            // bugs about.
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(Dot::new(theme.merge_color(merge)))
+                    .child(
+                        div()
+                            .text_size(rems(0.75))
+                            .text_color(theme.text_muted)
+                            .child(merge.explanation()),
+                    ),
+            )
             .child(
                 h_flex()
                     .gap_2()
@@ -1108,14 +1120,8 @@ impl PrDetail {
                     .child(
                         Button::new("merge", "Merge")
                             .style(ButtonStyle::Primary)
-                            .disabled(busy || conflicting || unknown)
-                            .tooltip(if conflicting {
-                                "This branch has conflicts that must be resolved"
-                            } else if unknown {
-                                "GitHub is still computing the merge state"
-                            } else {
-                                "Merge this pull request"
-                            })
+                            .disabled(busy || merge.blocks_merge())
+                            .tooltip(merge.explanation())
                             .on_click(Self::on_click(cx, |this, cx| {
                                 this.confirm = Some(Confirm::Merge(MergeMethod::Merge));
                                 cx.notify();

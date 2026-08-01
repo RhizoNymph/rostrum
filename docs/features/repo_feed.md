@@ -126,6 +126,14 @@ its error, which is the failure mode most likely to waste someone's afternoon.
 `Feed::hidden_repos()` reports the count so the filter bar can say how many
 disappeared rather than leaving the user wondering.
 
+## Merge status on a row
+
+A PR row carries a merge chip driven by `MergeStatus::chip()` —
+`conflict`, `behind`, or `blocked`, coloured by `Theme::merge_color` and
+explaining itself on hover. `Draft` and `Unstable` produce no chip: the row
+already carries a draft chip and a CI dot, and repeating them would be noise.
+The derivation lives in `rostrum-core`; see `docs/features/pr_detail.md`.
+
 ## Filtering and navigation
 
 The filter bar writes into `AppState.filter`, which `flatten` already consults —

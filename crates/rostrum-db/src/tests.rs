@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Duration, Utc};
 use rostrum_core::{
-    CheckRun, CheckState, CommentId, Conversation, EventKind, Label, Mergeable, PrNumber,
-    PullRequest, RepoId, ReviewDecision, ReviewThread, Side, ThreadComment, ThreadId, TimelineItem,
-    User,
+    CheckRun, CheckState, CommentId, Conversation, EventKind, Label, MergeStateStatus, Mergeable,
+    PrNumber, PullRequest, RepoId, ReviewDecision, ReviewThread, Side, ThreadComment, ThreadId,
+    TimelineItem, User,
 };
 use rostrum_github::DraftComment;
 
@@ -45,6 +45,7 @@ fn pr(number: u32) -> PullRequest {
         deletions: 3,
         changed_files: 2,
         mergeable: Mergeable::Mergeable,
+        merge_state: MergeStateStatus::Unknown,
         review_decision: Some(ReviewDecision::Approved),
         labels: vec![Label {
             name: "bug".into(),

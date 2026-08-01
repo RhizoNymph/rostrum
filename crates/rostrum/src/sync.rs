@@ -5,16 +5,24 @@
 //! handle and re-wraps the join handle as a `gpui::Task` (cancelled on drop).
 //! Results are applied back on the main thread through `entity.update`.
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use chrono::Utc;
 use gpui::{Context, Task};
 use gpui_tokio::Tokio;
-use rostrum_core::{AppState, LoadState, PullRequest, RepoId, RepoState};
+use rostrum_core::{AppState, LoadState, MergeStatus, PullRequest, RepoId, RepoState};
 use rostrum_db::Db;
 use rostrum_github::{GitHubClient, GitHubError, client::RepoPullRequests, resolve_token};
 
 use crate::config::{Config, Warning};
+
+/// How long to wait before re-asking for a merge state GitHub is computing,
+/// doubling per attempt.
+const MERGE_PROBE_DELAY: Duration = Duration::from_secs(2);
+/// Probes per repository per poll cycle. Three attempts span 2s, 4s and 8s,
+/// which covers the computation comfortably; beyond that the state is not
+/// pending but withheld, and waiting harder will not reveal it.
+const MAX_MERGE_PROBES: u8 = 3;
 
 #[derive(Clone, Debug)]
 pub enum AuthStatus {
@@ -34,6 +42,14 @@ pub struct Store {
     pending: HashMap<RepoId, Task<()>>,
     /// Held so the poll loop is not dropped (dropping a `Task` cancels it).
     poll: Option<Task<()>>,
+    /// Follow-up refreshes chasing a merge state GitHub has not finished
+    /// computing, one per repository. Replacing an entry cancels the previous
+    /// timer, so a repo can never accumulate probes.
+    merge_probes: HashMap<RepoId, Task<()>>,
+    /// Probes already spent this poll cycle, per repository. Bounds the chase
+    /// so a merge state that stays `UNKNOWN` — which is what a token without
+    /// push access sees — does not become a permanent request loop.
+    merge_probe_attempts: HashMap<RepoId, u8>,
     /// Local cache. `None` until it opens, and `None` forever if it fails —
     /// the app works without it, just without a warm start.
     db: Option<Arc<Db>>,
@@ -57,6 +73,8 @@ impl Store {
             client: None,
             pending: HashMap::new(),
             poll: None,
+            merge_probes: HashMap::new(),
+            merge_probe_attempts: HashMap::new(),
             db: None,
             _hydrate: None,
         };
@@ -246,6 +264,11 @@ impl Store {
     }
 
     pub fn refresh_all(&mut self, cx: &mut Context<Self>) {
+        // A full refresh is the start of a new cycle, so every repository gets
+        // its probe budget back. Probes themselves call `refresh_repo`, which
+        // leaves the budget alone.
+        self.merge_probe_attempts.clear();
+
         let ids: Vec<RepoId> = self
             .state
             .repos
@@ -328,6 +351,8 @@ impl Store {
                     .detach();
                 }
 
+                self.probe_merge_state(id, cx);
+
                 if let Some(limit) = fetched.rate_limit {
                     tracing::debug!(
                         repo = %id,
@@ -359,6 +384,56 @@ impl Store {
 
         self.pending.remove(id);
         cx.notify();
+    }
+
+    /// Re-query a repository shortly after a refresh that found merge states
+    /// GitHub had not finished computing.
+    ///
+    /// GitHub computes `mergeable` and `mergeStateStatus` lazily: the query
+    /// that asks for them returns `UNKNOWN` *and* starts the computation, so a
+    /// single poll can never see the answer. Without this the feed would show
+    /// "computing" until the next full poll — for a poll interval measured in
+    /// minutes, that is every pull request, every launch.
+    fn probe_merge_state(&mut self, id: &RepoId, cx: &mut Context<Self>) {
+        let computing = self.state.repo(id).is_some_and(|repo| {
+            repo.prs
+                .iter()
+                .any(|pr| pr.merge_status() == MergeStatus::Computing)
+        });
+
+        if !computing {
+            self.merge_probes.remove(id);
+            self.merge_probe_attempts.remove(id);
+            return;
+        }
+
+        let attempt = self.merge_probe_attempts.entry(id.clone()).or_insert(0);
+        if *attempt >= MAX_MERGE_PROBES {
+            // Out of budget until the next poll cycle. This is the steady state
+            // for a repository whose merge state the token may not read, so it
+            // must be quiet rather than an error.
+            tracing::debug!(repo = %id, "merge state still unknown; waiting for the next poll");
+            self.merge_probes.remove(id);
+            return;
+        }
+        *attempt += 1;
+
+        // Back off, because the wait is GitHub finishing a background job and
+        // the second attempt is evidence the first was too early.
+        let delay = MERGE_PROBE_DELAY * 2u32.pow(u32::from(*attempt - 1));
+        tracing::debug!(
+            repo = %id,
+            attempt = *attempt,
+            delay_ms = delay.as_millis(),
+            "merge state computing; scheduling a probe"
+        );
+        let probe_id = id.clone();
+        let task = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(delay).await;
+            this.update(cx, |this, cx| this.refresh_repo(probe_id, cx))
+                .ok();
+        });
+        self.merge_probes.insert(id.clone(), task);
     }
 
     fn start_polling(&mut self, cx: &mut Context<Self>) {

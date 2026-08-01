@@ -36,15 +36,38 @@ async fn main() -> Result<()> {
     for pr in &result.pull_requests {
         let author = pr.author.as_ref().map_or("(unknown)", |a| a.login.as_str());
         println!(
-            "  {:>6}  {:<60}  {:<12} +{}/-{}  {:?}  checks={:?}",
+            "  {:>6}  {:<50}  {:<12} +{}/-{}  {:?}/{:?} -> {:?}  checks={:?}",
             pr.number.to_string(),
-            pr.title.chars().take(60).collect::<String>(),
+            pr.title.chars().take(50).collect::<String>(),
             author,
             pr.additions,
             pr.deletions,
             pr.mergeable,
+            pr.merge_state,
+            pr.merge_status(),
             pr.checks,
         );
+    }
+
+    // GitHub computes merge state lazily: the query above returns UNKNOWN and
+    // starts the computation. Asking again is what the app's probe does, and
+    // this is where to see whether it actually pays off.
+    if result
+        .pull_requests
+        .iter()
+        .any(|pr| pr.merge_status() == rostrum_core::MergeStatus::Computing)
+    {
+        println!("\nsome merge states were still computing; asking again in 2s\n");
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        for pr in &client.open_pull_requests(&repo, 10).await?.pull_requests {
+            println!(
+                "  {:>6}  {:?}/{:?} -> {:?}",
+                pr.number.to_string(),
+                pr.mergeable,
+                pr.merge_state,
+                pr.merge_status(),
+            );
+        }
     }
 
     Ok(())

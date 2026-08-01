@@ -29,6 +29,10 @@ pub fn hex_color(hex: &str) -> Option<Hsla> {
 pub struct Chip {
     label: SharedString,
     color: Option<Hsla>,
+    /// Tooltip text paired with the element id that hovering needs. The two
+    /// travel together so a chip cannot ask for a tooltip without supplying
+    /// the identity GPUI requires to track the hover.
+    tooltip: Option<(ElementId, SharedString)>,
 }
 
 impl Chip {
@@ -36,6 +40,7 @@ impl Chip {
         Self {
             label: label.into(),
             color: None,
+            tooltip: None,
         }
     }
 
@@ -43,12 +48,17 @@ impl Chip {
         self.color = Some(color);
         self
     }
+
+    pub fn tooltip(mut self, id: impl Into<ElementId>, text: impl Into<SharedString>) -> Self {
+        self.tooltip = Some((id.into(), text.into()));
+        self
+    }
 }
 
 impl RenderOnce for Chip {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let accent = self.color.unwrap_or(cx.theme().text_muted);
-        div()
+        let base = div()
             .px_1p5()
             .py_0p5()
             .rounded_full()
@@ -57,7 +67,17 @@ impl RenderOnce for Chip {
             .bg(Hsla { a: 0.14, ..accent })
             .text_color(accent)
             .text_size(rems(0.7))
-            .child(self.label)
+            .child(self.label);
+
+        // `.id()` yields a `Stateful<Div>`, a different type, so the two cases
+        // are erased rather than folded together with `when_some`.
+        match self.tooltip {
+            Some((id, text)) => base
+                .id(id)
+                .tooltip(move |_window, cx| cx.new(|_| TextTooltip { text: text.clone() }).into())
+                .into_any_element(),
+            None => base.into_any_element(),
+        }
     }
 }
 

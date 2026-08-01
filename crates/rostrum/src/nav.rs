@@ -65,7 +65,8 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use rostrum_core::{
-        FeedFilter, LoadState, Mergeable, PrNumber, PullRequest, RepoId, RepoState, flatten,
+        FeedFilter, LoadState, MergeStateStatus, Mergeable, PrNumber, PullRequest, RepoId,
+        RepoState, flatten,
     };
 
     fn pr(number: u32) -> PullRequest {
@@ -84,6 +85,7 @@ mod tests {
             deletions: 0,
             changed_files: 0,
             mergeable: Mergeable::Unknown,
+            merge_state: MergeStateStatus::Unknown,
             review_decision: None,
             labels: Vec::new(),
             comment_count: 0,
