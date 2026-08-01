@@ -102,9 +102,8 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 | Reads | GraphQL v4 | One round-trip per repo instead of dozens; cost-based rate limit |
 | Mutations | REST v3 | Simpler, better-documented endpoints for merge/review/comment |
 | UI deps | `gpui` + `gpui_platform` only | Zed's `ui`/`theme`/`syntax_theme` are GPL-3.0-or-later |
-| Diff parsing | `diffy` | Parses GitHub's unified-diff patches directly |
-| Intra-line diff | `imara-diff` (Histogram) | Same engine Zed uses; only needed for word-level highlighting |
-| Highlighting | `tree-sitter-highlight` | Matches Zed's model; queries from upstream (MIT) grammar repos |
+| Diff parsing | hand-rolled | `diffy` requires `---`/`+++` headers GitHub's per-file patches lack, and exposes neither `\ No newline` nor the raw `@@` line |
+| Highlighting | `syntect` (pure-Rust regex) | One dependency covering many languages, versus matching the tree-sitter ABI across a grammar crate per language. Tree-sitter remains the better long-term choice |
 | Cache | SQLite via `sqlx` | Instant cold start, offline reads, ETag storage |
 | Async | Tokio bridged into GPUI's executor | GPUI's executor is not Tokio; `reqwest` requires a Tokio reactor |
 
@@ -163,26 +162,40 @@ dependency graph does not resolve outside Zed's workspace.
 
 1. **Shell** ✅ — window, theme, config, token, GraphQL client, feed with
    flattened list, selection, detail header.
-2. **Conversation** — timeline, markdown renderer, comment composer, post comment.
-3. **Diff** — file fetch, patch parsing, `DiffRow` rendering, syntax highlighting.
-4. **Review** — text selection/copy, inline comments with pending-review
-   batching, submit review, merge/close, checks display.
+2. **Conversation** ✅ — timeline, markdown renderer, comment composer, thread
+   replies, post comment.
+3. **Diff** ✅ — file fetch, patch parsing, virtualized `DiffRow` rendering,
+   syntax highlighting.
+4. **Review** ✅ — inline comments with pending-review batching, submit review,
+   merge/close with confirmation, checks display.
 5. **Polish** — keyboard navigation, filtering/search, notifications, offline
-   cache hardening.
+   cache, character-level text selection.
 
 Each phase leaves a usable application.
 
 ## Status
 
-Phase 1 is complete and verified against the live API: the app authenticates via
-`gh`, fetches open PRs for the configured repositories, flattens them into the
-row stream, and renders it virtualized (54 rows of state, ~38 rendered).
+Phases 1–4 are complete and verified against the live API. 279 tests pass;
+clippy is clean across the workspace.
 
-Not yet built, and deliberately so — these are phases 2–4:
+End-to-end verification (`cargo run -p rostrum --example review`) against real
+pull requests confirms the parser's added/removed line counts match GitHub's own
+reported totals exactly, and that every commentable line's anchor resolves to the
+side GitHub expects.
 
-- Conversation timeline, markdown rendering, comment composer.
-- Diff fetching, parsing, and rendering; syntax highlighting.
-- Inline comments, review submission, merge/close.
-- SQLite cache and ETag storage (the store is currently memory-only, so each
-  launch starts cold).
-- Text selection and copy.
+Deliberately not built:
+
+- **SQLite cache and ETag storage.** The store is memory-only, so each launch
+  starts cold. Everything else assumes a cache exists; adding one is additive.
+- **Character-level text selection in rendered prose.** GPUI has no read-only
+  selection primitive, and hand-rolling one is a few hundred lines (see
+  `docs/features/ui_foundation.md`). Links are clickable; code and comment text
+  are not yet selectable.
+- **Multi-line inline comments.** `DraftComment` carries `start_line`/
+  `start_side` and the API layer sends them, but the UI only creates
+  single-line anchors.
+- **`head_sha` tagging of pending reviews.** The design calls for pending
+  comments to be tagged with the commit they were written against so a
+  force-push can invalidate them; the PR query does not currently fetch
+  `headRefOid`, so this check is absent.
+- Keyboard navigation, filtering, and notifications (phase 5).

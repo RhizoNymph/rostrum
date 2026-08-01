@@ -377,7 +377,7 @@ fn review_label(decision: Option<ReviewDecision>) -> Option<(&'static str, Theme
     }
 }
 
-fn relative_time(then: DateTime<Utc>) -> String {
+pub(crate) fn relative_time(then: DateTime<Utc>) -> String {
     let seconds = (Utc::now() - then).num_seconds().max(0);
     match seconds {
         s if s < 60 => "just now".to_string(),

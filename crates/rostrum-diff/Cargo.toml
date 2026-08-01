@@ -1,14 +1,11 @@
 [package]
-name = "rostrum-ui"
+name = "rostrum-diff"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
 rostrum-core.workspace = true
-rostrum-diff.workspace = true
-rostrum-md.workspace = true
-
-gpui.workspace = true
+syntect.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
-unicode-segmentation.workspace = true

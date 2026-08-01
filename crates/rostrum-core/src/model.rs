@@ -128,6 +128,28 @@ pub enum Mergeable {
     Unknown,
 }
 
+/// Which side of a diff a line or comment belongs to.
+///
+/// GitHub's review-comment API anchors by `path` + `line` + `side`, where
+/// `RIGHT` is the new file and `LEFT` the old one. Getting this wrong puts
+/// comments on the wrong lines of someone else's pull request, so it is a
+/// first-class type rather than a bool.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum Side {
+    Left,
+    Right,
+}
+
+impl Side {
+    pub fn as_api_str(self) -> &'static str {
+        match self {
+            Self::Left => "LEFT",
+            Self::Right => "RIGHT",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Label {
     pub name: String,
