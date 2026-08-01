@@ -122,6 +122,7 @@ mod tests {
                 updated_at: Utc::now(),
                 author: None,
                 head_ref: "feature".into(),
+                head_sha: "abc123".into(),
                 base_ref: "main".into(),
                 additions: 0,
                 deletions: 0,

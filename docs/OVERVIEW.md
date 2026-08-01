@@ -87,7 +87,8 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 
 | Crate | gpui? | Responsibility |
 |---|---|---|
-| `rostrum-core` | no | Domain types, feed flattening, selection state machine |
+| `rostrum-core` | no | Domain types, feed flattening, conversation model |
+| `rostrum-db` | no | SQLite cache and draft persistence |
 | `rostrum-github` | no | GraphQL reads, REST mutations, auth, rate limiting, errors |
 | `rostrum-diff` | no | Unified-diff parsing, `DiffRow` model, syntax highlighting |
 | `rostrum-md` | no | `pulldown-cmark` → renderable markdown model |
@@ -168,14 +169,14 @@ dependency graph does not resolve outside Zed's workspace.
    syntax highlighting.
 4. **Review** ✅ — inline comments with pending-review batching, submit review,
    merge/close with confirmation, checks display.
-5. **Polish** — keyboard navigation, filtering/search, notifications, offline
-   cache, character-level text selection.
+5. **Polish** ✅ — keyboard navigation, filtering, notifications, offline cache,
+   text selection.
 
 Each phase leaves a usable application.
 
 ## Status
 
-Phases 1–4 are complete and verified against the live API. 279 tests pass;
+All five phases are complete and verified against the live API. 379 tests pass;
 clippy is clean across the workspace.
 
 End-to-end verification (`cargo run -p rostrum --example review`) against real
@@ -185,17 +186,13 @@ side GitHub expects.
 
 Deliberately not built:
 
-- **SQLite cache and ETag storage.** The store is memory-only, so each launch
-  starts cold. Everything else assumes a cache exists; adding one is additive.
-- **Character-level text selection in rendered prose.** GPUI has no read-only
-  selection primitive, and hand-rolling one is a few hundred lines (see
-  `docs/features/ui_foundation.md`). Links are clickable; code and comment text
-  are not yet selectable.
-- **Multi-line inline comments.** `DraftComment` carries `start_line`/
-  `start_side` and the API layer sends them, but the UI only creates
-  single-line anchors.
-- **`head_sha` tagging of pending reviews.** The design calls for pending
-  comments to be tagged with the commit they were written against so a
-  force-push can invalidate them; the PR query does not currently fetch
-  `headRefOid`, so this check is absent.
-- Keyboard navigation, filtering, and notifications (phase 5).
+- **Cross-block text selection.** Selection works within a rendered markdown
+  block and, in the diff, over whole lines. Dragging from one paragraph into the
+  next does not extend the selection.
+- **Squash and rebase merges.** `MergeMethod` models all three and the API layer
+  sends whichever it is given, but the UI only offers a plain merge.
+- **Resolving review threads.** Threads render with their resolved state; there
+  is no button to resolve one.
+- **Editing or deleting your own comments.**
+- **Pagination beyond the first 100** comments, reviews, or threads on a single
+  pull request.

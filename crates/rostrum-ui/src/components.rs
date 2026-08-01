@@ -312,6 +312,86 @@ impl Render for TextTooltip {
     }
 }
 
+/// A labelled checkbox.
+#[derive(IntoElement)]
+pub struct Checkbox {
+    id: ElementId,
+    label: SharedString,
+    checked: bool,
+    on_toggle: Option<ClickHandler>,
+}
+
+impl Checkbox {
+    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>, checked: bool) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            checked,
+            on_toggle: None,
+        }
+    }
+
+    pub fn on_toggle(
+        mut self,
+        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_toggle = Some(Box::new(handler));
+        self
+    }
+}
+
+impl RenderOnce for Checkbox {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = cx.theme();
+        let checked = self.checked;
+        let handler = self.on_toggle;
+
+        h_flex()
+            .id(self.id)
+            .gap_1p5()
+            .cursor_pointer()
+            .text_size(rems(0.75))
+            .text_color(if checked {
+                theme.text
+            } else {
+                theme.text_muted
+            })
+            .child(
+                div()
+                    .w(px(13.))
+                    .h(px(13.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_tl(px(3.))
+                    .rounded_tr(px(3.))
+                    .rounded_bl(px(3.))
+                    .rounded_br(px(3.))
+                    .border_1()
+                    .border_color(if checked {
+                        theme.accent
+                    } else {
+                        theme.border_strong
+                    })
+                    .bg(if checked {
+                        theme.accent
+                    } else {
+                        theme.background
+                    })
+                    .text_size(rems(0.6))
+                    .text_color(theme.text_inverse)
+                    .child(if checked { "✓" } else { "" }),
+            )
+            .child(self.label)
+            .on_click(move |event, window, cx| {
+                if let Some(handler) = handler.as_ref() {
+                    handler(event, window, cx);
+                }
+            })
+    }
+}
+
 /// A single tab in a [`tab_bar`].
 pub struct Tab {
     pub label: SharedString,

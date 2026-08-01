@@ -3,13 +3,15 @@
 mod config;
 mod detail;
 mod feed;
+mod nav;
+mod notify;
 mod sync;
 
 use std::rc::Rc;
 
 use gpui::{
-    App, Bounds, Context, Entity, Subscription, TitlebarOptions, Window, WindowBounds,
-    WindowOptions, actions, div, prelude::*, px, rems, size,
+    App, Bounds, Context, Entity, FocusHandle, Focusable, Subscription, TitlebarOptions, Window,
+    WindowBounds, WindowOptions, actions, div, prelude::*, px, rems, size,
 };
 use gpui_platform::application;
 use rostrum_diff::Highlighter;
@@ -18,12 +20,22 @@ use rostrum_ui::{
     components::{Chip, Dot, h_flex, v_flex},
 };
 
-use crate::{detail::PrDetail, feed::FeedView, sync::AuthStatus, sync::Store};
+use crate::{
+    detail::PrDetail,
+    feed::{FeedEvent, FeedView},
+    notify::Notifier,
+    sync::AuthStatus,
+    sync::Store,
+};
 
 actions!(rostrum, [Quit, Refresh]);
 
 /// Width of the feed pane, in pixels.
 const FEED_WIDTH: f32 = 440.;
+
+/// Key context of the detail pane. `enter` in the feed moves focus here, which
+/// takes the pane's descendants out of the feed's navigation bindings.
+const DETAIL_CONTEXT: &str = "Detail";
 
 struct Workspace {
     store: Entity<Store>,
@@ -31,23 +43,44 @@ struct Workspace {
     /// Rebuilt whenever the selection changes; dropping the previous entity
     /// cancels its in-flight requests.
     detail: Option<Entity<PrDetail>>,
+    /// Focus target for the detail side of the split. Lives on the workspace
+    /// rather than on `PrDetail` so it survives the entity being rebuilt.
+    detail_focus: FocusHandle,
     /// Loading syntect's defaults is slow, so one highlighter is shared by
     /// every detail view.
     highlighter: Rc<Highlighter>,
+    /// Watches the store for newly arrived pull requests. Held so it is not
+    /// dropped; it has no rendered form.
+    _notifier: Entity<Notifier>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl Workspace {
-    fn new(cx: &mut Context<Self>) -> Self {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let store = cx.new(Store::new);
         let feed = cx.new(|cx| FeedView::new(store.clone(), cx));
-        let subscriptions = vec![cx.observe(&store, |this, _, cx| this.sync_detail(cx))];
+        let notifier = cx.new(|cx| Notifier::new(store.clone(), cx));
+
+        let subscriptions = vec![
+            cx.observe(&store, |this, _, cx| this.sync_detail(cx)),
+            cx.subscribe_in(&feed, window, |this, _, event, window, cx| match event {
+                FeedEvent::FocusDetail => {
+                    window.focus(&this.detail_focus, cx);
+                }
+            }),
+        ];
+
+        // Start with the feed focused so the keyboard works without a click.
+        let feed_focus = feed.focus_handle(cx);
+        window.focus(&feed_focus, cx);
 
         Self {
             store,
             feed,
             detail: None,
+            detail_focus: cx.focus_handle(),
             highlighter: Rc::new(Highlighter::new()),
+            _notifier: notifier,
             _subscriptions: subscriptions,
         }
     }
@@ -186,25 +219,31 @@ impl Render for Workspace {
                             .child(self.feed.clone()),
                     )
                     .child(div().w(px(1.)).h_full().flex_none().bg(theme.border))
-                    .child(div().flex_1().h_full().overflow_hidden().map(|el| {
-                        match self.detail.clone() {
-                            Some(detail) => el.child(detail),
-                            None => el.child(
-                                div()
-                                    .size_full()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .text_size(rems(0.85))
-                                    .text_color(theme.text_subtle)
-                                    .child(if total == 0 {
-                                        "No pull requests loaded"
-                                    } else {
-                                        "Select a pull request"
-                                    }),
-                            ),
-                        }
-                    })),
+                    .child(
+                        div()
+                            .flex_1()
+                            .h_full()
+                            .overflow_hidden()
+                            .key_context(DETAIL_CONTEXT)
+                            .track_focus(&self.detail_focus)
+                            .map(|el| match self.detail.clone() {
+                                Some(detail) => el.child(detail),
+                                None => el.child(
+                                    div()
+                                        .size_full()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .text_size(rems(0.85))
+                                        .text_color(theme.text_subtle)
+                                        .child(if total == 0 {
+                                            "No pull requests loaded"
+                                        } else {
+                                            "Select a pull request"
+                                        }),
+                                ),
+                            }),
+                    ),
             )
     }
 }
@@ -221,6 +260,8 @@ fn main() {
         gpui_tokio::init(cx);
         rostrum_ui::theme::init(cx);
         rostrum_ui::input::bind_keys(cx);
+        feed::bind_keys(cx);
+        detail::bind_keys(cx);
 
         cx.bind_keys([
             gpui::KeyBinding::new("ctrl-q", Quit, None),
@@ -240,7 +281,7 @@ fn main() {
                 }),
                 ..Default::default()
             },
-            |_window, cx| cx.new(Workspace::new),
+            |window, cx| cx.new(|cx| Workspace::new(window, cx)),
         )
         .expect("failed to open window");
 

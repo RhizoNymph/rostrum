@@ -141,16 +141,16 @@ Inline comments follow GitHub's pending-review model:
 - Submitting posts one `POST /pulls/{n}/reviews` with the full `comments[]` array
   and an `event` of `APPROVE`, `REQUEST_CHANGES`, or `COMMENT`.
 
-Two gaps against the original design, both deliberate:
+Pending comments are tagged with the `head_sha` they were drafted against, taken
+from `headRefOid` on the pull request query. If the author pushes before the
+review is submitted, `drafts_are_stale` detects the mismatch: the action bar
+shows a warning, and Approve and Request changes are disabled until the drafts
+are discarded. Submitting stale anchors would attach comments to lines that have
+moved, which is worse than making the user re-read the diff.
 
-- Pending review state is **in memory only**. Closing the app or selecting a
-  different pull request discards drafted feedback. Persisting it needs the
-  SQLite layer, which is not built.
-- Pending comments are **not tagged with `head_sha`**, because the PR query does
-  not fetch `headRefOid`. If the author force-pushes between drafting and
-  submitting, comments may anchor to lines that have moved, and nothing warns
-  about it. Fixing this means adding one field to the query and one check before
-  submission.
+An unreadable sha on either side is treated as *not* stale — refusing to submit
+because a field could not be read would be worse than the risk it guards
+against.
 
 ## Text selection
 

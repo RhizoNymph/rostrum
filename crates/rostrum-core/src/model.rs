@@ -167,6 +167,10 @@ pub struct PullRequest {
     pub updated_at: DateTime<Utc>,
     pub author: Option<User>,
     pub head_ref: String,
+    /// Commit the pull request currently points at. Draft review comments are
+    /// tagged with this so a force-push can invalidate them rather than
+    /// silently anchoring to lines that have moved.
+    pub head_sha: String,
     pub base_ref: String,
     pub additions: u32,
     pub deletions: u32,
@@ -247,6 +251,7 @@ mod tests {
                 avatar_url: None,
             }),
             head_ref: "feature".into(),
+            head_sha: "abc123".into(),
             base_ref: "main".into(),
             additions: 0,
             deletions: 0,

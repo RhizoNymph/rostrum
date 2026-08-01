@@ -80,10 +80,24 @@ pub enum Chrome {
     None,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FeedFilter {
     pub query: String,
     pub hide_drafts: bool,
+    /// Drop repositories that have loaded successfully and have nothing to
+    /// show. On by default: a feed of a dozen repositories is mostly empty
+    /// headers most of the time.
+    pub hide_empty_repos: bool,
+}
+
+impl Default for FeedFilter {
+    fn default() -> Self {
+        Self {
+            query: String::new(),
+            hide_drafts: false,
+            hide_empty_repos: true,
+        }
+    }
 }
 
 impl FeedFilter {
@@ -103,11 +117,17 @@ impl FeedFilter {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Feed {
     rows: Vec<FeedRow>,
+    hidden_repos: usize,
 }
 
 impl Feed {
     pub fn rows(&self) -> &[FeedRow] {
         &self.rows
+    }
+
+    /// How many repositories `hide_empty_repos` removed from the stream.
+    pub fn hidden_repos(&self) -> usize {
+        self.hidden_repos
     }
 
     pub fn len(&self) -> usize {
@@ -155,20 +175,33 @@ impl Feed {
 /// below directly testable without a window.
 pub fn flatten(repos: &[RepoState], filter: &FeedFilter) -> Feed {
     let mut rows = Vec::new();
+    let mut hidden_repos = 0;
 
     for (ix, repo) in repos.iter().enumerate() {
         let repo_ix = RepoIx(ix);
+
+        let visible: Vec<PrIx> = repo
+            .prs
+            .iter()
+            .enumerate()
+            .filter(|(_, pr)| filter.accepts(pr))
+            .map(|(pr_ix, _)| PrIx(pr_ix))
+            .collect();
+
+        // A repository is only hidden once it has actually loaded. One that is
+        // still loading or has failed must stay visible — otherwise a broken
+        // repo silently disappears instead of showing its error.
+        if filter.hide_empty_repos
+            && visible.is_empty()
+            && matches!(repo.load, LoadState::Loaded { .. })
+        {
+            hidden_repos += 1;
+            continue;
+        }
+
         rows.push(FeedRow::RepoHeader { repo: repo_ix });
 
         if !repo.collapsed {
-            let visible: Vec<PrIx> = repo
-                .prs
-                .iter()
-                .enumerate()
-                .filter(|(_, pr)| filter.accepts(pr))
-                .map(|(pr_ix, _)| PrIx(pr_ix))
-                .collect();
-
             if visible.is_empty() {
                 rows.push(match &repo.load {
                     LoadState::Idle | LoadState::Loading if repo.prs.is_empty() => {
@@ -191,7 +224,7 @@ pub fn flatten(repos: &[RepoState], filter: &FeedFilter) -> Feed {
         rows.push(FeedRow::Spacer { repo: repo_ix });
     }
 
-    Feed { rows }
+    Feed { rows, hidden_repos }
 }
 
 #[cfg(test)]
@@ -210,6 +243,7 @@ mod tests {
             updated_at: Utc::now(),
             author: None,
             head_ref: "feature".into(),
+            head_sha: "abc123".into(),
             base_ref: "main".into(),
             additions: 0,
             deletions: 0,
@@ -347,8 +381,12 @@ mod tests {
             ),
         ];
 
+        let filter = FeedFilter {
+            hide_empty_repos: false,
+            ..Default::default()
+        };
         for (load, expected) in cases {
-            let feed = flatten(&[repo("a/b", vec![], load.clone())], &FeedFilter::default());
+            let feed = flatten(&[repo("a/b", vec![], load.clone())], &filter);
             assert_eq!(feed.row(1), Some(expected), "load state {load:?}");
         }
     }
@@ -402,9 +440,87 @@ mod tests {
         let state = loaded("a/b", 3);
         let filter = FeedFilter {
             query: "nothing matches this".into(),
+            hide_empty_repos: false,
             ..Default::default()
         };
         let feed = flatten(&[state], &filter);
+        assert_eq!(feed.row(1), Some(FeedRow::RepoEmpty { repo: RepoIx(0) }));
+    }
+
+    #[test]
+    fn empty_repos_are_hidden_by_default() {
+        let feed = flatten(
+            &[
+                loaded("a/b", 2),
+                repo("c/d", vec![], LoadState::Loaded { at: Utc::now() }),
+                loaded("e/f", 1),
+            ],
+            &FeedFilter::default(),
+        );
+
+        assert_eq!(feed.hidden_repos(), 1);
+        assert!(
+            !feed.rows().iter().any(|row| row.repo() == RepoIx(1)),
+            "the empty repo should contribute no rows at all"
+        );
+        // The surviving repos keep their own contiguous runs and chrome.
+        assert_eq!(feed.chrome(0), Chrome::Top);
+    }
+
+    /// A repository that is still loading, or that failed, must stay visible —
+    /// otherwise an error disappears instead of being reported.
+    #[test]
+    fn loading_and_failed_repos_are_never_hidden() {
+        for load in [
+            LoadState::Idle,
+            LoadState::Loading,
+            LoadState::Failed {
+                message: "boom".into(),
+                at: Utc::now(),
+            },
+        ] {
+            let feed = flatten(&[repo("a/b", vec![], load.clone())], &FeedFilter::default());
+            assert_eq!(feed.hidden_repos(), 0, "{load:?}");
+            assert!(
+                matches!(feed.row(0), Some(FeedRow::RepoHeader { .. })),
+                "{load:?} should still render a header"
+            );
+        }
+    }
+
+    /// Hiding follows the *filtered* count, so searching narrows the feed to
+    /// the repositories that actually match.
+    #[test]
+    fn repos_whose_prs_are_all_filtered_out_are_hidden() {
+        let feed = flatten(
+            &[loaded("a/b", 2)],
+            &FeedFilter {
+                query: "no such pull request".into(),
+                ..Default::default()
+            },
+        );
+        assert!(feed.is_empty());
+        assert_eq!(feed.hidden_repos(), 1);
+    }
+
+    #[test]
+    fn a_collapsed_but_non_empty_repo_is_still_shown() {
+        let mut state = loaded("a/b", 3);
+        state.collapsed = true;
+        let feed = flatten(&[state], &FeedFilter::default());
+        assert_eq!(feed.hidden_repos(), 0);
+        assert_eq!(feed.len(), 2);
+    }
+
+    #[test]
+    fn showing_empty_repos_restores_them() {
+        let repos = [repo("a/b", vec![], LoadState::Loaded { at: Utc::now() })];
+        let filter = FeedFilter {
+            hide_empty_repos: false,
+            ..Default::default()
+        };
+        let feed = flatten(&repos, &filter);
+        assert_eq!(feed.hidden_repos(), 0);
         assert_eq!(feed.row(1), Some(FeedRow::RepoEmpty { repo: RepoIx(0) }));
     }
 

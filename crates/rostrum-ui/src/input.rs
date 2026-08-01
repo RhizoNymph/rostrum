@@ -894,9 +894,16 @@ fn shape(
     Some((lines.into_iter().collect(), starts))
 }
 
-/// Key bindings for inputs. Call once at startup.
+/// Key bindings for text widgets. Call once at startup.
 pub fn bind_keys(cx: &mut App) {
     use gpui::KeyBinding;
+
+    // Read-only selection binds `ctrl-c`/`cmd-c` with no key context, so it has
+    // to be registered alongside the input bindings that shadow them — and
+    // before them, so a focused input wins the tie. This is also the one startup
+    // hook the application already calls.
+    crate::selection::init(cx);
+
     cx.bind_keys([
         KeyBinding::new("backspace", Backspace, Some("TextInput")),
         KeyBinding::new("delete", Delete, Some("TextInput")),

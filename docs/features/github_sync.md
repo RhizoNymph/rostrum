@@ -119,13 +119,35 @@ are omitted for very large files. Both cases are represented explicitly in the
 model (`PatchAvailability::{Present, Omitted, Truncated}`) rather than as an
 empty patch, so the UI can say why a diff is unavailable.
 
-## Cache
+## Cache — `rostrum-db`
 
-SQLite via `sqlx` (`sqlite` + `tls-rustls` features), at
-`~/.local/share/rostrum/cache.db`. Tables: `repos`, `pull_requests`,
-`pr_timeline`, `pr_files`, `etags`, `meta`. The cache exists so the feed paints
-instantly on launch and remains readable offline; it is a cache, never the source
-of truth, and a schema mismatch is resolved by dropping and rebuilding it.
+SQLite via `sqlx`, at `~/.local/share/rostrum/cache.db`. The crate draws a hard
+line between two kinds of data, and the distinction is load-bearing:
+
+- **Cache** (`cache_pull_request`, `cache_conversation`, `cache_http`) — copies
+  of things GitHub already knows. Disposable. A schema-version mismatch drops
+  and recreates these tables; corrupt JSON in a row is logged, deleted, and
+  treated as a miss.
+- **Drafts** (`drafts`) — review comments the user wrote that have never been
+  sent anywhere. **Losing these loses their work.** They survive cache schema
+  changes, they are never touched by `prune_cache`, and corrupt JSON here is a
+  hard error rather than a silent discard.
+
+The store opens the database at startup and hydrates the feed from it before the
+first network round trip returns, so a cold launch paints immediately. Hydration
+only ever *fills gaps* — a repo that already has data from the network is never
+overwritten by the cache.
+
+### Validating a cached diff
+
+A pull request's diff is a pure function of its head commit, so the cache is
+keyed on `head_sha` rather than an HTTP ETag. If the head has not moved, the
+diff cannot have changed and no request is made at all. This is both stronger
+than an ETag (no round trip to revalidate) and simpler (no 304 handling, no
+per-page ETag bookkeeping across a paginated response).
+
+`cache_http` stores it as a validator/payload pair, which is what a conditional
+cache entry is regardless of whether the validator came from an HTTP header.
 
 Config is separate and human-editable: `~/.config/rostrum/config.json` holds the
 repo list, poll intervals, theme choice, and default merge method. No secrets.

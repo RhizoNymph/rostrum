@@ -93,6 +93,7 @@ diff view.
 | Merge | Confirmation required; method from config (merge/squash/rebase) |
 | Close / Reopen | Confirmation required |
 | Ready for review | Clears draft status |
+| Add / remove label | Toggles a label via the issues API |
 
 **Merge and close require explicit confirmation.** They are outward-facing and
 effectively irreversible from the app's perspective. The merge confirmation shows
@@ -102,6 +103,29 @@ changes, conflicts) so the decision is made with the relevant facts visible.
 Merge is disabled when `mergeable` is `CONFLICTING`; when it is `UNKNOWN`, GitHub
 is still computing, and the UI says so rather than presenting a button that will
 fail with a 405.
+
+## Labels
+
+Labels are editable from the header: each applied label carries a remove
+affordance, and a picker lists the repository's palette with the applied ones
+ticked.
+
+The palette loads **lazily** — only when the picker is first opened, never when
+the pull request opens — and is cached on `PrDetail.repo_labels`, so reopening
+the picker costs nothing.
+
+Both add and remove route through the same `mutate()` helper as every other
+mutation, inheriting the in-flight guard, the error banner, and the
+authoritative reload. While a mutation is in flight the affordances drop their
+click handlers entirely rather than merely looking disabled, so nothing can be
+double-submitted.
+
+Two API details worth remembering: labels live on the **issues** endpoints even
+for pull requests, and the label name is a *path segment* on delete, so it must
+be percent-encoded — real labels contain spaces, slashes, and colons
+(`help wanted`, `area/editor`, `status: blocked`). A delete for a label the pull
+request does not have returns 404, which is treated as success: the desired end
+state already holds.
 
 ## Composer
 

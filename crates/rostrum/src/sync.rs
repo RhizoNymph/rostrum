@@ -5,12 +5,13 @@
 //! handle and re-wraps the join handle as a `gpui::Task` (cancelled on drop).
 //! Results are applied back on the main thread through `entity.update`.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use chrono::Utc;
 use gpui::{Context, Task};
 use gpui_tokio::Tokio;
-use rostrum_core::{AppState, LoadState, RepoId};
+use rostrum_core::{AppState, LoadState, PullRequest, RepoId, RepoState};
+use rostrum_db::Db;
 use rostrum_github::{GitHubClient, GitHubError, client::RepoPullRequests, resolve_token};
 
 use crate::config::{Config, Warning};
@@ -33,6 +34,10 @@ pub struct Store {
     pending: HashMap<RepoId, Task<()>>,
     /// Held so the poll loop is not dropped (dropping a `Task` cancels it).
     poll: Option<Task<()>>,
+    /// Local cache. `None` until it opens, and `None` forever if it fails —
+    /// the app works without it, just without a warm start.
+    db: Option<Arc<Db>>,
+    _hydrate: Option<Task<()>>,
 }
 
 impl Store {
@@ -41,17 +46,147 @@ impl Store {
         let (repo_ids, repo_warnings) = config.repo_ids();
         warnings.extend(repo_warnings);
 
+        let mut state = AppState::with_repos(repo_ids);
+        state.filter.hide_empty_repos = config.hide_empty_repos;
+
         let mut store = Self {
             config,
-            state: AppState::with_repos(repo_ids),
+            state,
             auth: AuthStatus::Resolving,
             warnings,
             client: None,
             pending: HashMap::new(),
             poll: None,
+            db: None,
+            _hydrate: None,
         };
+        store.open_database(cx);
         store.authenticate(cx);
         store
+    }
+
+    /// Path of the local cache, alongside the platform's other app data.
+    fn database_path() -> Option<PathBuf> {
+        dirs::data_dir().map(|dir| dir.join("rostrum").join("cache.db"))
+    }
+
+    /// Open the cache and paint whatever it already knows, so the feed has
+    /// content before the first network round trip completes.
+    fn open_database(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = Self::database_path() else {
+            tracing::warn!("no data directory; running without a local cache");
+            return;
+        };
+        let repos: Vec<RepoId> = self
+            .state
+            .repos
+            .iter()
+            .map(|repo| repo.id.clone())
+            .collect();
+
+        self._hydrate = Some(cx.spawn(async move |this, cx| {
+            let opened = Tokio::spawn(&*cx, async move {
+                let db = Db::open(&path).await?;
+                let mut cached = Vec::new();
+                for repo in repos {
+                    let prs = db.load_pull_requests(&repo).await?;
+                    if !prs.is_empty() {
+                        cached.push((repo, prs));
+                    }
+                }
+                Ok::<_, rostrum_db::DbError>((db, cached))
+            })
+            .await;
+
+            match opened {
+                Ok(Ok((db, cached))) => {
+                    this.update(cx, |this, cx| this.hydrate(Arc::new(db), cached, cx))
+                        .ok();
+                }
+                Ok(Err(error)) => {
+                    tracing::warn!(%error, "could not open the local cache; continuing without it")
+                }
+                Err(error) => tracing::warn!(%error, "cache open did not complete"),
+            }
+        }));
+    }
+
+    fn hydrate(
+        &mut self,
+        db: Arc<Db>,
+        cached: Vec<(RepoId, Vec<PullRequest>)>,
+        cx: &mut Context<Self>,
+    ) {
+        self.db = Some(db);
+
+        for (id, prs) in cached {
+            // Never clobber data that already arrived from the network: the
+            // cache is only ever used to fill a gap.
+            if let Some(repo) = self.state.repo_mut(&id)
+                && repo.prs.is_empty()
+            {
+                tracing::debug!(repo = %id, count = prs.len(), "restored from cache");
+                repo.prs = prs;
+            }
+        }
+        cx.notify();
+    }
+
+    /// Add a repository from user input, persist it, and start fetching it.
+    ///
+    /// Returns a message suitable for showing next to the input on failure.
+    pub fn add_repo(&mut self, input: &str, cx: &mut Context<Self>) -> Result<(), String> {
+        let id = self.config.add_repo(input)?;
+        self.state.repos.push(RepoState::new(id.clone()));
+        // Keep the feed in the same order as the config, which `add_repo`
+        // sorts, so the list does not jump around between launches.
+        self.state.repos.sort_by(|a, b| a.id.cmp(&b.id));
+        self.persist_config();
+        self.refresh_repo(id, cx);
+        cx.notify();
+        Ok(())
+    }
+
+    /// Remove a repository and everything the UI holds about it.
+    pub fn remove_repo(&mut self, id: &RepoId, cx: &mut Context<Self>) {
+        if !self.config.remove_repo(id) {
+            return;
+        }
+        self.state.repos.retain(|repo| &repo.id != id);
+        // A selection pointing into the removed repo would resolve to nothing
+        // and leave the detail pane stranded.
+        if self
+            .state
+            .selection
+            .as_ref()
+            .is_some_and(|selection| &selection.repo == id)
+        {
+            self.state.selection = None;
+        }
+        // Dropping the in-flight task cancels its request.
+        self.pending.remove(id);
+        self.persist_config();
+        cx.notify();
+    }
+
+    pub fn set_hide_empty_repos(&mut self, hide: bool, cx: &mut Context<Self>) {
+        self.state.filter.hide_empty_repos = hide;
+        self.config.hide_empty_repos = hide;
+        self.persist_config();
+        cx.notify();
+    }
+
+    /// Config writes are small and infrequent; a failure is worth reporting but
+    /// not worth interrupting the user over.
+    fn persist_config(&self) {
+        if let Err(error) = self.config.save() {
+            tracing::warn!(%error, "could not save the config file");
+        }
+    }
+
+    /// The cache handle, for views that persist their own state.
+    pub fn db(&self) -> Option<Arc<Db>> {
+        self.db.clone()
     }
 
     pub fn is_refreshing(&self) -> bool {
@@ -174,6 +309,25 @@ impl Store {
                     repo.prs = fetched.pull_requests;
                     repo.load = LoadState::Loaded { at: now };
                 }
+                if let Some(db) = self.db.clone() {
+                    let repo = id.clone();
+                    let prs = self
+                        .state
+                        .repo(&repo)
+                        .map(|repo| repo.prs.clone())
+                        .unwrap_or_default();
+                    // Fire and forget: a cache write failing must not disturb
+                    // the refresh that produced it. sqlx needs the Tokio
+                    // reactor, so this goes through the bridge rather than
+                    // GPUI's executor.
+                    Tokio::spawn(&*cx, async move {
+                        if let Err(error) = db.save_pull_requests(&repo, &prs).await {
+                            tracing::warn!(%repo, %error, "could not cache pull requests");
+                        }
+                    })
+                    .detach();
+                }
+
                 if let Some(limit) = fetched.rate_limit {
                     tracing::debug!(
                         repo = %id,

@@ -7,11 +7,11 @@ each in its own container, in a single continuous scroll.
 
 ## Status
 
-Phases 1–4 are complete: the multi-repo feed, the conversation timeline with
-markdown, the syntax-highlighted diff, inline comments with pending-review
-batching, review submission, and merge/close. See `docs/OVERVIEW.md` for what is
-deliberately still missing (offline cache, character-level text selection,
-multi-line inline comments).
+Complete: the multi-repo feed, the conversation timeline with markdown, the
+syntax-highlighted diff, inline comments (single- and multi-line) with
+pending-review batching, review submission, merge/close, a local SQLite cache,
+text selection, keyboard navigation, filtering, and optional desktop
+notifications. `docs/OVERVIEW.md` lists what is deliberately still missing.
 
 ## Requirements
 
@@ -47,17 +47,36 @@ cargo run -p rostrum --example review -- zed-industries/zed 62051
 {
   "repos": ["zed-industries/zed", "rust-lang/rust"],
   "refresh_secs": 60,
-  "prs_per_repo": 25
+  "prs_per_repo": 25,
+  "notifications": false
 }
 ```
 
+Set `notifications` to `true` for a desktop notification when a pull request
+appears. The cache lives at `~/.local/share/rostrum/cache.db`; deleting it is
+safe — it is rebuilt on the next refresh, and unsent review drafts live in a
+separate table that a cache rebuild does not touch.
+
 Repositories may be given as `owner/name` or pasted as a GitHub URL. Malformed
 and duplicate entries are reported in the app rather than silently dropped.
+
+You do not have to edit this file by hand — the **repos** button in the feed
+opens a panel to add and remove repositories, and changes are saved
+immediately. `hide_empty_repos` is on by default and hides repositories that
+have loaded with no open pull requests; one that is still loading or that failed
+always stays visible.
 
 ## Keys
 
 | Key | Action |
 |---|---|
+| `j` / `k` | Next / previous pull request |
+| `g g` / `shift-g` | First / last |
+| `enter` | Focus the detail pane |
+| `/` | Focus the filter box |
+| `escape` | Clear the filter |
+| `c` | Collapse the selected repository |
+| `ctrl-c` | Copy the selected diff lines, or the selected text |
 | `ctrl-r` | Refresh repositories and the open pull request |
 | `ctrl-q` | Quit |
 | `ctrl-enter` | Submit from a composer |
@@ -69,9 +88,14 @@ Click a pull request, then use the tabs:
 
 - **Conversation** — description, comments, reviews, inline threads with
   replies, and timeline events, all rendered as markdown.
-- **Files** — the diff, syntax highlighted. Click `+` on any line to draft an
-  inline comment; drafts accumulate into a pending review.
+- **Files** — the diff, syntax highlighted. Click `+` on a line to draft an
+  inline comment, or shift-click a second line to comment on a range; drafts
+  accumulate into a pending review and survive a restart. Click a line and
+  shift-click another to select a run, then copy it.
 - **Checks** — CI results for the head commit.
+
+Labels are editable from the header: remove one with its `×`, or open the picker
+to toggle any of the repository's labels.
 
 The buttons at the bottom post a comment, submit the pending review as
 **Approve** or **Request changes**, or merge/close. Merge and close ask for
@@ -83,6 +107,7 @@ still computing the merge state.
 | Crate | gpui? | Responsibility |
 |---|---|---|
 | `rostrum-core` | no | Domain types, feed flattening, conversation model |
+| `rostrum-db` | no | SQLite cache and draft persistence |
 | `rostrum-diff` | no | Unified-diff parsing, comment anchoring, highlighting |
 | `rostrum-github` | no | GraphQL reads, REST mutations, auth, errors |
 | `rostrum-md` | no | Markdown parsing, GitHub shorthand expansion |
