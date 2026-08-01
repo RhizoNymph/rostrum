@@ -97,6 +97,56 @@ position within its repo's contiguous run:
 result is indistinguishable from discrete containers, but there is exactly one
 scroll region and one virtualized list.
 
+## Managing repositories
+
+Repositories are added and removed from the feed's `repos` panel, which writes
+through `Config` and saves immediately. Adding accepts `owner/name` or a pasted
+GitHub URL, rejects duplicates and malformed input with a message under the
+input rather than silently dropping them, and starts fetching the new repo at
+once. Removing also clears a selection pointing into that repo — otherwise the
+detail pane would be left resolving against something that no longer exists —
+and drops any in-flight request for it.
+
+The panel is the only place every configured repository is listed. Hidden and
+collapsed repositories contribute no feed rows, so without it a repository with
+no open pull requests could never be removed.
+
+## Hiding empty repositories
+
+`FeedFilter::hide_empty_repos` defaults to **on**: a feed of a dozen
+repositories is mostly empty headers most of the time. A repository is dropped
+entirely — header and spacer included — when it has no *visible* pull requests,
+so an active search narrows the feed to the repositories that actually match.
+
+The rule is deliberately narrow: a repository is only hidden once it has
+reached `LoadState::Loaded`. One that is still loading, or that failed, stays
+visible — otherwise a broken repository silently disappears instead of showing
+its error, which is the failure mode most likely to waste someone's afternoon.
+
+`Feed::hidden_repos()` reports the count so the filter bar can say how many
+disappeared rather than leaving the user wondering.
+
+## Filtering and navigation
+
+The filter bar writes into `AppState.filter`, which `flatten` already consults —
+filter state has exactly one home, and the existing store-changed path rebuilds
+rows live as the query is typed.
+
+Visible counts are computed from `RepoState.prs`, not from feed rows. A
+collapsed repo hides its rows without the filter having rejected anything, so
+counting rows would misreport what the filter is doing.
+
+Keyboard navigation (`nav.rs`) is a pure function over `&Feed`, so every edge
+case is testable without a window. It walks only `PrRow`s and **does not wrap**
+at either end. When there is no live row — nothing selected, or the selection
+was closed, filtered out, or collapsed away — `Next`/`First` enter at the first
+pull request and `Previous`/`Last` at the last.
+
+Key contexts matter here. `Feed` is scoped to the scrolling row area only, and
+the filter box is a sibling under `FilterBar`, so `j`/`k`/`c`/`g` can never fire
+while typing and `escape` resolves on the filter without being stolen from the
+detail pane's composers.
+
 ## Invariants
 
 - **Contiguity.** All rows belonging to one repo form an unbroken run in

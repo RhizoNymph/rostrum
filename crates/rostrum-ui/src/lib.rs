@@ -6,7 +6,9 @@
 pub mod components;
 pub mod input;
 pub mod markdown;
+pub mod selection;
 pub mod theme;
 
 pub use input::{InputEvent, TextInput};
+pub use selection::SelectableText;
 pub use theme::{ActiveTheme, Theme};

@@ -7,12 +7,12 @@
 use std::ops::Range;
 
 use gpui::{
-    AnyElement, App, FontStyle, FontWeight, HighlightStyle, InteractiveText, SharedString,
-    StrikethroughStyle, StyledText, UnderlineStyle, div, prelude::*, px, rems,
+    AnyElement, App, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle,
+    UnderlineStyle, div, prelude::*, px, rems,
 };
 use rostrum_md::{Block, Document, Inline, ListItem};
 
-use crate::{components::v_flex, theme::Theme};
+use crate::{components::v_flex, selection::SelectableText, theme::Theme};
 
 /// Renders markdown blocks into a vertical stack.
 ///
@@ -123,6 +123,7 @@ impl Renderer<'_> {
     }
 
     fn code_block(&mut self, language: Option<&str>, code: &str) -> AnyElement {
+        let id = self.next_id();
         div()
             .p_2()
             .rounded_tl(px(6.))
@@ -148,7 +149,9 @@ impl Renderer<'_> {
                             .font_family(self.theme.mono_font.clone())
                             .text_size(rems(0.78))
                             .text_color(self.theme.text)
-                            .child(code.trim_end().to_string()),
+                            // No runs: the shaped text inherits the mono family
+                            // and size set on this wrapper.
+                            .child(SelectableText::new(id, code.trim_end().to_string())),
                     ),
             )
             .into_any_element()
@@ -242,18 +245,18 @@ impl Renderer<'_> {
         }
 
         let text = SharedString::from(build.text);
-        let styled = StyledText::new(text).with_highlights(build.highlights);
+        let id = self.next_id();
+        let selectable = SelectableText::new(id, text).with_highlights(build.highlights);
 
         if build.links.is_empty() {
-            return styled.into_any_element();
+            return selectable.into_any_element();
         }
 
         let destinations: Vec<String> = build.links.iter().map(|(_, url)| url.clone()).collect();
         let ranges: Vec<Range<usize>> = build.links.into_iter().map(|(range, _)| range).collect();
-        let id = self.next_id();
 
-        InteractiveText::new(id, styled)
-            .on_click(ranges, move |ix, _window, cx| {
+        selectable
+            .on_click_ranges(ranges, move |ix, _window, cx| {
                 if let Some(url) = destinations.get(ix) {
                     cx.open_url(url);
                 }

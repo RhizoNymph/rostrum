@@ -153,9 +153,38 @@ byte-range selection, mouse drag handling, `position_for_index` /
 per visual row, and clipboard integration — because a text input needs all of it
 regardless.
 
-Read-only selection over rendered markdown and diff lines is **not implemented**.
-The same machinery would be reused, driven by a shared byte-range selection
-model rather than the input's own.
+`crates/rostrum-ui/src/selection.rs` adds `SelectableText` for read-only text:
+click-drag to select, double-click for a word, triple-click for the block, and
+copy to the clipboard (plus the primary selection on Linux). It wraps gpui's
+`StyledText` and reuses its `TextLayout` for hit-testing, so no shaping code is
+duplicated. The markdown renderer emits it, which makes comments, descriptions,
+and review bodies selectable.
+
+Selection state is a single `Global` rather than per-element state. That makes
+"only one block is selected at a time" impossible to violate — starting a
+selection overwrites the previous one with no cross-element bookkeeping — and
+gives the copy action, which runs with no element in scope, something to read
+from. The `Selection` carries a copy of the block's text so the range can be
+resolved without reaching back into the element.
+
+Two subtleties worth preserving:
+
+- **Binding order.** GPUI scores a context-less binding at the full depth of the
+  context stack, so the selection's `ctrl-c` *ties* with a focused `TextInput`'s
+  rather than losing to it, and ties break toward whichever was registered
+  later. `selection::init` must therefore run before the input bindings.
+- **Click versus drag.** A registered click range fires only if the press
+  neither exceeded a 3px threshold nor produced a non-empty selection. Get this
+  wrong and either links stop working or every selection navigates away.
+
+Word selection uses character classes (alphanumeric/underscore, whitespace,
+other) rather than UAX #29. UAX #29 keeps `foo.bar` and `1,000` together, which
+is right for prose and wrong for a review tool, where double-clicking `foo`
+should yield `foo`.
+
+Selection does not span separate blocks; dragging out of a paragraph does not
+extend into the next. The diff uses whole-line selection instead — see
+`docs/features/diff_review.md`.
 
 ## Actions and keybindings
 

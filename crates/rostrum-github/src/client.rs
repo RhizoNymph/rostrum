@@ -5,7 +5,7 @@ use reqwest::{
     Client, Method, RequestBuilder, StatusCode,
     header::{ACCEPT, HeaderMap},
 };
-use rostrum_core::{Conversation, PrNumber, PullRequest, RepoId};
+use rostrum_core::{Conversation, Label, PrNumber, PullRequest, RepoId};
 use serde_json::json;
 
 use crate::{
@@ -13,7 +13,7 @@ use crate::{
     conversation::{ConversationNode, ConversationQueryData, PULL_REQUEST_CONVERSATION},
     error::GitHubError,
     graphql::{self, GraphQlResponse, PrNode, RateLimit, RepoQueryData},
-    rest::{IssueState, MergeMethod, PullRequestFile, SubmitReview},
+    rest::{AddLabels, IssueState, MergeMethod, PullRequestFile, SubmitReview},
 };
 
 const GRAPHQL_URL: &str = "https://api.github.com/graphql";
@@ -215,6 +215,98 @@ impl GitHubClient {
         Ok(files)
     }
 
+    /// All labels defined on the repository, following pagination to the end.
+    ///
+    /// This is the repository's palette, not the labels on any one pull request;
+    /// the label picker needs the full set to offer what is not applied yet.
+    pub async fn repository_labels(&self, repo: &RepoId) -> Result<Vec<Label>, GitHubError> {
+        let resource = repo.to_string();
+        let mut url = format!(
+            "{REST_BASE}/repos/{}/{}/labels?per_page=100",
+            repo.owner(),
+            repo.name()
+        );
+
+        let mut labels = Vec::new();
+        for _ in 0..MAX_PAGES {
+            let response = self.execute(self.rest(Method::GET, &url)).await?;
+            response.check_status(&resource)?;
+
+            let page: Vec<Label> =
+                serde_json::from_str(&response.body).map_err(|source| GitHubError::Decode {
+                    context: format!("labels for {resource}"),
+                    source,
+                })?;
+            labels.extend(page);
+
+            match next_page_url(&response.headers) {
+                Some(next) => url = next,
+                None => break,
+            }
+        }
+
+        Ok(labels)
+    }
+
+    /// Add labels to a pull request.
+    ///
+    /// Labels live on the issues API even for pull requests. The call is
+    /// additive: labels already applied are untouched, and re-adding one is a
+    /// no-op rather than an error.
+    pub async fn add_labels(
+        &self,
+        repo: &RepoId,
+        number: PrNumber,
+        labels: &[String],
+    ) -> Result<(), GitHubError> {
+        let body = AddLabels::new(labels.iter().cloned());
+        // GitHub rejects an empty list, and "add nothing" is already true.
+        if body.is_empty() {
+            return Ok(());
+        }
+
+        let url = format!(
+            "{REST_BASE}/repos/{}/{}/issues/{}/labels",
+            repo.owner(),
+            repo.name(),
+            number.0
+        );
+        self.execute(self.rest(Method::POST, &url).json(&body))
+            .await?
+            .check_status(&resource_name(repo, number))
+    }
+
+    /// Remove one label from a pull request.
+    ///
+    /// The name travels in the path, so it is percent-encoded: real labels
+    /// contain spaces, `/`, and `:`, any of which would otherwise address a
+    /// different resource. Removing a label the pull request does not have is
+    /// treated as success; see [`classify_label_removal`].
+    pub async fn remove_label(
+        &self,
+        repo: &RepoId,
+        number: PrNumber,
+        label: &str,
+    ) -> Result<(), GitHubError> {
+        let url = format!(
+            "{REST_BASE}/repos/{}/{}/issues/{}/labels/{}",
+            repo.owner(),
+            repo.name(),
+            number.0,
+            encode_path_segment(label)
+        );
+        let response = self.execute(self.rest(Method::DELETE, &url)).await?;
+        match classify_label_removal(
+            response.status,
+            &response.headers,
+            &response.body,
+            &resource_name(repo, number),
+        ) {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
+    }
+
     /// Post a top-level conversation comment (the issue comment API; inline
     /// comments go through [`Self::submit_review`] or [`Self::reply_to_thread`]).
     pub async fn add_comment(
@@ -382,6 +474,51 @@ fn classify_merge_status(status: StatusCode, body: &str) -> Option<GitHubError> 
     Some(GitHubError::MergeBlocked {
         reason: rest_message(body),
     })
+}
+
+/// Deleting a label the pull request does not carry answers 404. The caller
+/// asked for an end state — "this label is not on this pull request" — which
+/// already holds, so that is success rather than an error.
+///
+/// A missing repository or pull request also answers 404 here, which this
+/// deliberately swallows: the alternative is a probe request before every
+/// removal, and the user is looking at the pull request they are editing.
+fn classify_label_removal(
+    status: StatusCode,
+    headers: &HeaderMap,
+    body: &str,
+    resource: &str,
+) -> Option<GitHubError> {
+    if status == StatusCode::NOT_FOUND {
+        return None;
+    }
+    classify_status(status, headers, body, resource)
+}
+
+/// Percent-encode one URL path segment.
+///
+/// Everything outside the RFC 3986 unreserved set (`A-Za-z0-9-._~`) is escaped
+/// byte by byte over UTF-8. Label names routinely contain characters that are
+/// structural in a URL — `area/editor` would split the path, `status: blocked`
+/// and `help wanted` would produce a malformed request line — and an existing
+/// `%` must itself be escaped so an already-encoded-looking name like `%20`
+/// round-trips as the literal three characters it is.
+fn encode_path_segment(segment: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(segment.len());
+    for byte in segment.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(*byte as char);
+            }
+            other => {
+                encoded.push('%');
+                encoded.push(HEX[usize::from(other >> 4)] as char);
+                encoded.push(HEX[usize::from(other & 0x0f)] as char);
+            }
+        }
+    }
+    encoded
 }
 
 /// GitHub's REST errors put the human-readable cause in `message`; fall back to
@@ -621,6 +758,169 @@ mod tests {
         )]);
         assert!(next_page_url(&map).is_none());
         assert!(next_page_url(&HeaderMap::new()).is_none());
+    }
+
+    /// The characters real GitHub labels actually contain are the ones that
+    /// would otherwise change which resource the path addresses.
+    #[test]
+    fn real_world_label_names_are_encoded_for_the_path() {
+        for (name, encoded) in [
+            ("bug", "bug"),
+            ("help wanted", "help%20wanted"),
+            ("area/editor", "area%2Feditor"),
+            ("status: blocked", "status%3A%20blocked"),
+            ("good first issue", "good%20first%20issue"),
+        ] {
+            assert_eq!(encode_path_segment(name), encoded, "{name}");
+        }
+    }
+
+    /// Query and fragment delimiters would truncate the path entirely.
+    #[test]
+    fn url_structural_characters_are_escaped() {
+        assert_eq!(encode_path_segment("a?b"), "a%3Fb");
+        assert_eq!(encode_path_segment("a&b"), "a%26b");
+        assert_eq!(encode_path_segment("a#b"), "a%23b");
+        assert_eq!(encode_path_segment("c++"), "c%2B%2B");
+        assert_eq!(encode_path_segment("a=b"), "a%3Db");
+    }
+
+    /// A name that merely looks encoded is not: `%20` is three literal
+    /// characters, and escaping the `%` is what stops it decoding to a space.
+    #[test]
+    fn an_already_encoded_looking_name_is_escaped_again() {
+        assert_eq!(encode_path_segment("%20"), "%2520");
+        assert_eq!(encode_path_segment("100%"), "100%25");
+    }
+
+    /// Multi-byte characters are escaped per UTF-8 byte, not per char.
+    #[test]
+    fn unicode_names_are_encoded_bytewise() {
+        assert_eq!(encode_path_segment("née"), "n%C3%A9e");
+        assert_eq!(encode_path_segment("🐛"), "%F0%9F%90%9B");
+        assert_eq!(encode_path_segment("優先"), "%E5%84%AA%E5%85%88");
+    }
+
+    /// The unreserved set must survive untouched, or every label name would be
+    /// needlessly mangled.
+    #[test]
+    fn unreserved_characters_pass_through() {
+        let unreserved = "abcXYZ0189-._~";
+        assert_eq!(encode_path_segment(unreserved), unreserved);
+        assert_eq!(encode_path_segment(""), "");
+    }
+
+    /// The label list uses the same `Link` pagination as the files endpoint, so
+    /// the page walk is driven entirely by the header.
+    #[test]
+    fn a_two_page_label_list_is_walked_to_the_end() {
+        const PAGE_1: &str = r#"[
+            {"id": 1, "name": "bug", "color": "d73a4a", "default": true},
+            {"id": 2, "name": "help wanted", "color": "008672", "default": true}
+        ]"#;
+        const PAGE_2: &str = r#"[{"id": 3, "name": "area/editor", "color": "0e8a16"}]"#;
+
+        let pages = [
+            (
+                PAGE_1,
+                headers(&[(
+                    "link",
+                    "<https://api.github.com/repositories/1/labels?page=2>; rel=\"next\", \
+                     <https://api.github.com/repositories/1/labels?page=2>; rel=\"last\"",
+                )]),
+            ),
+            (
+                PAGE_2,
+                headers(&[(
+                    "link",
+                    "<https://api.github.com/repositories/1/labels?page=1>; rel=\"prev\", \
+                     <https://api.github.com/repositories/1/labels?page=1>; rel=\"first\"",
+                )]),
+            ),
+        ];
+
+        let mut labels = Vec::new();
+        let mut visited = Vec::new();
+        for (body, headers) in &pages {
+            let page: Vec<Label> = serde_json::from_str(body).expect("page should decode");
+            labels.extend(page);
+            if let Some(next) = next_page_url(headers) {
+                visited.push(next);
+            }
+        }
+
+        assert_eq!(
+            visited,
+            vec!["https://api.github.com/repositories/1/labels?page=2".to_string()],
+            "the walk should stop after the page with no `next`"
+        );
+        assert_eq!(
+            labels,
+            vec![
+                Label {
+                    name: "bug".into(),
+                    color: "d73a4a".into()
+                },
+                Label {
+                    name: "help wanted".into(),
+                    color: "008672".into()
+                },
+                Label {
+                    name: "area/editor".into(),
+                    color: "0e8a16".into()
+                },
+            ]
+        );
+    }
+
+    /// Removing a label the pull request never had leaves the world in the state
+    /// the user asked for, so it is not a failure to report.
+    #[test]
+    fn removing_an_absent_label_is_success() {
+        assert!(
+            classify_label_removal(
+                StatusCode::NOT_FOUND,
+                &HeaderMap::new(),
+                r#"{"message":"Label does not exist"}"#,
+                "a/b #1",
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn a_successful_removal_is_not_an_error() {
+        assert!(
+            classify_label_removal(StatusCode::OK, &HeaderMap::new(), "[]", "a/b #1").is_none()
+        );
+    }
+
+    /// Every other failure still classifies normally — a 404 exemption must not
+    /// become a blanket one.
+    #[test]
+    fn other_removal_failures_are_still_reported() {
+        assert!(matches!(
+            classify_label_removal(StatusCode::UNAUTHORIZED, &HeaderMap::new(), "", "a/b #1"),
+            Some(GitHubError::Unauthorized)
+        ));
+        assert!(matches!(
+            classify_label_removal(
+                StatusCode::FORBIDDEN,
+                &headers(&[("x-ratelimit-remaining", "4000")]),
+                "no write access",
+                "a/b #1",
+            ),
+            Some(GitHubError::Forbidden { .. })
+        ));
+        assert!(matches!(
+            classify_label_removal(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                &HeaderMap::new(),
+                "",
+                "a/b #1"
+            ),
+            Some(GitHubError::Unexpected { status: 422, .. })
+        ));
     }
 
     #[test]

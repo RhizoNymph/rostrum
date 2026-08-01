@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use rostrum_core::RepoId;
+use rostrum_core::{RepoId, model::ParseRepoIdError};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -16,6 +16,13 @@ pub struct Config {
     pub refresh_secs: u64,
     /// Maximum open PRs fetched per repository.
     pub prs_per_repo: u32,
+    /// Post a desktop notification when a refresh turns up a pull request that
+    /// was not there before. Off by default: the feed already shows arrivals,
+    /// and interrupting the desktop should be a deliberate opt-in.
+    pub notifications: bool,
+    /// Hide repositories that loaded successfully with nothing to show. On by
+    /// default; a feed of a dozen repositories is mostly empty headers.
+    pub hide_empty_repos: bool,
 }
 
 impl Default for Config {
@@ -27,6 +34,8 @@ impl Default for Config {
             ],
             refresh_secs: 60,
             prs_per_repo: 25,
+            notifications: false,
+            hide_empty_repos: true,
         }
     }
 }
@@ -113,6 +122,30 @@ impl Config {
         (ids, warnings)
     }
 
+    /// Add a repository, keeping `repos` sorted and free of duplicates.
+    ///
+    /// Returns the parsed id, or an error suitable for showing to the user.
+    pub fn add_repo(&mut self, input: &str) -> Result<RepoId, String> {
+        let id: RepoId = input
+            .parse()
+            .map_err(|err: ParseRepoIdError| err.to_string())?;
+        let name = id.to_string();
+        if self.repos.iter().any(|existing| existing == &name) {
+            return Err(format!("{name} is already in the list"));
+        }
+        self.repos.push(name);
+        self.repos.sort();
+        Ok(id)
+    }
+
+    /// Remove a repository. Returns whether anything was removed.
+    pub fn remove_repo(&mut self, id: &RepoId) -> bool {
+        let name = id.to_string();
+        let before = self.repos.len();
+        self.repos.retain(|existing| existing != &name);
+        self.repos.len() != before
+    }
+
     pub fn refresh_interval(&self) -> std::time::Duration {
         // A pathological config should not turn into a request storm.
         std::time::Duration::from_secs(self.refresh_secs.clamp(10, 3600))
@@ -154,6 +187,57 @@ mod tests {
     }
 
     #[test]
+    fn adding_a_repo_normalises_and_sorts() {
+        let mut config = Config {
+            repos: vec!["z/z".into()],
+            ..Default::default()
+        };
+        let id = config
+            .add_repo("https://github.com/a/b")
+            .expect("a pasted URL should be accepted");
+        assert_eq!(id.to_string(), "a/b");
+        assert_eq!(config.repos, ["a/b", "z/z"]);
+    }
+
+    #[test]
+    fn adding_a_duplicate_is_reported_not_silently_dropped() {
+        let mut config = Config {
+            repos: vec!["a/b".into()],
+            ..Default::default()
+        };
+        let error = config
+            .add_repo("a/b")
+            .expect_err("duplicate should be rejected");
+        assert!(error.contains("already"), "{error}");
+        assert_eq!(config.repos.len(), 1);
+    }
+
+    #[test]
+    fn adding_a_malformed_repo_reports_the_parse_error() {
+        let mut config = Config::default();
+        let before = config.repos.len();
+        assert!(config.add_repo("not-a-repo").is_err());
+        assert_eq!(config.repos.len(), before);
+    }
+
+    #[test]
+    fn removing_reports_whether_it_matched() {
+        let mut config = Config {
+            repos: vec!["a/b".into(), "c/d".into()],
+            ..Default::default()
+        };
+        let id: RepoId = "a/b".parse().expect("valid");
+        assert!(config.remove_repo(&id));
+        assert_eq!(config.repos, ["c/d"]);
+        assert!(!config.remove_repo(&id));
+    }
+
+    #[test]
+    fn empty_repos_are_hidden_by_default() {
+        assert!(Config::default().hide_empty_repos);
+    }
+
+    #[test]
     fn refresh_interval_is_clamped_to_a_sane_range() {
         let fast = Config {
             refresh_secs: 0,
@@ -174,5 +258,20 @@ mod tests {
             serde_json::from_str(r#"{"repos":["x/y"]}"#).expect("partial config should load");
         assert_eq!(config.repos, ["x/y"]);
         assert_eq!(config.refresh_secs, Config::default().refresh_secs);
+    }
+
+    /// Desktop notifications interrupt the user, so an untouched config must
+    /// never end up with them on.
+    #[test]
+    fn notifications_are_off_unless_opted_in() {
+        assert!(!Config::default().notifications);
+
+        let absent: Config =
+            serde_json::from_str(r#"{"repos":["x/y"]}"#).expect("partial config should load");
+        assert!(!absent.notifications);
+
+        let opted_in: Config =
+            serde_json::from_str(r#"{"notifications":true}"#).expect("partial config should load");
+        assert!(opted_in.notifications);
     }
 }

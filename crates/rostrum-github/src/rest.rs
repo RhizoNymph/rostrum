@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Deserialised directly from the REST payload: every field name already
 /// matches, so there is no separate wire type to convert from.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PullRequestFile {
     pub filename: String,
     /// Present only when `status` is `renamed` or `copied`.
@@ -129,6 +129,29 @@ impl SubmitReview {
     /// Whether GitHub will reject this review as empty.
     pub fn is_empty(&self) -> bool {
         self.body.trim().is_empty() && self.comments.is_empty()
+    }
+}
+
+/// Body of `POST /repos/{owner}/{repo}/issues/{number}/labels`.
+///
+/// The endpoint is additive: labels already on the pull request are left alone,
+/// so this never has to carry the full desired set.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct AddLabels {
+    pub labels: Vec<String>,
+}
+
+impl AddLabels {
+    pub fn new(labels: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            labels: labels.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    /// GitHub answers 422 for an empty list, so the caller can skip the request
+    /// entirely instead.
+    pub fn is_empty(&self) -> bool {
+        self.labels.is_empty()
     }
 }
 
@@ -338,6 +361,37 @@ mod tests {
                 "{method:?}"
             );
         }
+    }
+
+    /// The endpoint wants `{"labels": [...]}`; a bare array is a 422.
+    #[test]
+    fn add_labels_serialises_as_a_named_array() {
+        let body = AddLabels::new(["bug", "help wanted", "area/editor"]);
+        assert!(!body.is_empty());
+        assert_eq!(
+            serde_json::to_string(&body).expect("serialises"),
+            r#"{"labels":["bug","help wanted","area/editor"]}"#
+        );
+    }
+
+    #[test]
+    fn an_empty_label_list_is_recognisable_before_it_is_sent() {
+        let body = AddLabels::new(Vec::<String>::new());
+        assert!(body.is_empty());
+        assert_eq!(
+            serde_json::to_value(&body).expect("serialises"),
+            json!({ "labels": [] })
+        );
+    }
+
+    /// Names are sent verbatim; only the *path* form of a name is escaped.
+    #[test]
+    fn label_names_are_not_escaped_in_the_request_body() {
+        let body = AddLabels::new(["status: blocked", "needs 100% ☕"]);
+        assert_eq!(
+            serde_json::to_value(&body).expect("serialises"),
+            json!({ "labels": ["status: blocked", "needs 100% ☕"] })
+        );
     }
 
     #[test]

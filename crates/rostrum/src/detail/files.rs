@@ -57,6 +57,72 @@ pub enum DiffRow {
     Spacer,
 }
 
+/// A contiguous run of selected diff lines, addressed by row index.
+///
+/// Character-level selection inside a virtualized list spanning thousands of
+/// rows is a much larger problem; selecting whole lines covers the actual use
+/// case — copying a chunk of code out of a diff — and composes with the row
+/// stream that is already there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LineSelection {
+    pub anchor: usize,
+    pub head: usize,
+}
+
+impl LineSelection {
+    pub fn new(row: usize) -> Self {
+        Self {
+            anchor: row,
+            head: row,
+        }
+    }
+
+    /// Extend to `row`, keeping the anchor fixed.
+    pub fn extended_to(self, row: usize) -> Self {
+        Self {
+            anchor: self.anchor,
+            head: row,
+        }
+    }
+
+    pub fn contains(&self, row: usize) -> bool {
+        let (lo, hi) = self.bounds();
+        (lo..=hi).contains(&row)
+    }
+
+    fn bounds(&self) -> (usize, usize) {
+        (self.anchor.min(self.head), self.anchor.max(self.head))
+    }
+}
+
+/// The text of the selected lines, ready for the clipboard.
+///
+/// Only `Line` rows contribute; headers, threads, and composers inside the
+/// range are skipped, so copying a selection yields code and nothing else.
+pub fn selected_text(rows: &[DiffRow], files: &[DiffFile], selection: LineSelection) -> String {
+    let (lo, hi) = selection.bounds();
+    let mut out = String::new();
+
+    for row in rows.iter().skip(lo).take(hi.saturating_sub(lo) + 1) {
+        let DiffRow::Line { file, hunk, line } = row else {
+            continue;
+        };
+        let Some(source) = files
+            .get(*file)
+            .and_then(|diff| diff.hunks.get(*hunk))
+            .and_then(|hunk| hunk.lines.get(*line))
+        else {
+            continue;
+        };
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&source.content);
+    }
+
+    out
+}
+
 /// Rebuild the row stream from a `PrDetail`'s current state.
 pub fn build_rows(detail: &PrDetail) -> Vec<DiffRow> {
     let Some(files) = detail.files.loaded() else {
@@ -322,10 +388,16 @@ fn render_row(
                 LineKind::Context => " ",
             };
 
-            let anchor = source.anchor(&diff.path).map(|anchor| DraftAnchor {
-                path: anchor.path,
-                line: anchor.line,
-                side: anchor.side,
+            let anchor = source
+                .anchor(&diff.path)
+                .map(|anchor| DraftAnchor::single(anchor.path, anchor.line, anchor.side));
+
+            // Tint every line covered by the open multi-line selection.
+            let in_selection = anchor.as_ref().is_some_and(|anchor| {
+                detail
+                    .inline
+                    .as_ref()
+                    .is_some_and(|(open, _)| open.covers(&anchor.path, anchor.line, anchor.side))
             });
 
             let spans = detail
@@ -336,12 +408,32 @@ fn render_row(
                 .unwrap_or_default();
             let content = styled_code(&source.content, &spans, &theme, window);
 
+            let selected = detail
+                .line_selection
+                .is_some_and(|selection| selection.contains(ix));
+
             h_flex()
                 .id(("line", ix))
                 .items_start()
+                .cursor_pointer()
+                .on_click(PrDetail::on_click_with(cx, move |this, event, cx| {
+                    this.select_line(ix, event.modifiers().shift, cx)
+                }))
                 .font_family(theme.mono_font.clone())
                 .text_size(rems(0.74))
                 .when_some(background, |el, color| el.bg(color))
+                .when(in_selection, |el| {
+                    el.bg(Hsla {
+                        a: 0.22,
+                        ..theme.accent
+                    })
+                })
+                .when(selected, |el| {
+                    el.bg(Hsla {
+                        a: 0.30,
+                        ..theme.accent
+                    })
+                })
                 .border_l_1()
                 .border_r_1()
                 .border_color(theme.border)
@@ -367,8 +459,11 @@ fn render_row(
                             .child("+")
                             .id(("comment-on", ix))
                             .cursor_pointer()
-                            .on_click(PrDetail::on_click(cx, move |this, cx| {
-                                this.open_inline_composer(anchor.clone(), cx)
+                            // Shift-click extends the open composer into a
+                            // multi-line range.
+                            .on_click(PrDetail::on_click_with(cx, move |this, event, cx| {
+                                let extend = event.modifiers().shift;
+                                this.open_inline_composer(anchor.clone(), extend, cx)
                             })),
                     )
                 })
@@ -457,6 +552,12 @@ fn render_row(
                             h_flex()
                                 .gap_2()
                                 .child(Chip::new("pending").color(theme.warning))
+                                .child(
+                                    div()
+                                        .text_size(rems(0.7))
+                                        .text_color(theme.text_subtle)
+                                        .child(describe_range(pending.start_line, pending.line)),
+                                )
                                 .child(div().flex_1())
                                 .child(Button::new(("discard-draft", draft), "Discard").on_click(
                                     PrDetail::on_click(cx, move |this, cx| {
@@ -572,6 +673,14 @@ fn styled_code(
     StyledText::new(SharedString::from(content.to_string()))
         .with_runs(runs)
         .into_any_element()
+}
+
+/// `line 12` or `lines 12–18`.
+fn describe_range(start: Option<u32>, end: u32) -> String {
+    match start {
+        Some(start) if start != end => format!("lines {start}–{end}"),
+        _ => format!("line {end}"),
+    }
 }
 
 fn centered(message: impl Into<String>, color: Hsla) -> impl IntoElement {
@@ -770,11 +879,7 @@ mod tests {
 
     #[test]
     fn open_composer_attaches_to_its_anchor() {
-        let anchor = DraftAnchor {
-            path: "src/main.rs".into(),
-            line: 11,
-            side: Side::Left,
-        };
+        let anchor = DraftAnchor::single("src/main.rs", 11, Side::Left);
         let rows = rows(&[], &[], Some(&anchor));
         let position = rows
             .iter()
@@ -793,5 +898,101 @@ mod tests {
     #[test]
     fn no_files_yields_no_rows() {
         assert!(flatten(&[], &[], &[], None, &HashSet::new()).is_empty());
+    }
+
+    /// A multi-line anchor puts its composer after the *end* line, and reports
+    /// the range with `start_line` below `line` regardless of click order.
+    #[test]
+    fn line_selection_covers_either_drag_direction() {
+        let downwards = LineSelection::new(2).extended_to(5);
+        let upwards = LineSelection::new(5).extended_to(2);
+        for row in 2..=5 {
+            assert!(downwards.contains(row), "downwards {row}");
+            assert!(upwards.contains(row), "upwards {row}");
+        }
+        assert!(!downwards.contains(1));
+        assert!(!downwards.contains(6));
+    }
+
+    #[test]
+    fn selected_text_returns_only_code_lines() {
+        let files = [file()];
+        let rows = rows(&[], &[], None);
+        // Rows 2..=4 are the three diff lines; row 1 is the hunk header.
+        let text = selected_text(&rows, &files, LineSelection::new(1).extended_to(4));
+        assert_eq!(text, "x\nx\nx");
+    }
+
+    #[test]
+    fn selecting_a_single_line_yields_that_line() {
+        let files = [file()];
+        let rows = rows(&[], &[], None);
+        assert_eq!(selected_text(&rows, &files, LineSelection::new(2)), "x");
+    }
+
+    #[test]
+    fn selecting_no_code_lines_yields_empty_text() {
+        let files = [file()];
+        let rows = rows(&[], &[], None);
+        // Row 0 is the file header.
+        assert!(selected_text(&rows, &files, LineSelection::new(0)).is_empty());
+    }
+
+    #[test]
+    fn extending_an_anchor_orders_the_range() {
+        let anchor = DraftAnchor::single("src/main.rs", 20, Side::Right);
+
+        let downwards = anchor.extended_to(24, Side::Right);
+        assert_eq!((downwards.start_line, downwards.line), (Some(20), 24));
+
+        // Shift-clicking *above* the original line still yields start <= line.
+        let upwards = anchor.extended_to(16, Side::Right);
+        assert_eq!((upwards.start_line, upwards.line), (Some(16), 20));
+    }
+
+    #[test]
+    fn extending_onto_the_same_line_stays_single_line() {
+        let anchor =
+            DraftAnchor::single("src/main.rs", 20, Side::Right).extended_to(20, Side::Right);
+        assert_eq!(anchor.start_line, None);
+        assert_eq!(anchor.start_side, None);
+        assert_eq!(anchor.line, 20);
+    }
+
+    #[test]
+    fn covers_reports_every_line_in_the_range() {
+        let anchor =
+            DraftAnchor::single("src/main.rs", 20, Side::Right).extended_to(24, Side::Right);
+        for line in 20..=24 {
+            assert!(
+                anchor.covers("src/main.rs", line, Side::Right),
+                "line {line}"
+            );
+        }
+        assert!(!anchor.covers("src/main.rs", 19, Side::Right));
+        assert!(!anchor.covers("src/main.rs", 25, Side::Right));
+        // Same numbers on the other side are a different anchor entirely.
+        assert!(!anchor.covers("src/main.rs", 22, Side::Left));
+        assert!(!anchor.covers("other.rs", 22, Side::Right));
+    }
+
+    #[test]
+    fn composer_for_a_range_attaches_to_the_end_line() {
+        // The file's right-side lines are 10 (context) and 11 (addition).
+        let anchor =
+            DraftAnchor::single("src/main.rs", 10, Side::Right).extended_to(11, Side::Right);
+        let rows = rows(&[], &[], Some(&anchor));
+        let position = rows
+            .iter()
+            .position(|row| matches!(row, DiffRow::Composer { .. }))
+            .expect("composer row present");
+        assert_eq!(
+            rows[position - 1],
+            DiffRow::Line {
+                file: 0,
+                hunk: 0,
+                line: 2
+            }
+        );
     }
 }

@@ -24,6 +24,7 @@ query($owner: String!, $name: String!, $first: Int!) {
         updatedAt
         author { login avatarUrl }
         headRefName
+        headRefOid
         baseRefName
         additions
         deletions
@@ -110,6 +111,8 @@ pub struct PrNode {
     /// `null` for deleted accounts and some bot actors.
     pub author: Option<AuthorNode>,
     pub head_ref_name: String,
+    #[serde(default)]
+    pub head_ref_oid: Option<String>,
     pub base_ref_name: String,
     pub additions: u32,
     pub deletions: u32,
@@ -185,6 +188,7 @@ impl PrNode {
                 avatar_url: a.avatar_url,
             }),
             head_ref: self.head_ref_name,
+            head_sha: self.head_ref_oid.unwrap_or_default(),
             base_ref: self.base_ref_name,
             additions: self.additions,
             deletions: self.deletions,
@@ -228,6 +232,7 @@ mod tests {
                 "updatedAt": "2026-07-31T11:00:00Z",
                 "author": { "login": "octocat", "avatarUrl": "https://example.invalid/a.png" },
                 "headRefName": "feature",
+                "headRefOid": "deadbeefcafe",
                 "baseRefName": "main",
                 "additions": 10,
                 "deletions": 2,
@@ -292,6 +297,7 @@ mod tests {
         assert_eq!(pr.mergeable, Mergeable::Mergeable);
         assert_eq!(pr.review_decision, Some(ReviewDecision::Approved));
         assert_eq!(pr.checks, Some(CheckState::Success));
+        assert_eq!(pr.head_sha, "deadbeefcafe");
         assert_eq!(pr.labels.len(), 1);
         assert_eq!(pr.comment_count, 4);
     }
@@ -303,6 +309,8 @@ mod tests {
         let prs = parse();
         let pr = &prs[1];
         assert!(pr.author.is_none());
+        // A pull request whose head oid is absent must decode, not fail.
+        assert!(pr.head_sha.is_empty());
         assert!(pr.labels.is_empty());
         assert!(pr.checks.is_none());
         assert!(pr.review_decision.is_none());
