@@ -7,9 +7,11 @@ each in its own container, in a single continuous scroll.
 
 ## Status
 
-Phase 1: the feed works against the live GitHub API. Selecting a pull request
-shows its header in the detail pane. The conversation timeline, diff viewer, and
-review actions are not implemented yet — see `docs/OVERVIEW.md`.
+Phases 1–4 are complete: the multi-repo feed, the conversation timeline with
+markdown, the syntax-highlighted diff, inline comments with pending-review
+batching, review submission, and merge/close. See `docs/OVERVIEW.md` for what is
+deliberately still missing (offline cache, character-level text selection,
+multi-line inline comments).
 
 ## Requirements
 
@@ -29,7 +31,12 @@ cargo run -p rostrum
 Verify the data layer alone, without opening a window:
 
 ```sh
+# the feed query
 cargo run -p rostrum-github --example fetch -- zed-industries/zed
+
+# conversation + diff + anchor verification for one pull request (read-only)
+cargo run -p rostrum --example review -- zed-industries/zed
+cargo run -p rostrum --example review -- zed-industries/zed 62051
 ```
 
 ## Configure
@@ -51,17 +58,36 @@ and duplicate entries are reported in the app rather than silently dropped.
 
 | Key | Action |
 |---|---|
-| `ctrl-r` | Refresh all repositories |
+| `ctrl-r` | Refresh repositories and the open pull request |
 | `ctrl-q` | Quit |
+| `ctrl-enter` | Submit from a composer |
+| `enter` | Newline in a composer |
+
+## Reviewing
+
+Click a pull request, then use the tabs:
+
+- **Conversation** — description, comments, reviews, inline threads with
+  replies, and timeline events, all rendered as markdown.
+- **Files** — the diff, syntax highlighted. Click `+` on any line to draft an
+  inline comment; drafts accumulate into a pending review.
+- **Checks** — CI results for the head commit.
+
+The buttons at the bottom post a comment, submit the pending review as
+**Approve** or **Request changes**, or merge/close. Merge and close ask for
+confirmation first, and merge is disabled while GitHub reports conflicts or is
+still computing the merge state.
 
 ## Layout
 
 | Crate | gpui? | Responsibility |
 |---|---|---|
-| `rostrum-core` | no | Domain types, feed flattening |
-| `rostrum-github` | no | GraphQL reads, auth, errors |
-| `rostrum-ui` | yes | Theme and components |
-| `rostrum` | yes | Bootstrap, store, views |
+| `rostrum-core` | no | Domain types, feed flattening, conversation model |
+| `rostrum-diff` | no | Unified-diff parsing, comment anchoring, highlighting |
+| `rostrum-github` | no | GraphQL reads, REST mutations, auth, errors |
+| `rostrum-md` | no | Markdown parsing, GitHub shorthand expansion |
+| `rostrum-ui` | yes | Theme, components, text input, markdown renderer |
+| `rostrum` | yes | Bootstrap, store, feed and detail views |
 
 Non-UI logic is kept free of `gpui` so it tests with plain `cargo test`.
 

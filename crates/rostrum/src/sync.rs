@@ -58,6 +58,15 @@ impl Store {
         !self.pending.is_empty()
     }
 
+    /// The authenticated client, once auth has resolved.
+    ///
+    /// `GitHubClient` is cheap to clone (an `Arc`-backed reqwest client plus a
+    /// token), so views take a copy rather than borrowing the store across an
+    /// await point.
+    pub fn client(&self) -> Option<GitHubClient> {
+        self.client.clone()
+    }
+
     /// Resolve a token, then begin refreshing.
     fn authenticate(&mut self, cx: &mut Context<Self>) {
         self.auth = AuthStatus::Resolving;

@@ -77,9 +77,12 @@ binary files, and patches where the hunk header omits a count (`@@ -1 +1 @@`).
 
 ## Parsing
 
-`diffy::Patch::from_str` parses GitHub's per-file `patch` text. Zed uses `diffy`
-for exactly this (parsing and applying unified diffs) and `imara-diff` for
-*computing* diffs — we only need the former for the main path.
+The parser is hand-rolled. `diffy` was evaluated and rejected: it requires the
+`---`/`+++` file headers that GitHub's per-file `patch` strings do not have, it
+does not expose `\ No newline at end of file`, it returns only the stripped
+function context rather than the raw `@@` line the hunk header row renders, and
+it carries no line numbers — so the line-number walk, the entire high-stakes
+part, would have been ours regardless.
 
 Line numbers are reconstructed by walking each hunk from its header's start
 offsets, incrementing the old counter on `Context`/`Removed` and the new counter
@@ -96,27 +99,27 @@ Zed's own highlighting is unusable here: `language`/`language_core` couple
 tree-sitter to Zed's `Rope`, CRDT anchors, `SyntaxSnapshot` injection machinery,
 and `LanguageRegistry`, and those crates are GPL-3.0-or-later.
 
-Instead, `tree-sitter-highlight` directly:
+`syntect` is used instead, with the pure-Rust `fancy-regex` engine so there is
+no `onig` C dependency. It ships syntax definitions for far more languages than
+would be practical to wire up as individual tree-sitter grammar crates, each of
+which would have to match the `tree-sitter` ABI version.
 
-1. Per language, build a `HighlightConfiguration` from the grammar plus its
-   `highlights.scm`. **Take queries from the upstream grammar repos** (typically
-   MIT), not from Zed's `crates/languages/**` — those are GPL.
-2. Register a fixed list of capture names; `Highlight(idx)` indexes into it.
-3. Run the highlighter over the file's reconstructed content, producing
-   `HighlightEvent::{HighlightStart, Source{start,end}, HighlightEnd}`.
-4. Maintain a stack: push on `HighlightStart`, pop on `HighlightEnd`, and on each
-   `Source` emit a `TextRun` styled by `theme.syntax.style_for(name_at_top)`.
-5. Slice the resulting runs per line and render with
-   `StyledText::new(line).with_runs(runs)`.
+`Highlighter::highlight_lines_for_path` returns one `Vec<HighlightSpan>` per
+line, which the diff view converts into `TextRun`s.
+
+Tree-sitter remains the better long-term choice — it is what Zed uses, and it
+gives more accurate results — but it is a larger dependency-management problem
+than this phase warranted. Swapping it in later only touches
+`rostrum-diff::highlight`; the `HighlightSpan` contract stays the same.
+
+Highlighting is applied per line, so constructs spanning multiple lines (block
+comments, multi-line strings) are not tracked across a diff's discontinuities.
 
 `TextRun` has a `len` in UTF-8 bytes and no start offset — runs are concatenated
-and **must exactly cover the string**, with no gaps or overlaps. Gap-filling with
-the base style is the caller's responsibility when using `with_runs`. (The
-alternative, `with_highlights`, does gap-filling for you but requires sorted,
-non-overlapping, char-boundary ranges and merges against the ambient text style.)
-
-Highlighting runs on a background executor per file, once, and the resulting runs
-are cached on the file model. It must never run inside `render`.
+and **must exactly cover the string**, with no gaps or overlaps. `rostrum-diff`
+guarantees byte-exact coverage, and the renderer additionally falls back to a
+single unstyled run if the totals ever disagree, so a highlighting bug degrades
+appearance rather than panicking.
 
 ## Performance
 
@@ -134,16 +137,20 @@ once a line has been painted, re-visiting it while scrolling is cheap.
 Inline comments follow GitHub's pending-review model:
 
 - The first inline comment starts a pending review held **locally**, not posted.
-- Subsequent comments accumulate into it.
+- Subsequent comments accumulate into `PrDetail::pending`.
 - Submitting posts one `POST /pulls/{n}/reviews` with the full `comments[]` array
   and an `event` of `APPROVE`, `REQUEST_CHANGES`, or `COMMENT`.
-- A single comment posted with "Add single comment" bypasses the batch and posts
-  immediately.
 
-Pending review state is persisted to SQLite keyed by `(repo, pr, head_sha)` so a
-crash or restart does not lose drafted feedback. **If `head_sha` changes** (the
-author pushed), pending comments may no longer point at valid lines; the UI warns
-and offers to discard or attempt re-anchoring rather than submitting blindly.
+Two gaps against the original design, both deliberate:
+
+- Pending review state is **in memory only**. Closing the app or selecting a
+  different pull request discards drafted feedback. Persisting it needs the
+  SQLite layer, which is not built.
+- Pending comments are **not tagged with `head_sha`**, because the PR query does
+  not fetch `headRefOid`. If the author force-pushes between drafting and
+  submitting, comments may anchor to lines that have moved, and nothing warns
+  about it. Fixing this means adding one field to the query and one check before
+  submission.
 
 ## Text selection
 

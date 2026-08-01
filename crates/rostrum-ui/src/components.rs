@@ -1,6 +1,6 @@
 //! Small reusable components built on `gpui`.
 
-use gpui::{App, Div, Hsla, SharedString, Window, div, prelude::*, px, rems};
+use gpui::{App, Context, Div, ElementId, Hsla, SharedString, Window, div, prelude::*, px, rems};
 
 use crate::theme::ActiveTheme;
 
@@ -177,6 +177,204 @@ impl RenderOnce for DiffStat {
                     .child(format!("−{}", self.deletions)),
             )
     }
+}
+
+/// Visual weight of a [`Button`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ButtonStyle {
+    #[default]
+    Subtle,
+    Primary,
+    Danger,
+}
+
+#[derive(IntoElement)]
+pub struct Button {
+    id: ElementId,
+    label: SharedString,
+    style: ButtonStyle,
+    disabled: bool,
+    tooltip: Option<SharedString>,
+    on_click: Option<ClickHandler>,
+}
+
+type ClickHandler = Box<dyn Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static>;
+
+impl Button {
+    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            style: ButtonStyle::Subtle,
+            disabled: false,
+            tooltip: None,
+            on_click: None,
+        }
+    }
+
+    pub fn style(mut self, style: ButtonStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    /// A disabled button keeps its tooltip, so the reason stays discoverable.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    pub fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(tooltip.into());
+        self
+    }
+
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_click = Some(Box::new(handler));
+        self
+    }
+}
+
+impl RenderOnce for Button {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = cx.theme();
+        let (bg, fg, border) = match self.style {
+            ButtonStyle::Primary => (theme.accent, theme.text_inverse, theme.accent),
+            ButtonStyle::Danger => (
+                Hsla {
+                    a: 0.16,
+                    ..theme.danger
+                },
+                theme.danger,
+                Hsla {
+                    a: 0.5,
+                    ..theme.danger
+                },
+            ),
+            ButtonStyle::Subtle => (theme.surface_raised, theme.text, theme.border_strong),
+        };
+        let accent = theme.accent;
+        let handler = self.on_click;
+        let disabled = self.disabled;
+
+        div()
+            .id(self.id)
+            .px_2p5()
+            .py_1()
+            .rounded_tl(px(5.))
+            .rounded_tr(px(5.))
+            .rounded_bl(px(5.))
+            .rounded_br(px(5.))
+            .border_1()
+            .border_color(border)
+            .bg(bg)
+            .text_size(rems(0.78))
+            .text_color(fg)
+            .when(disabled, |el| el.opacity(0.45))
+            .when(!disabled, |el| {
+                el.cursor_pointer().hover(move |el| el.border_color(accent))
+            })
+            .when_some(self.tooltip, |el, text| {
+                el.tooltip(move |_window, cx| cx.new(|_| TextTooltip { text: text.clone() }).into())
+            })
+            .child(self.label)
+            .on_click(move |event, window, cx| {
+                if !disabled && let Some(handler) = handler.as_ref() {
+                    handler(event, window, cx);
+                }
+            })
+    }
+}
+
+/// Minimal tooltip body.
+pub struct TextTooltip {
+    pub text: SharedString,
+}
+
+impl Render for TextTooltip {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        div()
+            .px_2()
+            .py_1()
+            .rounded_tl(px(5.))
+            .rounded_tr(px(5.))
+            .rounded_bl(px(5.))
+            .rounded_br(px(5.))
+            .bg(theme.surface_raised)
+            .border_1()
+            .border_color(theme.border_strong)
+            .text_size(rems(0.75))
+            .text_color(theme.text)
+            .child(self.text.clone())
+    }
+}
+
+/// A single tab in a [`tab_bar`].
+pub struct Tab {
+    pub label: SharedString,
+    pub badge: Option<usize>,
+}
+
+impl Tab {
+    pub fn new(label: impl Into<SharedString>) -> Self {
+        Self {
+            label: label.into(),
+            badge: None,
+        }
+    }
+
+    pub fn badge(mut self, count: usize) -> Self {
+        self.badge = Some(count);
+        self
+    }
+}
+
+/// Render a row of tabs. `on_select` receives the index of the chosen tab.
+pub fn tab_bar(
+    tabs: Vec<Tab>,
+    selected: usize,
+    cx: &App,
+    on_select: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
+) -> Div {
+    let theme = cx.theme();
+    let (text, muted, accent, border) = (theme.text, theme.text_muted, theme.accent, theme.border);
+
+    h_flex()
+        .gap_1()
+        .border_b_1()
+        .border_color(border)
+        .children(tabs.into_iter().enumerate().map(move |(ix, tab)| {
+            let active = ix == selected;
+            let on_select = on_select.clone();
+            h_flex()
+                .id(("tab", ix))
+                .gap_1p5()
+                .px_3()
+                .py_2()
+                .cursor_pointer()
+                .text_size(rems(0.8))
+                .border_b_2()
+                .border_color(if active {
+                    accent
+                } else {
+                    gpui::transparent_black()
+                })
+                .text_color(if active { text } else { muted })
+                .hover(move |el| el.text_color(text))
+                .child(tab.label)
+                .when_some(tab.badge, |el, count| {
+                    el.child(
+                        div()
+                            .text_size(rems(0.68))
+                            .text_color(muted)
+                            .child(count.to_string()),
+                    )
+                })
+                .on_click(move |_event, window, cx| on_select(ix, window, cx))
+        }))
 }
 
 #[cfg(test)]

@@ -10,7 +10,9 @@ path = "src/main.rs"
 
 [dependencies]
 rostrum-core.workspace = true
+rostrum-diff.workspace = true
 rostrum-github.workspace = true
+rostrum-md.workspace = true
 rostrum-ui.workspace = true
 
 gpui.workspace = true
@@ -19,8 +21,12 @@ gpui_tokio.workspace = true
 
 anyhow.workspace = true
 chrono.workspace = true
+futures.workspace = true
 dirs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

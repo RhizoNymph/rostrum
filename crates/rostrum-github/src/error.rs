@@ -42,6 +42,13 @@ pub enum GitHubError {
         source: serde_json::Error,
     },
 
+    /// GitHub answers a blocked merge with 405 (branch protection, failing
+    /// checks, a draft PR) or 409 (the base moved, or a conflict). Both mean
+    /// "not now" rather than "something broke", so they share one variant and
+    /// carry GitHub's own explanation.
+    #[error("merge blocked: {reason}")]
+    MergeBlocked { reason: String },
+
     #[error("unexpected HTTP {status}: {body}")]
     Unexpected { status: u16, body: String },
 }

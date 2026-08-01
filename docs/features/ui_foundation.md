@@ -145,14 +145,17 @@ from the ambient text style, requiring sorted, non-overlapping, char-boundary
 ranges.
 
 GPUI has **no built-in drag-selection for read-only text**. `InteractiveText`
-supports click, hover, and tooltips only. Selection is hand-rolled following Zed's
-`markdown` crate: a byte-range `Selection` struct, manual mouse handlers,
-hit-testing through `TextLayout::index_for_position`, a manually painted
-selection quad per visible row, and `cx.write_to_clipboard` (plus
-`cx.write_to_primary` on Linux for middle-click paste).
+supports click, hover, and tooltips only.
 
-This lives in `crates/rostrum-ui/src/selection.rs` and is shared by the markdown
-renderer and the diff view.
+`crates/rostrum-ui/src/input.rs` implements selection for *editable* text — a
+byte-range selection, mouse drag handling, `position_for_index` /
+`index_for_position` hit-testing against wrapped lines, a painted selection quad
+per visual row, and clipboard integration — because a text input needs all of it
+regardless.
+
+Read-only selection over rendered markdown and diff lines is **not implemented**.
+The same machinery would be reused, driven by a shared byte-range selection
+model rather than the input's own.
 
 ## Actions and keybindings
 
