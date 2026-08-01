@@ -107,7 +107,7 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Mergeable, PrNumber};
+    use crate::model::{MergeStateStatus, Mergeable, PrNumber};
 
     fn repo_with(id: &str, numbers: &[u32]) -> RepoState {
         let mut state = RepoState::new(id.parse().expect("valid repo id"));
@@ -128,6 +128,7 @@ mod tests {
                 deletions: 0,
                 changed_files: 0,
                 mergeable: Mergeable::Unknown,
+                merge_state: MergeStateStatus::Unknown,
                 review_decision: None,
                 labels: Vec::new(),
                 comment_count: 0,

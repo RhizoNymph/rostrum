@@ -100,9 +100,44 @@ effectively irreversible from the app's perspective. The merge confirmation show
 the target branch, the method, and any blocking state (failing checks, requested
 changes, conflicts) so the decision is made with the relevant facts visible.
 
-Merge is disabled when `mergeable` is `CONFLICTING`; when it is `UNKNOWN`, GitHub
-is still computing, and the UI says so rather than presenting a button that will
-fail with a 405.
+### Mergeability
+
+`mergeable` alone only says whether the trees combine. `mergeStateStatus` says
+why a merge is refused, which is the part a reviewer acts on — a branch blocked
+by a required review needs a different response than one that is merely behind
+its base.
+
+The two are collapsed into `MergeStatus` by `PullRequest::merge_status()`, in
+`rostrum-core`, so the feed chip, the merge button, its tooltip, and the status
+line cannot disagree:
+
+| `MergeStatus` | Source | Blocks merge |
+|---|---|---|
+| `Conflicts` | `CONFLICTING` or `DIRTY` | yes |
+| `Draft` | `is_draft` or `DRAFT` | yes |
+| `Computing` | `mergeable` is `UNKNOWN` | yes |
+| `Blocked` | `BLOCKED` — protection, required review or check | yes |
+| `Behind` | `BEHIND` — base has moved | yes |
+| `Unstable` | `UNSTABLE` — mergeable, checks not green | no |
+| `Ready` | `CLEAN`, `HAS_HOOKS`, or mergeable with no state | no |
+
+Order matters and is pinned by a table test. Conflicts win over everything,
+including draft, because they are the one state the author must fix regardless
+of protection rules. Draft is reported ahead of `Computing` because it is
+already certain and more useful.
+
+`Unstable` deliberately does not block. GitHub itself permits merging with red
+checks unless protection forbids it, and when protection does forbid it the
+state arrives as `BLOCKED` instead — so blocking here would only second-guess
+the server about a repository's own policy.
+
+`Ready` covers a mergeable branch whose `mergeStateStatus` is `UNKNOWN`, which
+is what a token without push access is documented to see. Calling that state
+"computing" forever would be worse than calling it ready.
+
+The actions bar states the verdict in words next to a coloured dot, not only as
+the disabled merge button's tooltip: a disabled button with no visible reason is
+the state people file bugs about.
 
 ## Labels
 

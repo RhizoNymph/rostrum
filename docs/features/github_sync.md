@@ -79,7 +79,7 @@ repository(owner: $owner, name: $name) {
       author { login avatarUrl }
       headRefName baseRefName
       additions deletions changedFiles
-      mergeable reviewDecision
+      mergeable mergeStateStatus reviewDecision
       labels(first: 10) { nodes { name color } }
       comments { totalCount }
       commits(last: 1) { nodes { commit {
@@ -93,6 +93,31 @@ repository(owner: $owner, name: $name) {
 The conversation timeline for a selected PR is a second, deeper query issued
 lazily on selection (comments, reviews with bodies, review threads with their
 comments, and timeline events).
+
+### Merge state is computed lazily
+
+`mergeable` and `mergeStateStatus` are not stored fields. Asking for them
+*starts* the computation and returns `UNKNOWN` in the same response, so a single
+query can never see the answer for a pull request GitHub has not looked at
+recently. Verified live: a first query returned `UNKNOWN` for four of ten open
+pull requests, and an identical query two seconds later returned real values
+for all four.
+
+`Store::probe_merge_state` therefore re-queries a repository after a refresh
+that saw any `MergeStatus::Computing`, backing off 2s, 4s, 8s and giving up
+after three attempts per poll cycle. The budget matters: a token that may not
+read a repository's merge state sees `UNKNOWN` permanently, and without a bound
+that is an endless request loop rather than a slow one.
+
+Probes are keyed by repository in `merge_probes`, so a newer probe replaces and
+cancels an older one, and `refresh_all` resets the budget because a full poll
+begins a new cycle.
+
+Neither field needs the `merge-info-preview` Accept header any more; the plain
+query returns both, confirmed against the live API.
+
+Drafts never trigger a probe. A draft reports `MergeStatus::Draft` regardless of
+what GitHub is computing, so there is nothing to wait for.
 
 Rate limiting for GraphQL is cost-based against a 5000 point/hour budget; a query
 of this shape costs on the order of tens of points, so a thirty-repo feed

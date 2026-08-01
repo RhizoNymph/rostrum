@@ -160,7 +160,7 @@ fn post(new: NewPr, cx: &mut App) {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use rostrum_core::{Mergeable, PullRequest};
+    use rostrum_core::{MergeStateStatus, Mergeable, PullRequest};
 
     fn numbers(values: &[u32]) -> HashSet<PrNumber> {
         values.iter().copied().map(PrNumber).collect()
@@ -182,6 +182,7 @@ mod tests {
             deletions: 0,
             changed_files: 0,
             mergeable: Mergeable::Unknown,
+            merge_state: MergeStateStatus::Unknown,
             review_decision: None,
             labels: Vec::new(),
             comment_count: 0,

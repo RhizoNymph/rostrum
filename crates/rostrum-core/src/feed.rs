@@ -230,7 +230,7 @@ pub fn flatten(repos: &[RepoState], filter: &FeedFilter) -> Feed {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Mergeable, PrNumber, PullRequest, RepoId};
+    use crate::model::{MergeStateStatus, Mergeable, PrNumber, PullRequest, RepoId};
     use chrono::Utc;
 
     fn pr(number: u32, draft: bool) -> PullRequest {
@@ -249,6 +249,7 @@ mod tests {
             deletions: 0,
             changed_files: 0,
             mergeable: Mergeable::Unknown,
+            merge_state: MergeStateStatus::Unknown,
             review_decision: None,
             labels: Vec::new(),
             comment_count: 0,

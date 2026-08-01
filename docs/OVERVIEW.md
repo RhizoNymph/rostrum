@@ -107,6 +107,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 | Highlighting | `syntect` (pure-Rust regex) | One dependency covering many languages, versus matching the tree-sitter ABI across a grammar crate per language. Tree-sitter remains the better long-term choice |
 | Cache | SQLite via `sqlx` | Instant cold start, offline reads, ETag storage |
 | Async | Tokio bridged into GPUI's executor | GPUI's executor is not Tokio; `reqwest` requires a Tokio reactor |
+| Mergeability | `mergeable` **and** `mergeStateStatus`, collapsed into one `MergeStatus` in `rostrum-core` | `mergeable` cannot distinguish "blocked by a required review" from "behind its base"; deriving the verdict once keeps the chip, the button, and its tooltip from disagreeing |
 
 ## Hard constraints
 
@@ -176,7 +177,7 @@ Each phase leaves a usable application.
 
 ## Status
 
-All five phases are complete and verified against the live API. 379 tests pass;
+All five phases are complete and verified against the live API. 405 tests pass;
 clippy is clean across the workspace.
 
 End-to-end verification (`cargo run -p rostrum --example review`) against real

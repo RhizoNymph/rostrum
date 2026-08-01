@@ -4,7 +4,9 @@
 //! listing PRs and then fanning out a request per PR for reviews and checks.
 
 use chrono::{DateTime, Utc};
-use rostrum_core::{CheckState, Label, Mergeable, PrNumber, PullRequest, ReviewDecision, User};
+use rostrum_core::{
+    CheckState, Label, MergeStateStatus, Mergeable, PrNumber, PullRequest, ReviewDecision, User,
+};
 use serde::Deserialize;
 
 use crate::error::GraphQlError;
@@ -30,6 +32,7 @@ query($owner: String!, $name: String!, $first: Int!) {
         deletions
         changedFiles
         mergeable
+        mergeStateStatus
         reviewDecision
         labels(first: 10) { nodes { name color } }
         comments { totalCount }
@@ -117,16 +120,18 @@ pub struct PrNode {
     pub additions: u32,
     pub deletions: u32,
     pub changed_files: u32,
-    #[serde(default = "unknown_mergeable")]
+    /// Both merge fields are defaulted rather than required. GitHub computes
+    /// them lazily and has been observed to omit them entirely on the request
+    /// that triggers the computation; a missing one must degrade to `Unknown`,
+    /// not fail the whole repository's decode.
+    #[serde(default)]
     pub mergeable: Mergeable,
+    #[serde(default)]
+    pub merge_state_status: MergeStateStatus,
     pub review_decision: Option<ReviewDecision>,
     pub labels: Option<Connection<LabelNode>>,
     pub comments: Option<TotalCount>,
     pub commits: Option<Connection<CommitEdge>>,
-}
-
-fn unknown_mergeable() -> Mergeable {
-    Mergeable::Unknown
 }
 
 #[derive(Debug, Deserialize)]
@@ -194,6 +199,7 @@ impl PrNode {
             deletions: self.deletions,
             changed_files: self.changed_files,
             mergeable: self.mergeable,
+            merge_state: self.merge_state_status,
             review_decision: self.review_decision,
             labels: self
                 .labels
@@ -238,6 +244,7 @@ mod tests {
                 "deletions": 2,
                 "changedFiles": 3,
                 "mergeable": "MERGEABLE",
+                "mergeStateStatus": "BLOCKED",
                 "reviewDecision": "APPROVED",
                 "labels": { "nodes": [{ "name": "bug", "color": "d73a4a" }] },
                 "comments": { "totalCount": 4 },
@@ -295,6 +302,8 @@ mod tests {
             Some("octocat")
         );
         assert_eq!(pr.mergeable, Mergeable::Mergeable);
+        assert_eq!(pr.merge_state, MergeStateStatus::Blocked);
+        assert_eq!(pr.merge_status(), rostrum_core::MergeStatus::Blocked);
         assert_eq!(pr.review_decision, Some(ReviewDecision::Approved));
         assert_eq!(pr.checks, Some(CheckState::Success));
         assert_eq!(pr.head_sha, "deadbeefcafe");
@@ -315,6 +324,8 @@ mod tests {
         assert!(pr.checks.is_none());
         assert!(pr.review_decision.is_none());
         assert_eq!(pr.mergeable, Mergeable::Unknown);
+        // The second node omits `mergeStateStatus` altogether.
+        assert_eq!(pr.merge_state, MergeStateStatus::Unknown);
     }
 
     #[test]

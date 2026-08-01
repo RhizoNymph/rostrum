@@ -4,7 +4,7 @@
 //! which is GPL-3.0-or-later.
 
 use gpui::{App, Global, Hsla, SharedString, rgb};
-use rostrum_core::CheckState;
+use rostrum_core::{CheckState, MergeStatus};
 
 /// Fonts preferred in order; the first one actually installed wins. GPUI will
 /// happily accept a family name that does not exist and then render nothing,
@@ -98,6 +98,21 @@ impl Theme {
             Some(CheckState::Failure | CheckState::Error) => self.danger,
             Some(CheckState::Pending | CheckState::Expected) => self.warning,
             None => self.text_subtle,
+        }
+    }
+
+    /// Colour for a merge verdict.
+    ///
+    /// Only conflicts are red: they are the one state the branch cannot leave
+    /// without someone editing code. Protection rules and a stale base are
+    /// ordinary waypoints in a review, so they are amber rather than alarming.
+    pub fn merge_color(&self, status: MergeStatus) -> Hsla {
+        match status {
+            MergeStatus::Conflicts => self.danger,
+            MergeStatus::Blocked | MergeStatus::Behind | MergeStatus::Unstable => self.warning,
+            MergeStatus::Ready => self.success,
+            MergeStatus::Draft => self.draft,
+            MergeStatus::Computing => self.text_subtle,
         }
     }
 }
