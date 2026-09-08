@@ -16,8 +16,6 @@ notifications. `docs/OVERVIEW.md` lists what is deliberately still missing.
 ## Requirements
 
 - Rust nightly (edition 2024)
-- A local Zed checkout at `/home/nymph/Code/devtools/zed` (see "Dependency
-  sourcing" in `docs/OVERVIEW.md` for the portable git-dependency form)
 - [`gh`](https://cli.github.com/) authenticated (`gh auth login`), or
   `GITHUB_TOKEN` set
 - Wayland. X11 additionally needs `sudo apt install libxkbcommon-x11-dev`
@@ -27,6 +25,9 @@ notifications. `docs/OVERVIEW.md` lists what is deliberately still missing.
 ```sh
 cargo run -p rostrum
 ```
+
+GPUI comes from a pinned Zed git rev, so the first build clones Zed's history
+(~500 MB) into cargo's shared git cache. Subsequent builds reuse it.
 
 Verify the data layer alone, without opening a window:
 

@@ -150,11 +150,16 @@ then add `"x11"` back to the `gpui`/`gpui_platform` feature lists in the root
 
 ## Dependency sourcing
 
-The workspace currently points `gpui`, `gpui_platform`, and `gpui_tokio` at a
-local Zed checkout (`/home/nymph/Code/devtools/zed`) for fast iteration — Zed's
-git history is ~500 MB, so a cargo git dependency would clone that on first
-build. The portable form (a pinned git rev on all three) is documented inline in
-the root `Cargo.toml`.
+`gpui`, `gpui_platform`, and `gpui_tokio` are pinned to one Zed git rev in the
+root `Cargo.toml`. The rev is spelled out three times rather than shared, because
+cargo has no way to factor it out; moving it means editing all three lines
+together, and the three must never disagree.
+
+Zed's git history is ~500 MB, so the first build clones it into cargo's shared
+git cache (`~/.cargo/git`). That cost is paid once per machine per rev, not once
+per project. Iterating on GPUI itself is the case that wants a local checkout:
+swap all three for `path` deps into its `crates/`, and swap them back before
+committing.
 
 Zed patches `async-process`, `async-task`, and `calloop` to its own forks. The
 root `Cargo.toml` replicates those `[patch.crates-io]` entries, without which the
