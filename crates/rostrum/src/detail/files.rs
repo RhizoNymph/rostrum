@@ -19,7 +19,7 @@ use rostrum_ui::{
     components::{Button, ButtonStyle, Chip, DiffStat, h_flex, v_flex},
 };
 
-use crate::detail::{DraftAnchor, Loadable, PrDetail};
+use crate::detail::{DraftAnchor, FilesView, Loadable, PrDetail, overview};
 
 /// One row of the flattened diff stream.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -121,6 +121,13 @@ pub fn selected_text(rows: &[DiffRow], files: &[DiffFile], selection: LineSelect
     }
 
     out
+}
+
+/// Row index of `file`'s header in the flattened stream, the scroll target
+/// when the overview jumps into the diff.
+pub fn file_header_row(rows: &[DiffRow], file: usize) -> Option<usize> {
+    rows.iter()
+        .position(|row| matches!(row, DiffRow::FileHeader { file: f } if *f == file))
 }
 
 /// Rebuild the row stream from a `PrDetail`'s current state.
@@ -248,16 +255,61 @@ pub fn render(detail: &PrDetail, cx: &Context<PrDetail>) -> AnyElement {
         Loadable::Loaded(_) => {}
     }
 
-    let entity = cx.entity();
-    div()
+    let body = match detail.files_view {
+        FilesView::Overview => overview::render(detail, cx),
+        FilesView::Diff => {
+            let entity = cx.entity();
+            div()
+                .size_full()
+                .child(
+                    list(detail.diff_list.clone(), move |ix, window, cx| {
+                        entity.update(cx, |detail, cx| render_row(detail, ix, window, cx))
+                    })
+                    .size_full(),
+                )
+                .into_any_element()
+        }
+    };
+
+    v_flex()
         .size_full()
-        .child(
-            list(detail.diff_list.clone(), move |ix, window, cx| {
-                entity.update(cx, |detail, cx| render_row(detail, ix, window, cx))
-            })
-            .size_full(),
-        )
+        .child(view_toggle(detail.files_view, &theme, cx))
+        .child(div().flex_1().min_h_0().overflow_hidden().child(body))
         .into_any_element()
+}
+
+/// The `Diff | Overview` switcher above the Files tab body.
+fn view_toggle(current: FilesView, theme: &Theme, cx: &Context<PrDetail>) -> impl IntoElement {
+    let style = |view: FilesView| {
+        if view == current {
+            ButtonStyle::Primary
+        } else {
+            ButtonStyle::Subtle
+        }
+    };
+
+    h_flex()
+        .gap_1()
+        .px_3()
+        .py_1p5()
+        .flex_none()
+        .border_b_1()
+        .border_color(theme.border)
+        .child(
+            Button::new("files-view-diff", "Diff")
+                .style(style(FilesView::Diff))
+                .on_click(PrDetail::on_click(cx, |this, cx| {
+                    this.set_files_view(FilesView::Diff, cx)
+                })),
+        )
+        .child(
+            Button::new("files-view-overview", "Overview")
+                .style(style(FilesView::Overview))
+                .tooltip("Where the changes fall, at a glance")
+                .on_click(PrDetail::on_click(cx, |this, cx| {
+                    this.set_files_view(FilesView::Overview, cx)
+                })),
+        )
 }
 
 fn render_row(
@@ -893,6 +945,24 @@ mod tests {
                 line: 1
             }
         );
+    }
+
+    #[test]
+    fn file_header_row_finds_each_files_header() {
+        let files = [file(), file()];
+        let rows = flatten(&files, &[], &[], None, &HashSet::new());
+        assert_eq!(file_header_row(&rows, 0), Some(0));
+        let second = file_header_row(&rows, 1).expect("second header present");
+        assert_eq!(rows[second], DiffRow::FileHeader { file: 1 });
+        assert_eq!(file_header_row(&rows, 2), None);
+    }
+
+    /// A collapsed file still has a header row to scroll to.
+    #[test]
+    fn file_header_row_survives_collapse() {
+        let collapsed = HashSet::from([0usize]);
+        let rows = flatten(&[file()], &[], &[], None, &collapsed);
+        assert_eq!(file_header_row(&rows, 0), Some(0));
     }
 
     #[test]
