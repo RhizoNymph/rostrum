@@ -72,6 +72,11 @@ Features Index:
     entry_points: [crates/rostrum/src/detail/files.rs, crates/rostrum-diff/src/lib.rs]
     depends_on: [ui_foundation, github_sync, pr_detail]
     doc: docs/features/diff_review.md
+  diff_overview:
+    description: Visual overview of a diff — change map by directory/file churn, ranked largest-changes list, click-to-jump.
+    entry_points: [crates/rostrum/src/detail/overview.rs, crates/rostrum-diff/src/overview.rs]
+    depends_on: [ui_foundation, diff_review]
+    doc: docs/features/diff_overview.md
   github_sync:
     description: Auth, GraphQL/REST client, polling, cache, rate limits.
     entry_points: [crates/rostrum-github/src/lib.rs, crates/rostrum/src/sync.rs]
@@ -177,7 +182,7 @@ Each phase leaves a usable application.
 
 ## Status
 
-All five phases are complete and verified against the live API. 405 tests pass;
+All five phases are complete and verified against the live API. 418 tests pass;
 clippy is clean across the workspace.
 
 End-to-end verification (`cargo run -p rostrum --example review`) against real

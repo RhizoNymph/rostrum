@@ -35,9 +35,11 @@
 
 pub mod highlight;
 pub mod model;
+pub mod overview;
 pub mod parse;
 
 pub use highlight::{HighlightSpan, Highlighter, SpanStyle, SyntaxRef};
 pub use model::{CommentAnchor, DiffFile, DiffLine, FileStatus, Hunk, LineKind, PatchAvailability};
+pub use overview::{DirGroup, OverviewStats, Tile, change_map, overview_stats, ranked_files};
 pub use parse::{DiffParseError, parse_patch};
 pub use rostrum_core::Side;
