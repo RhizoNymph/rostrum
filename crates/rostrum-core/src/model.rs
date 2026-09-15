@@ -85,6 +85,35 @@ impl fmt::Display for PrNumber {
     }
 }
 
+/// A GitHub GraphQL node identifier: opaque, and stable for the life of the
+/// object it names.
+///
+/// Kept distinct from [`PrNumber`] because the two are not interchangeable. The
+/// number is what a human types and what REST paths are built from; the node id
+/// is the only handle GraphQL mutations accept. Confusing them is a runtime
+/// error GitHub reports late, so the type system separates them here.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct NodeId(pub String);
+
+impl NodeId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for NodeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<String> for NodeId {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct User {
     pub login: String,
@@ -250,6 +279,10 @@ pub struct Label {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PullRequest {
     pub number: PrNumber,
+    /// Handle for the GraphQL mutations that have no REST equivalent, draft
+    /// conversion among them. Fetched with the feed query rather than looked up
+    /// per mutation, so toggling draft state is one round trip.
+    pub node_id: NodeId,
     pub title: String,
     pub url: String,
     pub is_draft: bool,
@@ -361,6 +394,7 @@ mod tests {
     fn pr(title: &str, author: &str) -> PullRequest {
         PullRequest {
             number: PrNumber(1),
+            node_id: NodeId("PR_kwDOAbc".into()),
             title: title.into(),
             url: String::new(),
             is_draft: false,

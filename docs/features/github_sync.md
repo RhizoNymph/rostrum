@@ -7,7 +7,8 @@ rate-limit handling.
 
 - Resolving a GitHub token.
 - GraphQL v4 queries for bulk PR reads.
-- REST v3 calls for mutations and for diff/file fetches.
+- REST v3 calls for mutations and for diff/file fetches, and the GraphQL
+  mutations for the one operation REST cannot express (draft conversion).
 - The polling scheduler and its overlap guard.
 - SQLite cache for cold start, offline reads, and ETag storage.
 - Rate-limit accounting and backoff.
@@ -75,7 +76,7 @@ repository(owner: $owner, name: $name) {
   pullRequests(states: OPEN, first: 50,
                orderBy: {field: UPDATED_AT, direction: DESC}) {
     nodes {
-      number title url isDraft createdAt updatedAt
+      id number title url isDraft createdAt updatedAt
       author { login avatarUrl }
       headRefName baseRefName
       additions deletions changedFiles
@@ -135,6 +136,8 @@ resetAt }` field is requested on every query and recorded.
 | Reply in thread | `POST /repos/{o}/{r}/pulls/{n}/comments/{id}/replies` |
 | Merge | `PUT /repos/{o}/{r}/pulls/{n}/merge` |
 | Close | `PATCH /repos/{o}/{r}/pulls/{n}` |
+| Convert to draft | GraphQL `convertPullRequestToDraft` — no REST equivalent |
+| Ready for review | GraphQL `markPullRequestReadyForReview` — no REST equivalent |
 
 REST responses carry ETags. Store them keyed by URL in SQLite and send
 `If-None-Match`; a `304` costs no rate limit and lets the cached body stand.
@@ -143,6 +146,61 @@ REST responses carry ETags. Store them keyed by URL in SQLite and send
 are omitted for very large files. Both cases are represented explicitly in the
 model (`PatchAvailability::{Present, Omitted, Truncated}`) rather than as an
 empty patch, so the UI can say why a diff is unavailable.
+
+### Draft conversion is the one mutation GraphQL owns
+
+REST accepts `draft` only when a pull request is *created*. `PATCH
+/repos/{o}/{r}/pulls/{n}` ignores the field, so there is no REST route out of —
+or back into — draft state. The only operations that work are a pair of GraphQL
+mutations:
+
+```graphql
+mutation($id: ID!) {
+  payload: convertPullRequestToDraft(input: {pullRequestId: $id}) {
+    pullRequest { id isDraft }
+  }
+}
+
+mutation($id: ID!) {
+  payload: markPullRequestReadyForReview(input: {pullRequestId: $id}) {
+    pullRequest { id isDraft }
+  }
+}
+```
+
+Three consequences shape the implementation:
+
+- **There is no "set draft to X".** The two directions are distinct operations
+  with distinct payload types. `DraftState` models the requested *end state* and
+  selects the document; `DraftState::toggled_from(is_draft)` is how a caller
+  turns a current state into a target. Modelling it as an end state rather than
+  a toggle is what makes a stale `is_draft` harmless — the worst case is a
+  redundant request GitHub refuses.
+- **Both take a node id, not `owner/name/number`.** This is why
+  `PullRequest::node_id` exists and why the feed query asks for `id`: fetching
+  it with the feed makes a conversion one round trip instead of a lookup
+  followed by a mutation. Pull requests cached before the field existed have no
+  value for it, which is what `CACHE_SCHEMA_VERSION = "2"` drops.
+- **Both payloads are aliased to `payload`**, so one wire type (`SetDraftData`)
+  decodes either response. The mutations return the resulting `isDraft`, and
+  `set_draft` reports a result that lands on the wrong side rather than assuming
+  success. A withheld `pullRequest` — permitted when the viewer may see the
+  mutation result but not the pull request — is treated as success, since the
+  mutation itself did not error.
+
+A refusal (already in the target state, or no write access) arrives as HTTP 200
+with a null payload and a populated `errors[]`, which the shared GraphQL helper
+turns into `GitHubError::GraphQl` carrying GitHub's own wording.
+
+### One GraphQL path for reads and writes
+
+`GitHubClient::graphql` is the single place that posts a document and unpacks the
+response. It folds the three separate ways a GraphQL call fails — a non-success
+HTTP status, a 200 carrying `errors[]`, and a 200 whose `data` is null — into one
+decision, and maps an all-`NOT_FOUND` error array onto `GitHubError::NotFound`
+naming the resource that was addressed. The feed query, the conversation query,
+and both draft mutations go through it, so none of them can drift on how a
+partial failure is interpreted.
 
 ## Cache — `rostrum-db`
 
@@ -207,6 +265,8 @@ Two rules that matter in practice:
 ## Invariants
 
 - Exactly one in-flight request per repo, enforced by `pending: Option<Task<()>>`.
+- Every pull request carries its GraphQL `node_id`, so no mutation needs a lookup
+  round trip to address it.
 - Mutations invalidate the affected PR's cache entry and trigger an immediate
   targeted refresh; optimistic local updates are reconciled by that refresh.
 - Rate-limit state is checked before issuing a poll; when exhausted, polling

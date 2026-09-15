@@ -9,7 +9,7 @@ PR-level actions.
 - PR header (title, state, branches, author, labels, mergeability).
 - Conversation timeline: body, issue comments, reviews, review threads, events.
 - Comment composer.
-- PR-level actions: merge, close, reopen, ready-for-review.
+- PR-level actions: merge, close, reopen, draft conversion in both directions.
 - Checks tab.
 
 ## Non-scope
@@ -92,13 +92,25 @@ diff view.
 | Approve / Request changes / Comment review | Submits pending review if one exists, else a bodied review |
 | Merge | Confirmation required; method from config (merge/squash/rebase) |
 | Close / Reopen | Confirmation required |
-| Ready for review | Clears draft status |
+| Convert to draft / Ready for review | Fires immediately; one button, labelled by the state it moves to |
 | Add / remove label | Toggles a label via the issues API |
 
 **Merge and close require explicit confirmation.** They are outward-facing and
 effectively irreversible from the app's perspective. The merge confirmation shows
 the target branch, the method, and any blocking state (failing checks, requested
 changes, conflicts) so the decision is made with the relevant facts visible.
+
+**Draft conversion deliberately does not.** It is the one PR-level state change
+that is undone by pressing the same button again, and neither direction ends the
+pull request, so a confirmation would cost a click on every use and buy nothing.
+
+The draft button carries the *end state* it moves to, computed when the row was
+rendered: `DraftState::toggled_from(pull.is_draft)`. A poll landing between
+render and click can therefore only make the request redundant — GitHub refuses
+a conversion to a state the pull request is already in, and the refusal lands in
+the error banner — never invert it. Converting to a draft also makes `Merge`
+unavailable, because `MergeStatus::Draft` blocks it; both read the same
+`is_draft`, so the two cannot disagree.
 
 ### Mergeability
 
@@ -184,6 +196,9 @@ scheduled in phase 2.
 - A `ThreadId` maps to exactly one stored thread, shared by both views.
 - Timeline items are ordered by `created_at` ascending.
 - Destructive or outward-facing actions (merge, close) require confirmation.
+  Draft conversion is exempt: it is reversible by the same button.
+- The draft button's target is an end state fixed at render, never a toggle
+  evaluated at click time.
 - Optimistic updates are tagged and replaced wholesale by the next authoritative
   refresh; they are never merged field-by-field.
 

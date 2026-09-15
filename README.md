@@ -9,9 +9,10 @@ each in its own container, in a single continuous scroll.
 
 Complete: the multi-repo feed, the conversation timeline with markdown, the
 syntax-highlighted diff, inline comments (single- and multi-line) with
-pending-review batching, review submission, merge/close, a local SQLite cache,
-text selection, keyboard navigation, filtering, and optional desktop
-notifications. `docs/OVERVIEW.md` lists what is deliberately still missing.
+pending-review batching, review submission, merge/close, draft conversion in
+both directions, a local SQLite cache, text selection, keyboard navigation,
+filtering, and optional desktop notifications. `docs/OVERVIEW.md` lists what is
+deliberately still missing.
 
 ## Requirements
 
