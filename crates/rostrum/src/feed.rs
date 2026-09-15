@@ -888,6 +888,7 @@ mod tests {
     fn pr(number: u32, draft: bool) -> rostrum_core::PullRequest {
         rostrum_core::PullRequest {
             number: rostrum_core::PrNumber(number),
+            node_id: rostrum_core::NodeId(format!("PR_{number}")),
             title: format!("PR {number}"),
             url: String::new(),
             is_draft: draft,

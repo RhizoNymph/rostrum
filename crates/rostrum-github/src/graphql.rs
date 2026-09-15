@@ -5,7 +5,8 @@
 
 use chrono::{DateTime, Utc};
 use rostrum_core::{
-    CheckState, Label, MergeStateStatus, Mergeable, PrNumber, PullRequest, ReviewDecision, User,
+    CheckState, Label, MergeStateStatus, Mergeable, NodeId, PrNumber, PullRequest, ReviewDecision,
+    User,
 };
 use serde::Deserialize;
 
@@ -18,6 +19,7 @@ query($owner: String!, $name: String!, $first: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequests(states: OPEN, first: $first, orderBy: {field: UPDATED_AT, direction: DESC}) {
       nodes {
+        id
         number
         title
         url
@@ -44,6 +46,89 @@ query($owner: String!, $name: String!, $first: Int!) {
   }
 }
 "#;
+
+/// Which side of the draft toggle a caller is asking for.
+///
+/// GitHub has no "set draft to X" mutation. The two directions are separate
+/// operations with separate payload types, so the requested end state is what
+/// selects the document — and modelling it as the end state rather than as
+/// "toggle" keeps a stale view from flipping a pull request the wrong way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DraftState {
+    Draft,
+    ReadyForReview,
+}
+
+impl DraftState {
+    /// The end state a pull request currently in `is_draft` should be moved to.
+    pub fn toggled_from(is_draft: bool) -> Self {
+        if is_draft {
+            Self::ReadyForReview
+        } else {
+            Self::Draft
+        }
+    }
+
+    /// What `PullRequest::is_draft` reads once this mutation lands.
+    pub fn is_draft(self) -> bool {
+        matches!(self, Self::Draft)
+    }
+
+    /// The mutation document that reaches this end state.
+    pub fn mutation(self) -> &'static str {
+        match self {
+            Self::Draft => CONVERT_TO_DRAFT,
+            Self::ReadyForReview => MARK_READY_FOR_REVIEW,
+        }
+    }
+
+    /// Progressive label for the in-flight banner.
+    pub fn progress_label(self) -> &'static str {
+        match self {
+            Self::Draft => "Converting to draft",
+            Self::ReadyForReview => "Marking ready for review",
+        }
+    }
+}
+
+/// Both draft mutations alias their payload to `payload`, so one wire type
+/// ([`SetDraftData`]) decodes either response.
+pub const CONVERT_TO_DRAFT: &str = r#"
+mutation($id: ID!) {
+  payload: convertPullRequestToDraft(input: {pullRequestId: $id}) {
+    pullRequest { id isDraft }
+  }
+}
+"#;
+
+pub const MARK_READY_FOR_REVIEW: &str = r#"
+mutation($id: ID!) {
+  payload: markPullRequestReadyForReview(input: {pullRequestId: $id}) {
+    pullRequest { id isDraft }
+  }
+}
+"#;
+
+/// Response shape shared by both draft mutations, via the `payload` alias.
+#[derive(Debug, Deserialize)]
+pub struct SetDraftData {
+    /// `null` when the mutation failed; the `errors` array carries the reason.
+    pub payload: Option<SetDraftPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetDraftPayload {
+    /// `null` when the viewer may read the mutation result but not the pull
+    /// request itself, which GitHub permits.
+    pub pull_request: Option<DraftStateNode>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftStateNode {
+    pub is_draft: bool,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct GraphQlResponse<T> {
@@ -105,6 +190,9 @@ pub struct RepositoryNode {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrNode {
+    /// GraphQL node id. Carried on every pull request so the mutations that
+    /// only exist in GraphQL never need a lookup round trip first.
+    pub id: String,
     pub number: u32,
     pub title: String,
     pub url: String,
@@ -183,6 +271,7 @@ impl PrNode {
 
         PullRequest {
             number: PrNumber(self.number),
+            node_id: NodeId(self.id),
             title: self.title,
             url: self.url,
             is_draft: self.is_draft,
@@ -230,6 +319,7 @@ mod tests {
           "pullRequests": {
             "nodes": [
               {
+                "id": "PR_kwDOAAAAAc4AAAAB",
                 "number": 42,
                 "title": "Add the thing",
                 "url": "https://github.com/a/b/pull/42",
@@ -251,6 +341,7 @@ mod tests {
                 "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "SUCCESS" } } }] }
               },
               {
+                "id": "PR_kwDOAAAAAc4AAAAC",
                 "number": 43,
                 "title": "Draft work",
                 "url": "https://github.com/a/b/pull/43",
@@ -296,6 +387,7 @@ mod tests {
         let prs = parse();
         let pr = &prs[0];
         assert_eq!(pr.number, PrNumber(42));
+        assert_eq!(pr.node_id, NodeId("PR_kwDOAAAAAc4AAAAB".into()));
         assert_eq!(pr.title, "Add the thing");
         assert_eq!(
             pr.author.as_ref().map(|a| a.login.as_str()),
@@ -326,6 +418,102 @@ mod tests {
         assert_eq!(pr.mergeable, Mergeable::Unknown);
         // The second node omits `mergeStateStatus` altogether.
         assert_eq!(pr.merge_state, MergeStateStatus::Unknown);
+    }
+
+    // --- draft mutations ---------------------------------------------------
+
+    /// The end state, not a toggle: a caller holding a stale `is_draft` asks
+    /// for a specific side, and the two directions are distinct operations.
+    #[test]
+    fn draft_state_is_chosen_from_the_current_one() {
+        assert_eq!(DraftState::toggled_from(true), DraftState::ReadyForReview);
+        assert_eq!(DraftState::toggled_from(false), DraftState::Draft);
+        assert!(DraftState::Draft.is_draft());
+        assert!(!DraftState::ReadyForReview.is_draft());
+    }
+
+    /// Each direction must select its own mutation. Swapping these would
+    /// silently do the opposite of what the button says.
+    #[test]
+    fn each_direction_selects_its_own_mutation() {
+        assert!(
+            DraftState::Draft
+                .mutation()
+                .contains("convertPullRequestToDraft")
+        );
+        assert!(
+            DraftState::ReadyForReview
+                .mutation()
+                .contains("markPullRequestReadyForReview")
+        );
+    }
+
+    /// Both documents must alias their payload, because one wire type decodes
+    /// either response and the alias is what makes that work.
+    #[test]
+    fn both_mutations_alias_their_payload() {
+        for query in [CONVERT_TO_DRAFT, MARK_READY_FOR_REVIEW] {
+            assert!(query.contains("payload:"), "{query}");
+            assert!(query.contains("isDraft"), "{query}");
+        }
+    }
+
+    #[test]
+    fn decodes_either_draft_mutation_response() {
+        for (body, expected) in [
+            (
+                r#"{"data":{"payload":{"pullRequest":{"id":"PR_1","isDraft":true}}}}"#,
+                true,
+            ),
+            (
+                r#"{"data":{"payload":{"pullRequest":{"id":"PR_1","isDraft":false}}}}"#,
+                false,
+            ),
+        ] {
+            let response: GraphQlResponse<SetDraftData> =
+                serde_json::from_str(body).expect("should decode");
+            let is_draft = response
+                .data
+                .expect("data present")
+                .payload
+                .expect("payload present")
+                .pull_request
+                .expect("pull request present")
+                .is_draft;
+            assert_eq!(is_draft, expected);
+        }
+    }
+
+    /// GitHub may apply the mutation and still withhold the pull request, so a
+    /// null payload must decode rather than fail.
+    #[test]
+    fn tolerates_a_withheld_mutation_payload() {
+        let body = r#"{"data":{"payload":{"pullRequest":null}}}"#;
+        let response: GraphQlResponse<SetDraftData> =
+            serde_json::from_str(body).expect("should decode");
+        assert!(
+            response
+                .data
+                .expect("data present")
+                .payload
+                .expect("payload present")
+                .pull_request
+                .is_none()
+        );
+    }
+
+    /// A refused mutation answers HTTP 200 with a null payload and a populated
+    /// `errors` array, which must not be mistaken for success.
+    #[test]
+    fn a_refused_mutation_carries_its_reason() {
+        let body = r#"{
+          "data": { "payload": null },
+          "errors": [{ "message": "Pull request is already a draft" }]
+        }"#;
+        let response: GraphQlResponse<SetDraftData> =
+            serde_json::from_str(body).expect("should decode");
+        assert_eq!(response.errors.len(), 1);
+        assert!(response.data.expect("data key present").payload.is_none());
     }
 
     #[test]

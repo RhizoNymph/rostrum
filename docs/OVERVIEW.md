@@ -20,7 +20,8 @@ Overview:
       per-repo containers.
     pr_detail: >
       Master/detail right pane. Tabbed Conversation / Files / Checks view for a
-      selected PR, including the comment composer and PR-level actions.
+      selected PR, including the comment composer and the PR-level actions:
+      comment, review, merge, close, and draft conversion.
     diff_review: >
       Unified-diff parsing, syntax highlighting, virtualized diff rendering,
       inline comment threads, and pending-review batching.
@@ -49,7 +50,9 @@ Overview:
     those line numbers are what inline comments are anchored to when submitted.
 
     Mutations (comment, review, merge) go out over REST, are applied optimistically
-    to local state where safe, and are reconciled by the next poll.
+    to local state where safe, and are reconciled by the next poll. Draft
+    conversion is the exception: REST has no route for it, so it goes out as a
+    GraphQL mutation keyed by the pull request's node id.
 
 Features Index:
   ui_foundation:
@@ -101,7 +104,8 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 |---|---|---|
 | Auth | `gh auth token`, `$GITHUB_TOKEN` fallback | No secret storage of our own; `gh` handles SSO and refresh |
 | Reads | GraphQL v4 | One round-trip per repo instead of dozens; cost-based rate limit |
-| Mutations | REST v3 | Simpler, better-documented endpoints for merge/review/comment |
+| Mutations | REST v3, except draft conversion | Simpler, better-documented endpoints for merge/review/comment. REST accepts `draft` only at creation, so `convertPullRequestToDraft` / `markPullRequestReadyForReview` are the only way to change it |
+| Node ids | Fetched with the feed query | GraphQL mutations address a pull request by node id only. Carrying it on `PullRequest` makes a conversion one round trip, and is what the other GraphQL-only operations will need |
 | UI deps | `gpui` + `gpui_platform` only | Zed's `ui`/`theme`/`syntax_theme` are GPL-3.0-or-later |
 | Diff parsing | hand-rolled | `diffy` requires `---`/`+++` headers GitHub's per-file patches lack, and exposes neither `\ No newline` nor the raw `@@` line |
 | Highlighting | `syntect` (pure-Rust regex) | One dependency covering many languages, versus matching the tree-sitter ABI across a grammar crate per language. Tree-sitter remains the better long-term choice |
@@ -177,7 +181,7 @@ Each phase leaves a usable application.
 
 ## Status
 
-All five phases are complete and verified against the live API. 405 tests pass;
+All five phases are complete and verified against the live API. 411 tests pass;
 clippy is clean across the workspace.
 
 End-to-end verification (`cargo run -p rostrum --example review`) against real

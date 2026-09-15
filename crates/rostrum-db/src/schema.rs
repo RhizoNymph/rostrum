@@ -7,7 +7,11 @@ use tracing::{info, warn};
 use crate::error::DbError;
 
 /// Bumping this drops and recreates every cache table on next open.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1";
+///
+/// 2: pull requests carry a GraphQL `node_id`, which rows written by version 1
+/// have no value for. Dropping them costs one refresh; keeping them would leave
+/// cached pull requests that cannot be converted to or from draft.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "2";
 
 /// Bumping this requires writing a real migration — draft rows are user work
 /// and are never dropped.

@@ -160,7 +160,7 @@ fn post(new: NewPr, cx: &mut App) {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use rostrum_core::{MergeStateStatus, Mergeable, PullRequest};
+    use rostrum_core::{MergeStateStatus, Mergeable, NodeId, PullRequest};
 
     fn numbers(values: &[u32]) -> HashSet<PrNumber> {
         values.iter().copied().map(PrNumber).collect()
@@ -169,6 +169,7 @@ mod tests {
     fn pr(number: u32) -> PullRequest {
         PullRequest {
             number: PrNumber(number),
+            node_id: NodeId(format!("PR_{}", number)),
             title: format!("PR {number}"),
             url: String::new(),
             is_draft: false,

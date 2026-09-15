@@ -107,7 +107,7 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{MergeStateStatus, Mergeable, PrNumber};
+    use crate::model::{MergeStateStatus, Mergeable, NodeId, PrNumber};
 
     fn repo_with(id: &str, numbers: &[u32]) -> RepoState {
         let mut state = RepoState::new(id.parse().expect("valid repo id"));
@@ -115,6 +115,7 @@ mod tests {
             .iter()
             .map(|n| PullRequest {
                 number: PrNumber(*n),
+                node_id: NodeId(format!("PR_{}", *n)),
                 title: format!("PR {n}"),
                 url: String::new(),
                 is_draft: false,

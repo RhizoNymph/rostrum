@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Duration, Utc};
 use rostrum_core::{
     CheckRun, CheckState, CommentId, Conversation, EventKind, Label, MergeStateStatus, Mergeable,
-    PrNumber, PullRequest, RepoId, ReviewDecision, ReviewThread, Side, ThreadComment, ThreadId,
-    TimelineItem, User,
+    NodeId, PrNumber, PullRequest, RepoId, ReviewDecision, ReviewThread, Side, ThreadComment,
+    ThreadId, TimelineItem, User,
 };
 use rostrum_github::DraftComment;
 
@@ -29,6 +29,7 @@ fn at(secs: i64) -> DateTime<Utc> {
 fn pr(number: u32) -> PullRequest {
     PullRequest {
         number: PrNumber(number),
+        node_id: NodeId(format!("PR_{}", number)),
         title: format!("pull request {number}"),
         url: format!("https://github.com/rhizonymph/rostrum/pull/{number}"),
         is_draft: number.is_multiple_of(2),

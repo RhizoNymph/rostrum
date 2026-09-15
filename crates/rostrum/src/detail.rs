@@ -20,8 +20,8 @@ use rostrum_core::{Conversation, Label, PrNumber, PullRequest, RepoId, ReviewDec
 use rostrum_db::Db;
 use rostrum_diff::{DiffFile, FileStatus, Highlighter, PatchAvailability, parse_patch};
 use rostrum_github::{
-    DraftComment, GitHubClient, GitHubError, IssueState, MergeMethod, PullRequestFile, ReviewEvent,
-    SubmitReview,
+    DraftComment, DraftState, GitHubClient, GitHubError, IssueState, MergeMethod, PullRequestFile,
+    ReviewEvent, SubmitReview,
 };
 use rostrum_ui::{
     ActiveTheme, TextInput,
@@ -639,6 +639,26 @@ impl PrDetail {
         }
     }
 
+    /// Move this pull request to the other side of the draft line.
+    ///
+    /// Unlike merge and close, this is not held behind a confirmation: both
+    /// directions are one click away from being undone, and neither ends the
+    /// pull request.
+    ///
+    /// `target` is an end state computed when the button was rendered, not a
+    /// toggle evaluated here. A poll landing between render and click can only
+    /// make the request redundant — which GitHub refuses, and the refusal shows
+    /// in the error banner — never make it do the opposite of what the button
+    /// said.
+    fn set_draft(&mut self, target: DraftState, cx: &mut Context<Self>) {
+        let Some(id) = self.pull(cx).map(|pull| pull.node_id) else {
+            return;
+        };
+        self.mutate(target.progress_label(), cx, move |client, repo, number| {
+            Box::pin(async move { client.set_draft(&repo, number, &id, target).await })
+        });
+    }
+
     fn confirmed(&mut self, cx: &mut Context<Self>) {
         let Some(action) = self.confirm.take() else {
             return;
@@ -1127,6 +1147,26 @@ impl PrDetail {
                                 cx.notify();
                             })),
                     )
+                    .child({
+                        let target = DraftState::toggled_from(pull.is_draft);
+                        Button::new(
+                            "draft",
+                            if pull.is_draft {
+                                "Ready for review"
+                            } else {
+                                "Convert to draft"
+                            },
+                        )
+                        .disabled(busy)
+                        .tooltip(if pull.is_draft {
+                            "Take this out of draft and request the reviews it is waiting on"
+                        } else {
+                            "Put this back into draft so it cannot be merged"
+                        })
+                        .on_click(Self::on_click(cx, move |this, cx| {
+                            this.set_draft(target, cx)
+                        }))
+                    })
                     .child(
                         Button::new("close", "Close")
                             .style(ButtonStyle::Danger)
