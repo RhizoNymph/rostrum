@@ -138,6 +138,8 @@ resetAt }` field is requested on every query and recorded.
 | Close | `PATCH /repos/{o}/{r}/pulls/{n}` |
 | Convert to draft | GraphQL `convertPullRequestToDraft` — no REST equivalent |
 | Ready for review | GraphQL `markPullRequestReadyForReview` — no REST equivalent |
+| Update from base | GraphQL `updatePullRequestBranch` — REST cannot rebase |
+| Divergence counts | GraphQL `Ref.compare` — read, not a mutation |
 
 REST responses carry ETags. Store them keyed by URL in SQLite and send
 `If-None-Match`; a `304` costs no rate limit and lets the cached body stand.
@@ -191,6 +193,73 @@ Three consequences shape the implementation:
 A refusal (already in the target state, or no write access) arrives as HTTP 200
 with a null payload and a populated `errors[]`, which the shared GraphQL helper
 turns into `GitHubError::GraphQl` carrying GitHub's own wording.
+
+### Updating a branch from its base is GraphQL-only too
+
+Same story as draft conversion, for the same reason. REST has
+`PUT /repos/{o}/{r}/pulls/{n}/update-branch`, but it takes no `update_method`
+parameter and is documented as "merging HEAD from the base branch into the pull
+request branch" — merge, always. Rebase exists in the web UI and in `gh pr
+update-branch --rebase`, and the only programmatic route to it is the GraphQL
+mutation:
+
+```graphql
+mutation($id: ID!, $oid: GitObjectID!, $method: PullRequestBranchUpdateMethod!) {
+  payload: updatePullRequestBranch(input: {
+    pullRequestId: $id, expectedHeadOid: $oid, updateMethod: $method
+  }) { pullRequest { headRefOid } }
+}
+```
+
+`PullRequestBranchUpdateMethod` has exactly two values, `MERGE` and `REBASE`,
+which is why `BranchUpdateMethod` models two variants and nothing else.
+
+`expectedHeadOid` carries the head sha the view was rendered from. GitHub
+compares it against the branch's current tip and refuses the mutation when they
+differ, so a branch someone pushed to between render and click is never silently
+rewritten. That is the same race guard `set_draft` gets for free from asking for
+an end state, spelled explicitly here because "update from base" has no end state
+to check.
+
+### Divergence counts
+
+`MergeStateStatus::Behind` says *that* a branch is behind. It never says by how
+much, and the number is what decides whether the answer is "click update" or
+"this has drifted far enough to look at by hand".
+
+```graphql
+query($owner: String!, $name: String!, $base: String!, $head: String!) {
+  repository(owner: $owner, name: $name) {
+    ref(qualifiedName: $base) {
+      compare(headRef: $head) { aheadBy behindBy status }
+    }
+  }
+}
+```
+
+`Ref.compare` counts both sides relative to the *head* ref, which is the
+direction `rostrum_core::Divergence` fixes: `behind` is always work the pull
+request has not caught up with.
+
+Two decisions worth stating:
+
+- **`compare` decodes as `Option`, and a null is not a failure.** A head ref the
+  base repository cannot resolve — the cross-fork case — comes back as
+  `"compare": null` alongside a `NOT_FOUND` error rather than failing the
+  request. `GitHubClient::divergence` therefore answers `Ok(None)`, catching
+  `NotFound` at that one call site rather than weakening the shared `graphql`
+  helper, where every other caller genuinely wants a missing resource to be an
+  error. `None` means "ask the local clone instead", which is exactly what the
+  detail pane does.
+- **`status` is requested but not decoded.** `ComparisonStatus` restates what the
+  two counts already say, and `Divergence::relation()` derives the same verdict
+  locally. Decoding it as a closed enum would let a value GitHub adds later fail
+  the whole query.
+
+This is a per-pull-request read, issued lazily by the detail pane, not part of
+the feed query — `Ref.compare` takes the head ref name as an argument, and a
+GraphQL field cannot reference a sibling field's value, so folding it into the
+feed would mean building a document with one aliased `compare` per pull request.
 
 ### One GraphQL path for reads and writes
 

@@ -9,7 +9,10 @@ PR-level actions.
 - PR header (title, state, branches, author, labels, mergeability).
 - Conversation timeline: body, issue comments, reviews, review threads, events.
 - Comment composer.
-- PR-level actions: merge, close, reopen, draft conversion in both directions.
+- PR-level actions: merge, close, reopen, draft conversion in both directions,
+  and updating a branch from its base by merge or rebase.
+- Branch divergence: how far behind the base this branch is, and how far behind
+  its remote counterpart the local clone is.
 - Checks tab.
 
 ## Non-scope
@@ -93,6 +96,7 @@ diff view.
 | Merge | Confirmation required; method from config (merge/squash/rebase) |
 | Close / Reopen | Confirmation required |
 | Convert to draft / Ready for review | Fires immediately; one button, labelled by the state it moves to |
+| Update: Merge / Update: Rebase | Shown only when behind the base; sends `expectedHeadOid` as a race guard |
 | Add / remove label | Toggles a label via the issues API |
 
 **Merge and close require explicit confirmation.** They are outward-facing and
@@ -111,6 +115,51 @@ a conversion to a state the pull request is already in, and the refusal lands in
 the error banner — never invert it. Converting to a draft also makes `Merge`
 unavailable, because `MergeStatus::Draft` blocks it; both read the same
 `is_draft`, so the two cannot disagree.
+
+### Branch divergence
+
+`MergeStatus::Behind` answers "is this branch behind?"; the header chip and the
+branch-sync row answer "by how much, and what would you like to do about it".
+
+`PrDetail::base_divergence` is a `Loadable<Divergence>` loaded eagerly in `new`
+and again from `refresh`, because the header shows it unconditionally and a
+number that appears a beat after the rest of the header reads as a glitch.
+
+Three states, and the distinction between the last two matters:
+
+| State | Meaning | Renders as |
+|---|---|---|
+| `Loaded(d)` where `d.is_behind()` | Behind by `d.behind` | Chip + branch-sync row |
+| `Loaded(d)` where `!d.is_behind()` | Current, or merely ahead | Nothing |
+| `Idle` after a load | GitHub declined to compare | Nothing |
+| `Failed(m)` | The request itself failed | Error banner |
+
+The third row is the cross-fork case: `Ref.compare` cannot resolve a head ref
+that lives in a different repository, and GitHub says so with a null comparison
+rather than an error. Returning to `Idle` rather than `Failed` is deliberate —
+an unanswerable question should cost an absent chip, not an error banner on a
+pull request that is otherwise perfectly healthy.
+
+Every open pull request is ahead of its base, so "ahead" alone earns no chip.
+Only `behind` does.
+
+### Updating from the base
+
+Two buttons, `Update: Merge` and `Update: Rebase`, shown only when the branch is
+actually behind. Both go through `GitHubClient::update_branch` and therefore
+through the same `mutate` helper as every other PR-level action, so the
+in-flight guard, error banner, and authoritative reload apply unchanged.
+
+Neither is held behind a confirmation. Both only ever *add* the base's commits
+to a branch that is behind it, and the mutation carries `expectedHeadOid` from
+the head sha the view was rendered with — so a branch someone pushed to between
+render and click is refused by GitHub rather than rewritten from a stale view.
+That is the same race guard the draft toggle gets from asking for an end state,
+made explicit here because "update from base" has no end state to check.
+
+When `Divergence::fast_forwards()` — the branch is behind but has no commits of
+its own — the two methods produce identical results, and both tooltips say so
+rather than leaving the reader to work it out.
 
 ### Mergeability
 

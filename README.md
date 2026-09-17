@@ -10,9 +10,10 @@ each in its own container, in a single continuous scroll.
 Complete: the multi-repo feed, the conversation timeline with markdown, the
 syntax-highlighted diff, inline comments (single- and multi-line) with
 pending-review batching, review submission, merge/close, draft conversion in
-both directions, a local SQLite cache, text selection, keyboard navigation,
-filtering, and optional desktop notifications. `docs/OVERVIEW.md` lists what is
-deliberately still missing.
+both directions, branch divergence with merge/rebase from the base, local clone
+sync, a local SQLite cache, text selection, keyboard navigation, filtering, and
+optional desktop notifications. `docs/OVERVIEW.md` lists what is deliberately
+still missing.
 
 ## Requirements
 
@@ -49,9 +50,20 @@ cargo run -p rostrum --example review -- zed-industries/zed 62051
   "repos": ["zed-industries/zed", "rust-lang/rust"],
   "refresh_secs": 60,
   "prs_per_repo": 25,
-  "notifications": false
+  "notifications": false,
+  "clones": {
+    "zed-industries/zed": "~/Code/zed"
+  },
+  "autostash": false
 }
 ```
+
+`clones` is optional and maps `owner/name` to a local checkout. A repository
+with one gains a local section on its pull requests: how far the checkout has
+drifted from the branch on GitHub, and buttons to pull or merge. Nothing is ever
+pushed — after a local merge or rebase the "ahead" count is the cue to push it
+yourself. `autostash` decides whether those operations pass `--autostash`; it is
+also a checkbox next to the buttons.
 
 Set `notifications` to `true` for a desktop notification when a pull request
 appears. The cache lives at `~/.local/share/rostrum/cache.db`; deleting it is

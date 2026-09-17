@@ -5,7 +5,7 @@ use reqwest::{
     Client, Method, RequestBuilder, StatusCode,
     header::{ACCEPT, HeaderMap},
 };
-use rostrum_core::{Conversation, Label, NodeId, PrNumber, PullRequest, RepoId};
+use rostrum_core::{Conversation, Divergence, Label, NodeId, PrNumber, PullRequest, RepoId};
 use serde::de::DeserializeOwned;
 use serde_json::json;
 
@@ -13,7 +13,10 @@ use crate::{
     auth::Token,
     conversation::{ConversationNode, ConversationQueryData, PULL_REQUEST_CONVERSATION},
     error::GitHubError,
-    graphql::{self, DraftState, GraphQlResponse, PrNode, RateLimit, RepoQueryData, SetDraftData},
+    graphql::{
+        self, BranchUpdateMethod, DivergenceQueryData, DraftState, GraphQlResponse, PrNode,
+        RateLimit, RepoQueryData, SetDraftData, UpdateBranchData,
+    },
     rest::{AddLabels, IssueState, MergeMethod, PullRequestFile, SubmitReview},
 };
 
@@ -384,6 +387,93 @@ impl GitHubClient {
             }),
             _ => Ok(()),
         }
+    }
+
+    /// How far the head branch has drifted from its base, or `None` when GitHub
+    /// cannot answer.
+    ///
+    /// `Ok(None)` is the cross-fork case: the base repository cannot resolve a
+    /// head ref that lives in a fork, and GitHub reports that as a null
+    /// `compare` *plus* a `NOT_FOUND` entry in `errors`. That is a routine
+    /// answer, not a failure — the caller compares against a local clone
+    /// instead — so it must not reach the user as an error.
+    ///
+    /// The `NOT_FOUND` is caught here rather than by threading a "some
+    /// NOT_FOUNDs are fine" option through [`Self::graphql`]: every other
+    /// caller of that helper genuinely wants a missing resource to be an error,
+    /// and this is the one query with a fallback to fall back to. Keeping the
+    /// exemption at the call site leaves the shared contract intact.
+    ///
+    /// A repository this token cannot see arrives as the same `NOT_FOUND` and
+    /// so also yields `Ok(None)`, which is the behaviour that is wanted anyway:
+    /// a local clone can answer for a repository the API will not.
+    pub async fn divergence(
+        &self,
+        repo: &RepoId,
+        base_ref: &str,
+        head_ref: &str,
+    ) -> Result<Option<Divergence>, GitHubError> {
+        let resource = format!("{repo} {base_ref}...{head_ref}");
+        let data: DivergenceQueryData = match self
+            .graphql(
+                graphql::PULL_REQUEST_DIVERGENCE,
+                json!({
+                    "owner": repo.owner(),
+                    "name": repo.name(),
+                    "base": base_ref,
+                    "head": head_ref,
+                }),
+                &resource,
+            )
+            .await
+        {
+            Ok(data) => data,
+            Err(GitHubError::NotFound { .. }) => return Ok(None),
+            Err(err) => return Err(err),
+        };
+
+        // A ref that resolved but produced no comparison lands here as `None`
+        // too, so both shapes of "GitHub declined" look the same to the caller.
+        Ok(data.into_domain())
+    }
+
+    /// Catch a branch up with its base, by merge or by rebase.
+    ///
+    /// GraphQL rather than REST because `PUT /pulls/{n}/update-branch` can only
+    /// merge, and rebase is the half of the choice that keeps a linear history.
+    /// Like [`Self::set_draft`] the mutation takes a node id, which is why
+    /// [`PullRequest::node_id`] travels with the feed.
+    ///
+    /// `expected_head` is the head oid the caller last saw. GitHub compares it
+    /// against the branch's current tip and refuses the mutation if they differ,
+    /// so a branch that moved since the view was rendered is never silently
+    /// rewritten — that refusal arrives in the `errors` array and becomes a
+    /// [`GitHubError::GraphQl`] naming GitHub's own reason.
+    pub async fn update_branch(
+        &self,
+        repo: &RepoId,
+        number: PrNumber,
+        id: &NodeId,
+        expected_head: &str,
+        method: BranchUpdateMethod,
+    ) -> Result<(), GitHubError> {
+        let resource = resource_name(repo, number);
+        // The payload is decoded but not asserted on: unlike the draft
+        // mutations there is no end state to contradict, since every way this
+        // can fail — a moved head, a conflict, no write access — is reported in
+        // `errors` and has already become an error by the time this returns.
+        let _: UpdateBranchData = self
+            .graphql(
+                graphql::UPDATE_PULL_REQUEST_BRANCH,
+                json!({
+                    "id": id.as_str(),
+                    "oid": expected_head,
+                    "method": method.as_api_str(),
+                }),
+                &resource,
+            )
+            .await?;
+        Ok(())
     }
 
     /// Send one GraphQL document and return its `data`.

@@ -4816,6 +4816,7 @@ dependencies = [
  "rostrum-core",
  "rostrum-db",
  "rostrum-diff",
+ "rostrum-git",
  "rostrum-github",
  "rostrum-md",
  "rostrum-ui",
@@ -4859,6 +4860,18 @@ dependencies = [
  "syntect",
  "thiserror 2.0.19",
  "tracing",
+]
+
+[[package]]
+name = "rostrum-git"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rostrum-core",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

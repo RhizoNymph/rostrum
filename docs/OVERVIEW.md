@@ -28,6 +28,10 @@ Overview:
     github_sync: >
       All network I/O. Token acquisition, GraphQL reads, REST mutations, the
       polling scheduler, the SQLite cache, and rate-limit handling.
+    local_git: >
+      The local half of a pull request: how far a clone has drifted from the
+      branch on GitHub, and pull/merge on that clone. Drives the `git` command
+      line; never writes to a remote.
 
   data_flow: >
     At startup the app resolves a GitHub token (`gh auth token`, falling back to
@@ -51,8 +55,9 @@ Overview:
 
     Mutations (comment, review, merge) go out over REST, are applied optimistically
     to local state where safe, and are reconciled by the next poll. Draft
-    conversion is the exception: REST has no route for it, so it goes out as a
-    GraphQL mutation keyed by the pull request's node id.
+    conversion and updating a branch from its base are the exceptions: REST
+    cannot express either one fully, so both go out as GraphQL mutations keyed by
+    the pull request's node id.
 
 Features Index:
   ui_foundation:
@@ -80,6 +85,11 @@ Features Index:
     entry_points: [crates/rostrum-github/src/lib.rs, crates/rostrum/src/sync.rs]
     depends_on: []
     doc: docs/features/github_sync.md
+  local_git:
+    description: Local clone status, branch divergence, pull/merge on the clone.
+    entry_points: [crates/rostrum-git/src/lib.rs, crates/rostrum/src/detail.rs]
+    depends_on: [pr_detail]
+    doc: docs/features/local_git.md
 ```
 
 ## Workspace layout
@@ -94,6 +104,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 | `rostrum-db` | no | SQLite cache and draft persistence |
 | `rostrum-github` | no | GraphQL reads, REST mutations, auth, rate limiting, errors |
 | `rostrum-diff` | no | Unified-diff parsing, `DiffRow` model, syntax highlighting |
+| `rostrum-git` | no | Local clone status, divergence, pull/merge via the `git` CLI |
 | `rostrum-md` | no | `pulldown-cmark` → renderable markdown model |
 | `rostrum-ui` | yes | Theme, components, text/selection, markdown element |
 | `rostrum` | yes | Bootstrap, window, root views, `SyncEngine` |
@@ -104,11 +115,13 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 |---|---|---|
 | Auth | `gh auth token`, `$GITHUB_TOKEN` fallback | No secret storage of our own; `gh` handles SSO and refresh |
 | Reads | GraphQL v4 | One round-trip per repo instead of dozens; cost-based rate limit |
-| Mutations | REST v3, except draft conversion | Simpler, better-documented endpoints for merge/review/comment. REST accepts `draft` only at creation, so `convertPullRequestToDraft` / `markPullRequestReadyForReview` are the only way to change it |
+| Mutations | REST v3, except draft conversion and branch updates | Simpler, better-documented endpoints for merge/review/comment. REST accepts `draft` only at creation, and its `update-branch` endpoint can only merge, so those two go through GraphQL |
 | Node ids | Fetched with the feed query | GraphQL mutations address a pull request by node id only. Carrying it on `PullRequest` makes a conversion one round trip, and is what the other GraphQL-only operations will need |
 | UI deps | `gpui` + `gpui_platform` only | Zed's `ui`/`theme`/`syntax_theme` are GPL-3.0-or-later |
 | Diff parsing | hand-rolled | `diffy` requires `---`/`+++` headers GitHub's per-file patches lack, and exposes neither `\ No newline` nor the raw `@@` line |
 | Highlighting | `syntect` (pure-Rust regex) | One dependency covering many languages, versus matching the tree-sitter ABI across a grammar crate per language. Tree-sitter remains the better long-term choice |
+| Local git | Drive the `git` CLI, not libgit2 | Inherits the user's credential helpers, ssh agent, hooks, and `rerere` for free; libgit2's rebase is a partial substitute and its credential negotiation would have to be reimplemented. `auth.rs` already shells out to `gh` |
+| Local writes | Never push | A local merge or rebase leaves the clone ahead, and that count is the cue to push. Keeps force-push out of the app entirely |
 | Cache | SQLite via `sqlx` | Instant cold start, offline reads, ETag storage |
 | Async | Tokio bridged into GPUI's executor | GPUI's executor is not Tokio; `reqwest` requires a Tokio reactor |
 | Mergeability | `mergeable` **and** `mergeStateStatus`, collapsed into one `MergeStatus` in `rostrum-core` | `mergeable` cannot distinguish "blocked by a required review" from "behind its base"; deriving the verdict once keeps the chip, the button, and its tooltip from disagreeing |
@@ -181,7 +194,7 @@ Each phase leaves a usable application.
 
 ## Status
 
-All five phases are complete and verified against the live API. 411 tests pass;
+All five phases are complete and verified against the live API. 500 tests pass;
 clippy is clean across the workspace.
 
 End-to-end verification (`cargo run -p rostrum --example review`) against real
