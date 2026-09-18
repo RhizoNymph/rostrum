@@ -5,8 +5,8 @@
 
 use chrono::{DateTime, Utc};
 use rostrum_core::{
-    CheckState, Label, MergeStateStatus, Mergeable, NodeId, PrNumber, PullRequest, ReviewDecision,
-    User,
+    CheckState, Divergence, Label, MergeStateStatus, Mergeable, NodeId, PrNumber, PullRequest,
+    ReviewDecision, User,
 };
 use serde::Deserialize;
 
@@ -128,6 +128,157 @@ pub struct SetDraftPayload {
 #[serde(rename_all = "camelCase")]
 pub struct DraftStateNode {
     pub is_draft: bool,
+}
+
+// --- branch divergence ---------------------------------------------------
+
+/// How far a pull request's head branch has drifted from its base, in one
+/// round trip.
+///
+/// `Ref.compare` answers with both counts at once, which is what the caller
+/// needs: "behind by 3" alone cannot tell a branch that will fast-forward from
+/// one that has also moved on, and those two want different buttons.
+///
+/// `status` is selected but deliberately absent from the wire types below. It
+/// is GitHub's own one-word summary of the very same two counts, and
+/// [`Divergence::relation`] derives that verdict already; keeping it in the
+/// document makes a captured response self-explanatory, while leaving it out of
+/// the wire types means a future addition to `ComparisonStatus` cannot fail
+/// this query's decode.
+pub const PULL_REQUEST_DIVERGENCE: &str = r#"
+query($owner: String!, $name: String!, $base: String!, $head: String!) {
+  repository(owner: $owner, name: $name) {
+    ref(qualifiedName: $base) {
+      compare(headRef: $head) { aheadBy behindBy status }
+    }
+  }
+}
+"#;
+
+#[derive(Debug, Deserialize)]
+pub struct DivergenceQueryData {
+    /// `null` when the repository does not exist or is not visible.
+    pub repository: Option<DivergenceRepositoryNode>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DivergenceRepositoryNode {
+    /// `ref` is a Rust keyword, so the field is renamed rather than raw-named.
+    /// `null` when the base branch itself cannot be resolved — a base that was
+    /// deleted or renamed out from under an open pull request.
+    #[serde(rename = "ref")]
+    pub base_ref: Option<BaseRefNode>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BaseRefNode {
+    /// `null` — alongside a `NOT_FOUND` entry in `errors` — whenever the base
+    /// repository cannot resolve the head ref, which is the ordinary answer for
+    /// a pull request from a fork. That is the signal to compare locally
+    /// instead, so it must decode rather than fail.
+    pub compare: Option<ComparisonNode>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComparisonNode {
+    pub ahead_by: u32,
+    pub behind_by: u32,
+}
+
+impl ComparisonNode {
+    /// GitHub counts both sides relative to the *head* ref, which is the
+    /// direction [`Divergence`] fixes: `behind` is work the pull request has
+    /// not caught up with. Mapping these the other way round would offer to
+    /// update a branch that is already current.
+    pub fn into_domain(self) -> Divergence {
+        Divergence::new(self.ahead_by, self.behind_by)
+    }
+}
+
+impl DivergenceQueryData {
+    /// `None` at whichever level GitHub declined to resolve something, so one
+    /// absent answer looks the same to the caller however deep it occurred and
+    /// falls back to a local comparison rather than surfacing a failure.
+    pub fn into_domain(self) -> Option<Divergence> {
+        self.repository
+            .and_then(|repository| repository.base_ref)
+            .and_then(|base_ref| base_ref.compare)
+            .map(ComparisonNode::into_domain)
+    }
+}
+
+// --- updating a branch from its base -------------------------------------
+
+/// How a branch behind its base is caught up.
+///
+/// REST's `PUT /pulls/{n}/update-branch` can only merge. The GraphQL mutation
+/// takes `updateMethod`, and rebase is the half of the choice that keeps a
+/// linear history, so the mutation is the only usable form of this operation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BranchUpdateMethod {
+    Merge,
+    Rebase,
+}
+
+impl BranchUpdateMethod {
+    /// The `PullRequestBranchUpdateMethod` value. GraphQL enum values are bare
+    /// identifiers rather than strings, which is why this travels as a variable
+    /// instead of being interpolated into the document.
+    pub fn as_api_str(self) -> &'static str {
+        match self {
+            Self::Merge => "MERGE",
+            Self::Rebase => "REBASE",
+        }
+    }
+
+    /// Progressive label for the in-flight banner. It names the method because
+    /// the two produce different histories, and the user picked one.
+    pub fn progress_label(self) -> &'static str {
+        match self {
+            Self::Merge => "Updating from base (merge)",
+            Self::Rebase => "Updating from base (rebase)",
+        }
+    }
+}
+
+/// Aliased to `payload` the same way the draft mutations above are, so the wire
+/// type ([`UpdateBranchData`]) is named after the shape it decodes rather than
+/// after the operation that produced it.
+///
+/// `expectedHeadOid` is what makes this safe to fire from an already-rendered
+/// view: if the branch moved since the pull request was drawn, GitHub refuses
+/// the mutation instead of rewriting work the user has not seen.
+pub const UPDATE_PULL_REQUEST_BRANCH: &str = r#"
+mutation($id: ID!, $oid: GitObjectID!, $method: PullRequestBranchUpdateMethod!) {
+  payload: updatePullRequestBranch(
+    input: {pullRequestId: $id, expectedHeadOid: $oid, updateMethod: $method}
+  ) {
+    pullRequest { headRefOid }
+  }
+}
+"#;
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateBranchData {
+    /// `null` when the mutation failed; the `errors` array carries the reason.
+    pub payload: Option<UpdateBranchPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateBranchPayload {
+    /// `null` when the viewer may read the mutation result but not the pull
+    /// request itself, which GitHub permits.
+    pub pull_request: Option<UpdatedBranchNode>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdatedBranchNode {
+    /// The commit the update landed on. Always a new oid, since both methods
+    /// move the head, so it never matches the `expectedHeadOid` that was sent.
+    pub head_ref_oid: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -546,5 +697,188 @@ mod tests {
             .expect("rate limit present");
         assert_eq!(limit.remaining, 4999);
         assert_eq!(limit.cost, 1);
+    }
+    // --- branch divergence -------------------------------------------------
+
+    /// The shape GitHub answers with when both refs resolve. `behindBy` is the
+    /// head's distance from the base, which is the direction `Divergence`
+    /// records; a swap here would point every catch-up button the wrong way.
+    #[test]
+    fn a_resolved_comparison_decodes_with_both_counts() {
+        let body = r#"{
+          "data": {
+            "repository": {
+              "ref": { "compare": { "aheadBy": 1, "behindBy": 2, "status": "DIVERGED" } }
+            }
+          }
+        }"#;
+        let response: GraphQlResponse<DivergenceQueryData> =
+            serde_json::from_str(body).expect("should decode");
+        let divergence = response
+            .data
+            .expect("data present")
+            .into_domain()
+            .expect("comparison present");
+        assert_eq!(divergence, Divergence::new(1, 2));
+        assert_eq!(
+            divergence.relation(),
+            rostrum_core::Relation::Diverged {
+                ahead: 1.try_into().expect("non-zero"),
+                behind: 2.try_into().expect("non-zero"),
+            }
+        );
+    }
+
+    /// An identical pair still answers with a comparison, not with null, so the
+    /// "nothing to do" case must be distinguishable from "could not compare".
+    #[test]
+    fn an_identical_pair_decodes_as_a_present_zero_divergence() {
+        let body = r#"{
+          "data": {
+            "repository": {
+              "ref": { "compare": { "aheadBy": 0, "behindBy": 0, "status": "IDENTICAL" } }
+            }
+          }
+        }"#;
+        let response: GraphQlResponse<DivergenceQueryData> =
+            serde_json::from_str(body).expect("should decode");
+        assert_eq!(
+            response.data.expect("data present").into_domain(),
+            Some(Divergence::IDENTICAL)
+        );
+    }
+
+    /// The cross-fork case: the base repository cannot resolve the head ref, so
+    /// `compare` is null. Absent is not a failure — it is the signal to compare
+    /// against a local clone instead.
+    #[test]
+    fn an_unresolvable_head_ref_decodes_as_absent() {
+        let body = r#"{"data":{"repository":{"ref":{"compare":null}}}}"#;
+        let response: GraphQlResponse<DivergenceQueryData> =
+            serde_json::from_str(body).expect("should decode");
+        assert!(response.data.expect("data present").into_domain().is_none());
+    }
+
+    /// GitHub reports that same unresolvable head as HTTP 200 with a null
+    /// `compare` *and* a `NOT_FOUND` error entry. Both halves must decode, so
+    /// the client can recognise the pair rather than treating it as a hard
+    /// failure.
+    #[test]
+    fn a_not_found_entry_accompanies_the_null_comparison() {
+        let body = r#"{
+          "data": { "repository": { "ref": { "compare": null } } },
+          "errors": [{
+            "type": "NOT_FOUND",
+            "path": ["repository", "ref", "compare"],
+            "message": "Could not resolve to a Ref with the name 'fork:feature'."
+          }]
+        }"#;
+        let response: GraphQlResponse<DivergenceQueryData> =
+            serde_json::from_str(body).expect("should decode");
+        assert_eq!(response.errors.len(), 1);
+        assert!(
+            response
+                .errors
+                .iter()
+                .all(|e| e.kind.as_deref() == Some("NOT_FOUND")),
+            "the client keys its fallback off every entry being NOT_FOUND"
+        );
+        assert!(response.data.expect("data present").into_domain().is_none());
+    }
+
+    /// A base branch deleted out from under an open pull request nulls the ref
+    /// one level higher up; that must collapse to the same absent answer.
+    #[test]
+    fn a_missing_base_ref_decodes_as_absent() {
+        for body in [
+            r#"{"data":{"repository":{"ref":null}}}"#,
+            r#"{"data":{"repository":null}}"#,
+        ] {
+            let response: GraphQlResponse<DivergenceQueryData> =
+                serde_json::from_str(body).expect("should decode");
+            assert!(
+                response.data.expect("data present").into_domain().is_none(),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_divergence_query_compares_the_base_against_the_head() {
+        assert!(PULL_REQUEST_DIVERGENCE.contains("ref(qualifiedName: $base)"));
+        assert!(PULL_REQUEST_DIVERGENCE.contains("compare(headRef: $head)"));
+    }
+
+    // --- updating a branch from its base -----------------------------------
+
+    /// The wire spellings are the `PullRequestBranchUpdateMethod` enum values.
+    /// Swapping them would rebase when the user asked to merge.
+    #[test]
+    fn each_update_method_selects_its_wire_string() {
+        assert_eq!(BranchUpdateMethod::Merge.as_api_str(), "MERGE");
+        assert_eq!(BranchUpdateMethod::Rebase.as_api_str(), "REBASE");
+    }
+
+    /// The banner names the method, because the two leave different histories.
+    #[test]
+    fn each_update_method_labels_its_own_banner() {
+        assert!(BranchUpdateMethod::Merge.progress_label().contains("merge"));
+        assert!(
+            BranchUpdateMethod::Rebase
+                .progress_label()
+                .contains("rebase")
+        );
+    }
+
+    /// The alias is what lets the wire type be named after the shape rather
+    /// than the mutation, exactly as the draft pair does it.
+    #[test]
+    fn the_branch_update_mutation_aliases_its_payload() {
+        assert!(UPDATE_PULL_REQUEST_BRANCH.contains("payload:"));
+        assert!(UPDATE_PULL_REQUEST_BRANCH.contains("updatePullRequestBranch"));
+        assert!(UPDATE_PULL_REQUEST_BRANCH.contains("headRefOid"));
+    }
+
+    /// Guarding against a branch that moved is the whole reason this uses the
+    /// mutation rather than the merge-only REST endpoint, so the expected oid
+    /// and the method must both reach the input.
+    #[test]
+    fn the_branch_update_mutation_sends_the_expected_head_and_method() {
+        assert!(UPDATE_PULL_REQUEST_BRANCH.contains("expectedHeadOid: $oid"));
+        assert!(UPDATE_PULL_REQUEST_BRANCH.contains("updateMethod: $method"));
+        assert!(UPDATE_PULL_REQUEST_BRANCH.contains("$oid: GitObjectID!"));
+        assert!(UPDATE_PULL_REQUEST_BRANCH.contains("$method: PullRequestBranchUpdateMethod!"));
+    }
+
+    #[test]
+    fn the_branch_update_response_carries_the_new_head_oid() {
+        let body = r#"{"data":{"payload":{"pullRequest":{"headRefOid":"f00dcafe"}}}}"#;
+        let response: GraphQlResponse<UpdateBranchData> =
+            serde_json::from_str(body).expect("should decode");
+        assert_eq!(
+            response
+                .data
+                .expect("data present")
+                .payload
+                .expect("payload present")
+                .pull_request
+                .expect("pull request present")
+                .head_ref_oid,
+            "f00dcafe"
+        );
+    }
+
+    /// A refused update — the head moved, or the branch conflicts — answers 200
+    /// with a null payload and a populated `errors` array.
+    #[test]
+    fn a_refused_branch_update_carries_its_reason() {
+        let body = r#"{
+          "data": { "payload": null },
+          "errors": [{ "message": "expected head oid does not match the current head" }]
+        }"#;
+        let response: GraphQlResponse<UpdateBranchData> =
+            serde_json::from_str(body).expect("should decode");
+        assert_eq!(response.errors.len(), 1);
+        assert!(response.data.expect("data key present").payload.is_none());
     }
 }

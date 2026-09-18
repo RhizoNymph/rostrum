@@ -194,6 +194,16 @@ impl Store {
         cx.notify();
     }
 
+    pub fn set_autostash(&mut self, autostash: bool, cx: &mut Context<Self>) {
+        self.config.autostash = autostash;
+        self.persist_config();
+        cx.notify();
+    }
+
+    pub fn autostash(&self) -> bool {
+        self.config.autostash
+    }
+
     /// Config writes are small and infrequent; a failure is worth reporting but
     /// not worth interrupting the user over.
     fn persist_config(&self) {
@@ -218,6 +228,15 @@ impl Store {
     /// await point.
     pub fn client(&self) -> Option<GitHubClient> {
         self.client.clone()
+    }
+
+    /// The local clone configured for a repository, if there is one.
+    ///
+    /// Most watched repositories have none — the feed is built for reading
+    /// other people's work — so every caller must treat `None` as the ordinary
+    /// case and hide the local affordances rather than reporting a problem.
+    pub fn local_path(&self, id: &RepoId) -> Option<PathBuf> {
+        self.config.local_path(id)
     }
 
     /// Resolve a token, then begin refreshing.

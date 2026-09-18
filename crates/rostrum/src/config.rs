@@ -2,7 +2,10 @@
 //!
 //! Non-secret and human-editable. Tokens never appear here.
 
-use std::path::PathBuf;
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use rostrum_core::{RepoId, model::ParseRepoIdError};
 use serde::{Deserialize, Serialize};
@@ -23,6 +26,27 @@ pub struct Config {
     /// Hide repositories that loaded successfully with nothing to show. On by
     /// default; a feed of a dozen repositories is mostly empty headers.
     pub hide_empty_repos: bool,
+    /// Where a repository is cloned locally, keyed by `owner/name`.
+    ///
+    /// Deliberately a separate map rather than a field on each `repos` entry.
+    /// Most watched repositories are ones the user only reads — a clone is the
+    /// exception, not a property every entry has — and keeping it out of
+    /// `repos` leaves that list a plain array of strings a human can edit
+    /// without learning a second shape. It also means a config written by an
+    /// older build still parses exactly as it did.
+    ///
+    /// A leading `~` is expanded against the home directory; see
+    /// [`Config::local_path`].
+    #[serde(default)]
+    pub clones: BTreeMap<String, PathBuf>,
+    /// Whether local pull/merge pass `--autostash`, letting git set aside
+    /// uncommitted changes and restore them afterwards.
+    ///
+    /// Off by default. Stashing is the more convenient behaviour but it moves
+    /// work the user did not hand over, so it is opted into rather than out of.
+    /// Persisted because it is a working habit, not a per-pull-request choice.
+    #[serde(default)]
+    pub autostash: bool,
 }
 
 impl Default for Config {
@@ -36,6 +60,8 @@ impl Default for Config {
             prs_per_repo: 25,
             notifications: false,
             hide_empty_repos: true,
+            clones: BTreeMap::new(),
+            autostash: false,
         }
     }
 }
@@ -139,11 +165,29 @@ impl Config {
     }
 
     /// Remove a repository. Returns whether anything was removed.
+    ///
+    /// Drops the clone path with it: leaving an orphaned entry behind would
+    /// silently reattach to a repository that happened to be re-added later.
     pub fn remove_repo(&mut self, id: &RepoId) -> bool {
         let name = id.to_string();
         let before = self.repos.len();
         self.repos.retain(|existing| existing != &name);
+        self.clones.remove(&name);
         self.repos.len() != before
+    }
+
+    /// The local clone configured for a repository, with a leading `~`
+    /// expanded.
+    ///
+    /// Performs no I/O and does not check that the path exists. A clone the
+    /// user has moved or deleted should surface where every other failure in
+    /// this app surfaces — as a loaded-and-failed panel naming the reason —
+    /// rather than by silently hiding the local actions, and certainly not by
+    /// stat-ing the filesystem on every frame of a render pass.
+    pub fn local_path(&self, id: &RepoId) -> Option<PathBuf> {
+        self.clones
+            .get(&id.to_string())
+            .map(|path| expand_tilde(path))
     }
 
     pub fn refresh_interval(&self) -> std::time::Duration {
@@ -152,9 +196,89 @@ impl Config {
     }
 }
 
+/// Expand a leading `~` against the home directory.
+///
+/// Config is hand-edited, and `~/Code/thing` is what a person writes. Nothing
+/// else in the path is touched: `$VAR` and `~other` are left alone rather than
+/// half-supported, because a path that silently resolves to the wrong clone is
+/// worse than one that plainly does not exist.
+fn expand_tilde(path: &Path) -> PathBuf {
+    let Ok(rest) = path.strip_prefix("~") else {
+        return path.to_path_buf();
+    };
+    match dirs::home_dir() {
+        Some(home) => home.join(rest),
+        None => path.to_path_buf(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- local clones -------------------------------------------------------
+
+    /// A config written before clones existed must keep parsing, and must not
+    /// acquire one. This is the whole reason `clones` is a separate defaulted
+    /// map rather than a new shape for `repos`.
+    #[test]
+    fn a_config_without_clones_still_parses() {
+        let text = r#"{ "repos": ["a/b"], "refresh_secs": 30 }"#;
+        let config: Config = serde_json::from_str(text).expect("older config should parse");
+        assert_eq!(config.repos, ["a/b"]);
+        assert_eq!(config.refresh_secs, 30);
+        assert!(config.clones.is_empty());
+        assert_eq!(config.local_path(&"a/b".parse().expect("valid id")), None);
+    }
+
+    #[test]
+    fn a_configured_clone_is_found_by_repo_id() {
+        let mut config = Config::default();
+        config
+            .clones
+            .insert("a/b".into(), PathBuf::from("/srv/checkouts/b"));
+
+        let id: RepoId = "a/b".parse().expect("valid id");
+        assert_eq!(
+            config.local_path(&id),
+            Some(PathBuf::from("/srv/checkouts/b"))
+        );
+
+        let other: RepoId = "a/c".parse().expect("valid id");
+        assert_eq!(config.local_path(&other), None);
+    }
+
+    /// `~/Code/thing` is what a person types into a hand-edited config.
+    #[test]
+    fn a_leading_tilde_expands_to_the_home_directory() {
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
+        assert_eq!(expand_tilde(Path::new("~/Code/x")), home.join("Code/x"));
+        assert_eq!(expand_tilde(Path::new("~")), home);
+    }
+
+    /// Only a leading `~` is special. Half-supporting shell syntax would let a
+    /// path resolve to the wrong clone instead of plainly not existing.
+    #[test]
+    fn other_paths_are_left_exactly_as_written() {
+        for raw in ["/abs/path", "relative/path", "$HOME/x", "~other/x"] {
+            assert_eq!(expand_tilde(Path::new(raw)), PathBuf::from(raw), "{raw}");
+        }
+    }
+
+    #[test]
+    fn removing_a_repository_drops_its_clone() {
+        let mut config = Config {
+            repos: vec!["a/b".into()],
+            ..Default::default()
+        };
+        config.clones.insert("a/b".into(), PathBuf::from("/tmp/b"));
+
+        let id: RepoId = "a/b".parse().expect("valid id");
+        assert!(config.remove_repo(&id));
+        assert!(config.clones.is_empty());
+    }
 
     #[test]
     fn parses_valid_repos_and_reports_bad_ones() {

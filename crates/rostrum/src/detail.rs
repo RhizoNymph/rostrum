@@ -16,17 +16,21 @@ use gpui::{
     prelude::*, px, rems,
 };
 use gpui_tokio::Tokio;
-use rostrum_core::{Conversation, Label, PrNumber, PullRequest, RepoId, ReviewDecision, Side};
+use rostrum_core::{
+    Conversation, Divergence, Label, PrNumber, PullRequest, RepoId, ReviewDecision, Side,
+};
 use rostrum_db::Db;
 use rostrum_diff::{DiffFile, FileStatus, Highlighter, PatchAvailability, parse_patch};
+use rostrum_git::{Autostash, BranchName, GitError, Operation, Outcome, RemoteRef, Repo, Rev};
 use rostrum_github::{
-    DraftComment, DraftState, GitHubClient, GitHubError, IssueState, MergeMethod, PullRequestFile,
-    ReviewEvent, SubmitReview,
+    BranchUpdateMethod, DraftComment, DraftState, GitHubClient, GitHubError, IssueState,
+    MergeMethod, PullRequestFile, ReviewEvent, SubmitReview,
 };
 use rostrum_ui::{
     ActiveTheme, TextInput,
     components::{
-        Button, ButtonStyle, Chip, DiffStat, Dot, Initial, Tab, h_flex, hex_color, tab_bar, v_flex,
+        Button, ButtonStyle, Checkbox, Chip, DiffStat, Dot, Initial, Tab, h_flex, hex_color,
+        tab_bar, v_flex,
     },
 };
 
@@ -161,6 +165,28 @@ impl DraftAnchor {
     }
 }
 
+/// What the local clone says about this pull request's branch.
+///
+/// Absent for the great majority of pull requests: the feed is built for
+/// reading other people's work, and only a repository the user has configured a
+/// clone for can answer any of this. `Loadable::Idle` is therefore the ordinary
+/// resting state, not a sign that anything went wrong.
+pub(crate) struct LocalBranch {
+    /// The clone. Cheap to clone — `Arc`-backed, like `GitHubClient`.
+    repo: Repo,
+    branch: BranchName,
+    remote: RemoteRef,
+    /// The local branch measured against its remote counterpart: `ahead` is
+    /// work not pushed yet, `behind` is work not pulled yet.
+    divergence: Divergence,
+    /// Whether the refs these counts came from were refreshed just now. A fetch
+    /// that failed leaves real numbers computed from stale refs, which is worth
+    /// saying out loud rather than presenting as current.
+    fetched: bool,
+    /// Why a local action cannot run, if anything is in the way.
+    blocker: Option<String>,
+}
+
 pub struct PrDetail {
     pub(crate) store: Entity<Store>,
     pub(crate) repo: RepoId,
@@ -171,6 +197,13 @@ pub struct PrDetail {
     /// Every label defined on the repository — the picker's palette, not the
     /// labels on this pull request. Fetched on first open of the picker.
     pub(crate) repo_labels: Loadable<Vec<Label>>,
+    /// How far this branch has drifted from its base, from GitHub.
+    ///
+    /// Stays `Idle` when GitHub declines to compare — a cross-fork pull request
+    /// — so an unanswerable question renders as no chip rather than an error.
+    pub(crate) base_divergence: Loadable<Divergence>,
+    /// The local clone's view of this branch, when a clone is configured.
+    pub(crate) local: Loadable<LocalBranch>,
     /// Whether the label picker panel is showing.
     label_picker_open: bool,
     composer: Entity<TextInput>,
@@ -219,6 +252,8 @@ impl PrDetail {
             conversation: Loadable::Idle,
             files: Loadable::Idle,
             repo_labels: Loadable::Idle,
+            base_divergence: Loadable::Idle,
+            local: Loadable::Idle,
             label_picker_open: false,
             composer,
             pending: Vec::new(),
@@ -239,6 +274,8 @@ impl PrDetail {
         tracing::debug!(repo = %detail.repo, pr = %detail.number, "opened pull request");
         detail.load_cached(cx);
         detail.load_conversation(cx);
+        detail.load_base_divergence(cx);
+        detail.load_local(cx);
         detail
     }
 
@@ -471,6 +508,215 @@ impl PrDetail {
         }));
     }
 
+    /// Read the local clone's view of this branch.
+    ///
+    /// Does nothing at all when no clone is configured for the repository,
+    /// which is the common case — the panel simply does not appear. Loaded once
+    /// per `PrDetail`, so the fetch it performs is bounded by the selection
+    /// changing rather than by a timer.
+    ///
+    /// The fetch is allowed to fail. Its only job is to make the remote-tracking
+    /// ref current; when it cannot — no network, a locked credential — the
+    /// counts are still computed, still truthful about what is on disk, and
+    /// flagged as unfetched so the panel can say so.
+    fn load_local(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.store.read(cx).local_path(&self.repo) else {
+            return;
+        };
+        let Some(head_ref) = self.pull(cx).map(|pull| pull.head_ref.clone()) else {
+            return;
+        };
+        let autostash = if self.store.read(cx).autostash() {
+            Autostash::Enabled
+        } else {
+            Autostash::Disabled
+        };
+
+        self.local = Loadable::Loading;
+        cx.notify();
+
+        self.tasks.push(cx.spawn(async move |this, cx| {
+            let result = Tokio::spawn(&*cx, async move {
+                let branch = BranchName::new(head_ref)?;
+                let repo = Repo::open(&path).await?;
+                let remote = RemoteRef::origin(branch.clone());
+
+                let fetched = match repo.fetch(&remote).await {
+                    Ok(outcome) => {
+                        tracing::debug!(?outcome, "fetched the pull request branch");
+                        true
+                    }
+                    Err(error) => {
+                        // Offline is an ordinary state for a desktop app, and
+                        // the whole point of the local panel is that it still
+                        // answers. Say so in the panel, not in an error banner.
+                        tracing::debug!(%error, "could not fetch; using the refs already on disk");
+                        false
+                    }
+                };
+
+                let divergence = repo
+                    .divergence(&Rev::Local(branch.clone()), &Rev::Remote(remote.clone()))
+                    .await?;
+
+                let blocker = repo
+                    .preflight(Operation::PullRebase, Some(&branch), autostash)
+                    .await?
+                    .reason();
+
+                Ok::<_, GitError>(LocalBranch {
+                    repo,
+                    branch,
+                    remote,
+                    divergence,
+                    fetched,
+                    blocker,
+                })
+            })
+            .await;
+
+            this.update(cx, |this, cx| {
+                this.local = match result {
+                    Ok(Ok(local)) => Loadable::Loaded(local),
+                    Ok(Err(err)) => Loadable::Failed(err.to_string()),
+                    Err(err) => Loadable::Failed(err.to_string()),
+                };
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    /// Run one local git operation.
+    ///
+    /// Shares the in-flight guard and error banner with [`Self::mutate`], but
+    /// not its body: a git call returns an [`Outcome`] rather than `()`, and a
+    /// conflict is a *successful* call that did not finish the job. It belongs
+    /// in the banner with git's own wording, not discarded as an error.
+    ///
+    /// The clone is re-read whichever way it went. A refused or conflicted
+    /// operation can still have changed what the buttons should offer.
+    fn run_local<F>(&mut self, label: &'static str, cx: &mut Context<Self>, call: F)
+    where
+        F: FnOnce(
+                Repo,
+                BranchName,
+                RemoteRef,
+                Autostash,
+            ) -> BoxFuture<'static, Result<Outcome, GitError>>
+            + Send
+            + 'static,
+    {
+        if self.busy.is_some() {
+            return;
+        }
+        let Some(local) = self.local.loaded() else {
+            return;
+        };
+        let (repo, branch, remote) = (
+            local.repo.clone(),
+            local.branch.clone(),
+            local.remote.clone(),
+        );
+        let autostash = if self.store.read(cx).autostash() {
+            Autostash::Enabled
+        } else {
+            Autostash::Disabled
+        };
+
+        self.busy = Some(label);
+        self.error = None;
+        cx.notify();
+
+        self.tasks.push(cx.spawn(async move |this, cx| {
+            let result = Tokio::spawn(
+                &*cx,
+                async move { call(repo, branch, remote, autostash).await },
+            )
+            .await;
+
+            this.update(cx, |this, cx| {
+                this.busy = None;
+                this.error = match result {
+                    Ok(Ok(Outcome::Conflicted(conflict))) => Some(conflict.message().to_string()),
+                    Ok(Ok(outcome)) => {
+                        tracing::debug!(?outcome, "local operation finished");
+                        None
+                    }
+                    Ok(Err(err)) => Some(err.to_string()),
+                    Err(err) => Some(err.to_string()),
+                };
+                this.load_local(cx);
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    fn pull_local(&mut self, cx: &mut Context<Self>) {
+        self.run_local("Pulling", cx, |repo, _branch, remote, autostash| {
+            Box::pin(async move { repo.pull_rebase(&remote, autostash).await })
+        });
+    }
+
+    fn merge_local(&mut self, cx: &mut Context<Self>) {
+        self.run_local("Merging locally", cx, |repo, branch, remote, autostash| {
+            Box::pin(async move { repo.merge_from(&branch, &remote, autostash).await })
+        });
+    }
+
+    /// Fetch how far this branch has drifted from its base.
+    ///
+    /// `MergeStateStatus` already says *whether* a branch is behind; this is the
+    /// only source of *how far*, and the number is what separates "click update"
+    /// from "this has drifted far enough to look at by hand".
+    ///
+    /// `Ok(None)` is not a failure. GitHub answers that way for a head ref the
+    /// base repository cannot resolve — a cross-fork pull request — and the
+    /// honest rendering of "GitHub will not tell us" is an absent chip, not an
+    /// error banner on an otherwise healthy pull request.
+    fn load_base_divergence(&mut self, cx: &mut Context<Self>) {
+        let Some(client) = self.client(cx) else {
+            return;
+        };
+        let Some((base_ref, head_ref)) = self
+            .pull(cx)
+            .map(|pull| (pull.base_ref.clone(), pull.head_ref.clone()))
+        else {
+            return;
+        };
+
+        self.base_divergence = Loadable::Loading;
+        cx.notify();
+
+        let repo = self.repo.clone();
+        self.tasks.push(cx.spawn(async move |this, cx| {
+            let result = Tokio::spawn(&*cx, async move {
+                client.divergence(&repo, &base_ref, &head_ref).await
+            })
+            .await;
+
+            this.update(cx, |this, cx| {
+                this.base_divergence = match result {
+                    Ok(Ok(Some(divergence))) => {
+                        tracing::debug!(
+                            ahead = divergence.ahead,
+                            behind = divergence.behind,
+                            "base divergence loaded"
+                        );
+                        Loadable::Loaded(divergence)
+                    }
+                    // Unresolvable head ref: nothing to show, nothing wrong.
+                    Ok(Ok(None)) => Loadable::Idle,
+                    Ok(Err(err)) => Loadable::Failed(err.to_string()),
+                    Err(err) => Loadable::Failed(err.to_string()),
+                };
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
     /// Fetch the repository's label palette.
     ///
     /// Only the picker needs this, and most pull requests are opened without
@@ -522,6 +768,8 @@ impl PrDetail {
 
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         self.load_conversation(cx);
+        self.load_base_divergence(cx);
+        self.load_local(cx);
         if !self.files.is_idle() {
             self.load_files(cx);
         }
@@ -637,6 +885,28 @@ impl PrDetail {
                 Box::pin(async move { client.add_labels(&repo, number, &[name]).await })
             });
         }
+    }
+
+    /// Catch this branch up with its base, on GitHub's side.
+    ///
+    /// Not held behind a confirmation. Both methods only ever *add* the base's
+    /// commits to a branch that is behind it, and the `expectedHeadOid` sent
+    /// with the mutation means a branch that moved since this was rendered is
+    /// refused by GitHub rather than rewritten from a stale view.
+    fn update_from_base(&mut self, method: BranchUpdateMethod, cx: &mut Context<Self>) {
+        let Some((id, head_sha)) = self
+            .pull(cx)
+            .map(|pull| (pull.node_id.clone(), pull.head_sha.clone()))
+        else {
+            return;
+        };
+        self.mutate(method.progress_label(), cx, move |client, repo, number| {
+            Box::pin(async move {
+                client
+                    .update_branch(&repo, number, &id, &head_sha, method)
+                    .await
+            })
+        });
     }
 
     /// Move this pull request to the other side of the draft line.
@@ -842,7 +1112,26 @@ impl PrDetail {
                         el.child(Initial::new(login.clone())).child(login)
                     })
                     .child(DiffStat::new(pull.additions, pull.deletions))
-                    .child(format!("{} → {}", pull.head_ref, pull.base_ref)),
+                    .child(format!("{} → {}", pull.head_ref, pull.base_ref))
+                    // Only when there is something to catch up with: every open
+                    // pull request is ahead of its base, so a chip saying so on
+                    // all of them would be noise.
+                    .when_some(
+                        self.base_divergence
+                            .loaded()
+                            .copied()
+                            .filter(|divergence| divergence.is_behind()),
+                        |el, divergence| {
+                            el.child(
+                                Chip::new(format!("↓{} {}", divergence.behind, pull.base_ref))
+                                    .color(theme.warning)
+                                    .tooltip(
+                                        "base-divergence",
+                                        "Commits on the base branch this one does not have",
+                                    ),
+                            )
+                        },
+                    ),
             )
             .child(
                 h_flex()
@@ -996,6 +1285,170 @@ impl PrDetail {
         }
     }
 
+    /// The local clone's row: how far the checkout has drifted from the branch
+    /// on GitHub, and the two ways to catch it up.
+    ///
+    /// Rendered only when a clone is configured and loaded. Everything here acts
+    /// on the clone alone — nothing is pushed — so after a local merge or rebase
+    /// the "ahead" count is what tells the user there is something to push.
+    fn render_local(
+        &self,
+        local: &LocalBranch,
+        busy: bool,
+        theme: &rostrum_ui::Theme,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let divergence = local.divergence;
+        let summary = match (divergence.behind, divergence.ahead) {
+            (0, 0) => format!("Local {} matches {}", local.branch, local.remote),
+            (0, ahead) => format!(
+                "Local {} is {ahead} ahead of {}",
+                local.branch, local.remote
+            ),
+            (behind, 0) => format!("Local {} is {behind} behind {}", local.branch, local.remote),
+            (behind, ahead) => format!(
+                "Local {} is {ahead} ahead, {behind} behind {}",
+                local.branch, local.remote
+            ),
+        };
+
+        // A blocker disables the buttons and explains itself; being up to date
+        // disables them because there is simply nothing to do.
+        let blocked = local.blocker.is_some();
+        let nothing_to_pull = !divergence.is_behind();
+        let disabled = busy || blocked || nothing_to_pull;
+        let why = |verb: &'static str| -> String {
+            match (&local.blocker, nothing_to_pull) {
+                (Some(reason), _) => reason.clone(),
+                (None, true) => format!("Nothing to {verb}: the clone is up to date"),
+                (None, false) => match verb {
+                    "pull" => "Fetch and rebase your local commits on top".to_string(),
+                    _ => format!("Merge {} into your local branch", local.remote),
+                },
+            }
+        };
+
+        let autostash = self.store.read(cx).autostash();
+
+        v_flex()
+            .gap_2()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .flex_wrap()
+                    .items_center()
+                    .child(Dot::new(if blocked {
+                        theme.warning
+                    } else {
+                        theme.text_subtle
+                    }))
+                    .child(
+                        div()
+                            .text_size(rems(0.75))
+                            .text_color(theme.text_muted)
+                            .child(summary),
+                    )
+                    .when(!local.fetched, |el| {
+                        el.child(
+                            Chip::new("not fetched")
+                                .color(theme.warning)
+                                .tooltip(
+                                    "local-stale",
+                                    "Could not reach the remote; these counts come from the refs already on disk",
+                                ),
+                        )
+                    })
+                    .child(
+                        Button::new("local-pull", "Pull (rebase)")
+                            .disabled(disabled)
+                            .tooltip(why("pull"))
+                            .on_click(Self::on_click(cx, |this, cx| this.pull_local(cx))),
+                    )
+                    .child(
+                        Button::new("local-merge", "Merge")
+                            .disabled(disabled)
+                            .tooltip(why("merge"))
+                            .on_click(Self::on_click(cx, |this, cx| this.merge_local(cx))),
+                    ),
+            )
+            .child(
+                Checkbox::new("local-autostash", "Stash local changes", autostash).on_toggle(
+                    Self::on_click(cx, move |this, cx| {
+                        let next = !this.store.read(cx).autostash();
+                        this.store
+                            .update(cx, |store, cx| store.set_autostash(next, cx));
+                        // The preflight verdict depends on this: a dirty
+                        // worktree blocks a pull with it off and not with it on,
+                        // so the buttons have to be re-evaluated.
+                        this.load_local(cx);
+                    }),
+                ),
+            )
+    }
+
+    /// The "your branch is behind its base" row, with the two ways to fix it.
+    ///
+    /// Rendered only when there is something to catch up with, so a current
+    /// branch costs no vertical space. Both buttons act on GitHub's copy; the
+    /// local clone, when there is one, gets its own row beneath this.
+    fn render_branch_sync(
+        &self,
+        pull: &PullRequest,
+        divergence: Divergence,
+        busy: bool,
+        theme: &rostrum_ui::Theme,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let summary = match divergence.ahead {
+            0 => format!("{} commit(s) behind {}", divergence.behind, pull.base_ref),
+            ahead => format!(
+                "{} behind {}, {ahead} ahead",
+                divergence.behind, pull.base_ref
+            ),
+        };
+
+        // When nothing of this branch's own would be rewritten the two methods
+        // produce the same commits, and saying so is friendlier than leaving the
+        // reader to work out which to press.
+        let equivalent = divergence.fast_forwards();
+
+        h_flex()
+            .gap_2()
+            .flex_wrap()
+            .items_center()
+            .child(Dot::new(theme.warning))
+            .child(
+                div()
+                    .text_size(rems(0.75))
+                    .text_color(theme.text_muted)
+                    .child(summary),
+            )
+            .child(
+                Button::new("update-merge", "Update: Merge")
+                    .disabled(busy)
+                    .tooltip(if equivalent {
+                        "Merge the base in. This branch has no commits of its own to rewrite, so rebasing would give the same result"
+                    } else {
+                        "Merge the base branch into this one, adding a merge commit"
+                    })
+                    .on_click(Self::on_click(cx, |this, cx| {
+                        this.update_from_base(BranchUpdateMethod::Merge, cx)
+                    })),
+            )
+            .child(
+                Button::new("update-rebase", "Update: Rebase")
+                    .disabled(busy)
+                    .tooltip(if equivalent {
+                        "Rebase onto the base. This branch has no commits of its own to rewrite, so merging would give the same result"
+                    } else {
+                        "Replay this branch's commits on top of the base, keeping history linear"
+                    })
+                    .on_click(Self::on_click(cx, |this, cx| {
+                        this.update_from_base(BranchUpdateMethod::Rebase, cx)
+                    })),
+            )
+    }
+
     fn render_actions(&self, pull: &PullRequest, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let merge = pull.merge_status();
@@ -1093,6 +1546,18 @@ impl PrDetail {
                 )
             })
             .child(self.composer.clone())
+            .when_some(
+                self.base_divergence
+                    .loaded()
+                    .copied()
+                    .filter(|divergence| divergence.is_behind()),
+                |el, divergence| {
+                    el.child(self.render_branch_sync(pull, divergence, busy, &theme, cx))
+                },
+            )
+            .when_some(self.local.loaded(), |el, local| {
+                el.child(self.render_local(local, busy, &theme, cx))
+            })
             // Stated in full rather than left to the merge button's tooltip: a
             // disabled button with no visible reason is the state people file
             // bugs about.
