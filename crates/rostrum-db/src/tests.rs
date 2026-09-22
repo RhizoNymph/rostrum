@@ -54,6 +54,7 @@ fn pr(number: u32) -> PullRequest {
         }],
         comment_count: 4,
         checks: Some(CheckState::Success),
+        base_divergence: None,
     }
 }
 

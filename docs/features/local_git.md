@@ -10,6 +10,7 @@ Reading and acting on a local clone of a watched repository, by driving the
 - Divergence between a local branch and its remote-tracking counterpart, and
   between a branch and a base — the latter as an offline substitute for
   GitHub's answer.
+- Listing worktrees and finding the one a branch is checked out in.
 - Fetching one ref.
 - Pull (rebase) and merge on the local clone, with or without `--autostash`.
 - Deciding, before a button is drawn, whether an operation could run at all.
@@ -19,10 +20,10 @@ Reading and acting on a local clone of a watched repository, by driving the
 - **Pushing.** Nothing in this crate writes to a remote. A local merge or rebase
   leaves the clone ahead of `origin`, and the ahead count is what tells the user
   to push; rostrum never force-pushes a branch.
-- **Continuing a conflicted operation.** There is no `--continue`. Continuing
-  requires staged resolutions, which requires an editor this app does not have.
-  Offering it from a GUI that cannot show conflict markers is how a merge commit
-  ends up containing `<<<<<<< HEAD`.
+- **Continuing a conflicted operation.** There is no `--continue` in this
+  crate. Continuing requires staged resolutions, which requires something that
+  can edit; the `conflict_handoff` feature hands the worktree to such a thing,
+  and this crate only ever leaves the state in place or aborts it.
 - **Cloning, branch creation, checkout, commit.** The clone is the user's; this
   crate reads it and moves one branch it was pointed at.
 - **Submodules.** Explicitly neutralised — see the flags below.
@@ -67,27 +68,57 @@ Any `in_progress` takes the conflict branch regardless of the conflicted count,
 because a rebase can also stop with none (a failed `--exec`, `--empty=stop`) and
 the user's situation is identical: unfinished, with state to abort.
 
-## Conflict policy: auto-abort
+## Conflict policy: abort, or leave and hand off
 
-On a rebase or merge conflict, the matching `--abort` runs and the conflict is
-reported with git's message. The clone is left as it was found.
+`Repo` carries a `ConflictPolicy`, set at open time and threaded exactly like
+`Timeouts`:
 
-`Conflict::AutostashPop` is deliberately **not** aborted. There the operation
-already succeeded, no sequencer state exists, `--abort` would fail, and the
-user's changes are safe in the stash. `InProgress::abort_target()` returns
-`None` for it, so the pairing is enforced by the type rather than by a comment.
+- **`Abort`** (the default): on a rebase or merge conflict the matching
+  `--abort` runs and the conflict is reported with git's message. The clone is
+  left as it was found.
+- **`Leave`**: the conflict is returned untouched — `abort_target()` stays
+  `Some`, the sequencer state stays on disk — for someone else to finish. The
+  app selects this when a `conflict_handler` is configured; see
+  `docs/features/conflict_handoff.md`. Under `Leave`, `Ok(Conflicted { aborted:
+  false })` guarantees: sequencer state on disk; `refs/heads/<branch>` still at
+  the pre-rebase tip (git moves it only on completion — verified live); an
+  enabled autostash *held* by git, not popped, so nobody should `git stash pop`
+  by hand.
+
+`classify_run` is unchanged by the policy: it only ever decides what happened,
+and `on_conflict` — one named place — decides what to do about it.
+
+`Conflict::AutostashPop` is never aborted under either policy. There the
+operation already succeeded, no sequencer state exists, `--abort` would fail,
+and the user's changes are safe in the stash. `InProgress::abort_target()`
+returns `None` for it, so the pairing is enforced by the type rather than by a
+comment.
 
 A foreign operation — a `git am`, cherry-pick, revert, or bisect the user
 started — is never aborted either. `git rebase --abort` does not clear a real
 `git am`, so guessing would destroy work rostrum did not start. Reaching that
 state means preflight was bypassed, which is what `GitError::Refused` means.
 
-The policy lives in one place, `Repo::conflict_policy`, because it is a
-deliberate choice and a reviewable one. The alternative — leaving the repository
-mid-rebase — was considered and rejected: rostrum has no conflict-resolution UI,
-so it would have to render "rebase in progress" everywhere and refuse every
-other action until the user finished elsewhere. The cost of auto-abort is that
-partially-applied commits and `rerere` resolutions are discarded.
+The cost of `Abort` is that partially-applied commits and `rerere` resolutions
+are discarded; the cost of `Leave` is a worktree the user must finish in a
+terminal if the handler does not. Both are stated in the UI.
+
+## Worktrees
+
+A clone in this app is any worktree of a repository — the configured path is
+typically `main`, and in a one-worktree-per-branch layout every pull request is
+checked out somewhere else. `Repo::worktrees()` lists them via `git worktree
+list --porcelain` (records of `worktree`, `HEAD`, `branch` / `detached` /
+`bare`, separated by blank lines; `locked` and `prunable` are parsed and
+ignored), and `Repo::worktree_for(branch)` opens a `Repo` at the one that has
+the branch checked out, carrying over timeouts and policy. `None` means the
+branch is not checked out anywhere, which the detail pane renders as one quiet
+line rather than a refusal.
+
+Every local operation resolves the worktree this way first. Running `pull` in
+the configured path when the branch lives elsewhere would have been the
+"wrong branch" refusal on every pull request — which is what the first version
+of this feature did.
 
 ## Why the command line rather than libgit2
 
@@ -237,6 +268,11 @@ Live verification is `cargo run -p rostrum-git --example inspect -- <path>
 | `crates/rostrum-git/src/outcome.rs` | `Outcome`, `Conflict`, `classify_run` |
 | `crates/rostrum-git/src/fetch.rs` | `FetchOutcome` and the porcelain fetch parsers |
 | `crates/rostrum-git/src/command.rs` | The one place a process is spawned; env, timeouts |
-| `crates/rostrum-git/src/repo.rs` | `Repo`, and the conflict policy |
-| `crates/rostrum/src/detail.rs` | `LocalBranch`, `load_local`, `run_local`, `render_local` |
+| `crates/rostrum-git/src/repo.rs` | `Repo`, `ConflictPolicy`, worktrees, and `on_conflict` |
+| `crates/rostrum-git/src/repo/describe.rs` | `Repo::conflict_context` — see `conflict_handoff.md` |
+| `crates/rostrum-git/src/worktree.rs` | `WorktreeEntry`, `parse_worktree_list` |
+| `crates/rostrum-git/src/context.rs` | `ConflictContext` and its parsers — see `conflict_handoff.md` |
+| `crates/rostrum/src/localops.rs` | `run_local_job` — one operation, shared by the detail pane and sync-all |
+| `crates/rostrum/src/detail.rs` | `LocalState`, `load_local`, `run_local_op`, `abort_local`, `render_local` |
+| `crates/rostrum/src/sync.rs` | `Store::sync_all`, `SyncProgress` |
 | `crates/rostrum/src/config.rs` | `clones` map, `autostash` flag, `local_path` |

@@ -23,7 +23,30 @@ use crate::{
     preflight::{Autostash, Operation, Preflight, blockers},
     refs::{BranchName, RemoteRef, Rev},
     status::{RepoStatus, StateFiles, in_progress, parse_left_right_count, parse_status_v2},
+    worktree::{WorktreeEntry, parse_worktree_list},
 };
+
+mod describe;
+
+/// What to do when a rebase or merge stops on a conflict.
+///
+/// Lives here, next to [`Repo::on_conflict`] where it is applied, because it is
+/// a decision rather than a law and should be readable in one place.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ConflictPolicy {
+    /// Run the matching `--abort`; the clone is left as it was found.
+    #[default]
+    Abort,
+    /// Leave the sequencer state on disk for someone else to finish.
+    ///
+    /// The conflict is reported with `aborted: false`, and the caller holds
+    /// three guarantees about what is on disk: the sequencer state is there,
+    /// so `--continue` and `--abort` both work; `refs/heads/<branch>` still
+    /// points at the pre-rebase tip, because git only moves it on completion;
+    /// and an enabled autostash is *held* by git in `rebase-merge/autostash`,
+    /// to be popped by `--continue` or `--abort` — never by hand.
+    Leave,
+}
 
 /// Absolute paths to the per-worktree files that mark a stopped operation.
 ///
@@ -109,6 +132,19 @@ fn exists(path: &Path) -> Result<bool, GitError> {
     }
 }
 
+/// The contents of a sequencer file, or `None` if git did not write one. The
+/// same rule as [`exists`]: absence is an answer, anything else is a failure.
+fn read_optional(path: &Path) -> Result<Option<String>, GitError> {
+    match std::fs::read_to_string(path) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(GitError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
 #[derive(Debug)]
 struct Inner {
     root: PathBuf,
@@ -116,6 +152,7 @@ struct Inner {
     common_dir: PathBuf,
     state: StatePaths,
     timeouts: Timeouts,
+    conflict_policy: ConflictPolicy,
 }
 
 /// A git work tree rostrum can read and act on.
@@ -136,7 +173,14 @@ impl Repo {
     }
 
     pub async fn open_with(path: impl AsRef<Path>, timeouts: Timeouts) -> Result<Self, GitError> {
-        let path = path.as_ref();
+        Self::open_full(path.as_ref(), timeouts, ConflictPolicy::default()).await
+    }
+
+    async fn open_full(
+        path: &Path,
+        timeouts: Timeouts,
+        conflict_policy: ConflictPolicy,
+    ) -> Result<Self, GitError> {
         let run = command::run(
             path,
             &strings([
@@ -195,12 +239,24 @@ impl Repo {
                 common_dir: PathBuf::from(*common_dir),
                 state,
                 timeouts,
+                conflict_policy,
             }),
         })
     }
 
     /// The same repository with a different timeout budget.
     pub fn with_timeouts(&self, timeouts: Timeouts) -> Self {
+        self.rebuilt(timeouts, self.inner.conflict_policy)
+    }
+
+    /// The same repository with a different [`ConflictPolicy`].
+    pub fn with_conflict_policy(&self, policy: ConflictPolicy) -> Self {
+        self.rebuilt(self.inner.timeouts, policy)
+    }
+
+    /// The paths are resolved once at open and never change; only the two
+    /// knobs do.
+    fn rebuilt(&self, timeouts: Timeouts, conflict_policy: ConflictPolicy) -> Self {
         Self {
             inner: Arc::new(Inner {
                 root: self.inner.root.clone(),
@@ -208,6 +264,7 @@ impl Repo {
                 common_dir: self.inner.common_dir.clone(),
                 state: self.inner.state.clone(),
                 timeouts,
+                conflict_policy,
             }),
         }
     }
@@ -231,6 +288,10 @@ impl Repo {
         self.inner.timeouts
     }
 
+    pub fn conflict_policy(&self) -> ConflictPolicy {
+        self.inner.conflict_policy
+    }
+
     /// Branch, dirtiness, conflicts, upstream divergence, and any stopped
     /// operation.
     ///
@@ -239,23 +300,7 @@ impl Repo {
     /// guaranteed to describe the same instant.
     pub async fn status(&self) -> Result<RepoStatus, GitError> {
         let run = self
-            .run(
-                &strings([
-                    // Pinned on, because `status.aheadBehind=false` in a user's
-                    // config makes git print `+? -?` instead of the counts.
-                    "-c",
-                    "status.aheadBehind=true",
-                    "status",
-                    "--porcelain=v2",
-                    "--branch",
-                    "-z",
-                    "--untracked-files=normal",
-                    // A submodule whose own worktree is dirty does not stop a
-                    // rebase of the superproject, so it must not count as dirt.
-                    "--ignore-submodules=dirty",
-                ]),
-                CommandKind::Read,
-            )
+            .run(&status_args(), CommandKind::Read)
             .await?
             .require_success("status")?;
 
@@ -265,6 +310,37 @@ impl Repo {
             worktree,
             in_progress: in_progress(self.inner.state.probe()?),
         })
+    }
+
+    /// Every work tree of this repository, including this one.
+    pub async fn worktrees(&self) -> Result<Vec<WorktreeEntry>, GitError> {
+        let run = self
+            .run(
+                &strings(["worktree", "list", "--porcelain"]),
+                CommandKind::Read,
+            )
+            .await?
+            .require_success("worktree list")?;
+        parse_worktree_list(&run.stdout)
+    }
+
+    /// The work tree that has `branch` checked out, opened as its own
+    /// [`Repo`] with this handle's timeouts and conflict policy.
+    ///
+    /// `None` means the branch is not checked out anywhere. git will not check
+    /// one branch out in two worktrees, so a `Some` is the only place an
+    /// operation on that branch can run.
+    pub async fn worktree_for(&self, branch: &BranchName) -> Result<Option<Repo>, GitError> {
+        let entries = self.worktrees().await?;
+        let Some(entry) = entries
+            .into_iter()
+            .find(|entry| entry.branch.as_ref() == Some(branch))
+        else {
+            return Ok(None);
+        };
+        Self::open_full(&entry.path, self.inner.timeouts, self.inner.conflict_policy)
+            .await
+            .map(Some)
     }
 
     /// Whether a ref exists, without resolving it.
@@ -544,30 +620,41 @@ impl Repo {
         }
     }
 
-    /// **Conflict policy: auto-abort.**
+    /// **Apply the [`ConflictPolicy`].**
     ///
-    /// When a rebase or merge stops on a conflict, rostrum runs the matching
-    /// `--abort` and reports the conflict with git's own message, leaving the
-    /// repository exactly as it was before the button was pressed.
+    /// Under the default, [`ConflictPolicy::Abort`], a rebase or merge that
+    /// stops on a conflict is aborted with the matching `--abort` and reported
+    /// with git's own message, leaving the repository exactly as it was before
+    /// the button was pressed. The reasoning: rostrum is a review tool, not an
+    /// editor. It has no conflict resolution UI, and a user who discovers a
+    /// half-finished rebase the next time they open a terminal has been handed
+    /// a problem they did not ask for.
     ///
-    /// The reasoning: rostrum is a review tool, not an editor. It has no
-    /// conflict resolution UI, and a user who discovers a half-finished rebase
-    /// the next time they open a terminal has been handed a problem they did
-    /// not ask for. Reporting "this would conflict" and changing nothing is the
-    /// honest answer to a button press.
+    /// Under [`ConflictPolicy::Leave`] the conflict is returned untouched, with
+    /// `aborted: false` and [`Conflict::abort_target`] still `Some`, for a
+    /// caller that is about to hand the stopped operation to someone who can
+    /// finish it — see [`Repo::conflict_context`]. What that caller can rely
+    /// on is spelled out on the variant.
     ///
-    /// A [`Conflict::AutostashPop`] is deliberately **not** aborted. There the
-    /// operation already succeeded and there is no sequencer state, so
+    /// A [`Conflict::AutostashPop`] is never aborted under either policy. There
+    /// the operation already succeeded and there is no sequencer state, so
     /// `--abort` would simply fail; the user's changes are safe in the stash and
     /// the right thing is to say so.
     ///
-    /// This is a decision, not a law — a future version with a conflict editor
-    /// would leave the state in place instead — which is why it lives in one
-    /// named place rather than being spread through the call sites.
+    /// This is a decision, not a law, which is why it lives in one named place
+    /// rather than being spread through the call sites — and why switching it
+    /// touches nothing in [`classify_run`].
     async fn on_conflict(&self, mut conflict: Conflict) -> Conflict {
         let Some(target) = conflict.abort_target() else {
             return conflict;
         };
+        if self.inner.conflict_policy == ConflictPolicy::Leave {
+            tracing::info!(
+                target = target.subcommand(),
+                "conflict left in place for someone else to finish"
+            );
+            return conflict;
+        }
         match self.abort(target).await {
             Ok(()) => conflict.mark_aborted(true),
             Err(error) => {
@@ -590,6 +677,25 @@ impl Repo {
 
 fn strings<const N: usize>(args: [&str; N]) -> Vec<String> {
     args.into_iter().map(str::to_string).collect()
+}
+
+/// The one `status` invocation every reader here shares, so
+/// [`Repo::status`] and [`Repo::conflict_context`] are parsing the same shape.
+fn status_args() -> Vec<String> {
+    strings([
+        // Pinned on, because `status.aheadBehind=false` in a user's config
+        // makes git print `+? -?` instead of the counts.
+        "-c",
+        "status.aheadBehind=true",
+        "status",
+        "--porcelain=v2",
+        "--branch",
+        "-z",
+        "--untracked-files=normal",
+        // A submodule whose own worktree is dirty does not stop a rebase of
+        // the superproject, so it must not count as dirt.
+        "--ignore-submodules=dirty",
+    ])
 }
 
 #[cfg(test)]
@@ -649,6 +755,84 @@ mod tests {
     fn a_missing_state_file_is_not_an_error() {
         assert!(
             !exists(Path::new("/nonexistent/rostrum/MERGE_HEAD")).expect("absence is an answer")
+        );
+        assert_eq!(
+            read_optional(Path::new("/nonexistent/rostrum/rebase-merge/msgnum"))
+                .expect("absence is an answer"),
+            None
+        );
+    }
+
+    /// A handle built from literals, so the two knobs can be tested without a
+    /// repository on disk.
+    fn handle(timeouts: Timeouts, conflict_policy: ConflictPolicy) -> Repo {
+        let state = StatePaths::from_lines(&[
+            "/r/.git/rebase-merge",
+            "/r/.git/rebase-apply",
+            "/r/.git/rebase-apply/applying",
+            "/r/.git/MERGE_HEAD",
+            "/r/.git/CHERRY_PICK_HEAD",
+            "/r/.git/REVERT_HEAD",
+            "/r/.git/BISECT_LOG",
+        ])
+        .expect("parses");
+        Repo {
+            inner: Arc::new(Inner {
+                root: PathBuf::from("/r"),
+                git_dir: PathBuf::from("/r/.git"),
+                common_dir: PathBuf::from("/r/.git"),
+                state,
+                timeouts,
+                conflict_policy,
+            }),
+        }
+    }
+
+    /// Auto-abort is the behaviour every existing caller was written against.
+    #[test]
+    fn the_default_conflict_policy_is_abort() {
+        assert_eq!(ConflictPolicy::default(), ConflictPolicy::Abort);
+        assert_eq!(
+            handle(Timeouts::default(), ConflictPolicy::default()).conflict_policy(),
+            ConflictPolicy::Abort
+        );
+    }
+
+    /// Each knob is changed on its own; the paths and the other knob survive.
+    #[test]
+    fn changing_one_knob_keeps_the_paths_and_the_other() {
+        let slow = Timeouts {
+            read: std::time::Duration::from_secs(99),
+            ..Timeouts::default()
+        };
+        let repo = handle(slow, ConflictPolicy::Abort);
+
+        let leaving = repo.with_conflict_policy(ConflictPolicy::Leave);
+        assert_eq!(leaving.conflict_policy(), ConflictPolicy::Leave);
+        assert_eq!(leaving.timeouts(), slow);
+        assert_eq!(leaving.root(), Path::new("/r"));
+        assert_eq!(leaving.git_dir(), Path::new("/r/.git"));
+        assert_eq!(
+            leaving.inner.state.merge_head,
+            PathBuf::from("/r/.git/MERGE_HEAD")
+        );
+
+        let quick = leaving.with_timeouts(Timeouts::default());
+        assert_eq!(quick.timeouts(), Timeouts::default());
+        assert_eq!(quick.conflict_policy(), ConflictPolicy::Leave);
+        assert_eq!(quick.root(), Path::new("/r"));
+    }
+
+    /// `conflict_context` must parse exactly what `status` parses.
+    #[test]
+    fn the_shared_status_arguments_pin_the_format_and_counts() {
+        let args = status_args();
+        assert!(args.contains(&"--porcelain=v2".to_string()));
+        assert!(args.contains(&"-z".to_string()));
+        assert!(args.contains(&"status.aheadBehind=true".to_string()));
+        assert_eq!(
+            args[2], "status",
+            "the config override precedes the subcommand"
         );
     }
 }

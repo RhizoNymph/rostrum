@@ -4818,6 +4818,7 @@ dependencies = [
  "rostrum-diff",
  "rostrum-git",
  "rostrum-github",
+ "rostrum-handoff",
  "rostrum-md",
  "rostrum-ui",
  "serde",
@@ -4884,6 +4885,20 @@ dependencies = [
  "rostrum-core",
  "serde",
  "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "rostrum-handoff"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "rostrum-core",
+ "rostrum-git",
  "thiserror 2.0.19",
  "tokio",
  "tracing",

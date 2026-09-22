@@ -97,6 +97,8 @@ diff view.
 | Close / Reopen | Confirmation required |
 | Convert to draft / Ready for review | Fires immediately; one button, labelled by the state it moves to |
 | Update: Merge / Update: Rebase | Shown only when behind the base; sends `expectedHeadOid` as a race guard |
+| Pull (rebase) / Merge remote / Merge base / Rebase onto base | On the local worktree, when a clone is configured; nothing is pushed |
+| Abort | When a rebase or merge is in progress in the worktree |
 | Add / remove label | Toggles a label via the issues API |
 
 **Merge and close require explicit confirmation.** They are outward-facing and
@@ -121,24 +123,21 @@ unavailable, because `MergeStatus::Draft` blocks it; both read the same
 `MergeStatus::Behind` answers "is this branch behind?"; the header chip and the
 branch-sync row answer "by how much, and what would you like to do about it".
 
-`PrDetail::base_divergence` is a `Loadable<Divergence>` loaded eagerly in `new`
-and again from `refresh`, because the header shows it unconditionally and a
-number that appears a beat after the rest of the header reads as a glitch.
+The count is `pull.base_divergence`, filled by the batched compare the store
+issues after every feed refresh (see `docs/features/repo_feed.md`). The detail
+pane no longer fetches it separately: one source of truth, one fewer request
+per selection, and the feed row and the detail header can never disagree.
 
-Three states, and the distinction between the last two matters:
-
-| State | Meaning | Renders as |
+| Value | Meaning | Renders as |
 |---|---|---|
-| `Loaded(d)` where `d.is_behind()` | Behind by `d.behind` | Chip + branch-sync row |
-| `Loaded(d)` where `!d.is_behind()` | Current, or merely ahead | Nothing |
-| `Idle` after a load | GitHub declined to compare | Nothing |
-| `Failed(m)` | The request itself failed | Error banner |
+| `Some(d)` where `d.is_behind()` | Behind by `d.behind` | Chip + branch-sync row |
+| `Some(d)` where `!d.is_behind()` | Current, or merely ahead | Nothing |
+| `None` | Not yet fetched, or GitHub declined to compare | Nothing |
 
-The third row is the cross-fork case: `Ref.compare` cannot resolve a head ref
-that lives in a different repository, and GitHub says so with a null comparison
-rather than an error. Returning to `Idle` rather than `Failed` is deliberate —
-an unanswerable question should cost an absent chip, not an error banner on a
-pull request that is otherwise perfectly healthy.
+The last row covers the cross-fork case: `Ref.compare` cannot resolve a head
+ref that lives in a different repository, and GitHub says so with a null
+comparison rather than an error. An unanswerable question costs an absent chip,
+not an error banner on a pull request that is otherwise perfectly healthy.
 
 Every open pull request is ahead of its base, so "ahead" alone earns no chip.
 Only `behind` does.
@@ -160,6 +159,36 @@ made explicit here because "update from base" has no end state to check.
 When `Divergence::fast_forwards()` — the branch is behind but has no commits of
 its own — the two methods produce identical results, and both tooltips say so
 rather than leaving the reader to work it out.
+
+### The local row
+
+When a clone is configured for the repository, `PrDetail::local` is a
+`Loadable<LocalState>`:
+
+- **`NotCheckedOut`** — the clone exists but no worktree has this branch
+  checked out. One quiet line, no buttons. Common in a one-worktree-per-branch
+  layout for pull requests the user is not working on.
+- **`CheckedOut(LocalBranch)`** — the worktree the branch lives in (found via
+  `Repo::worktree_for`, never assumed to be the configured path), its
+  divergence from `origin/<head>`, whether the fetch that preceded the count
+  succeeded, the preflight blocker if any, whether an operation is in progress,
+  and — when it is and a handler is configured — whether the handoff session
+  still exists.
+
+Four buttons, all routed through `localops::run_local_job` — the same function
+the feed's sync-all runs, so the two cannot drift: `Pull (rebase)` and `Merge
+remote` against `origin/<head>`; `Merge base` and `Rebase onto base` against
+`origin/<base>`. The stash checkbox toggles the persisted `autostash` setting
+and re-runs preflight, because a dirty worktree blocks with it off and not with
+it on.
+
+An operation in progress takes over the row: the message names it, says
+whether a handoff session is running (`tmux attach -t =X`) or gone, and offers
+Abort. Abort takes its target from the worktree's own state via
+`InProgress::abort_target()`, so it cannot run the wrong `--abort`.
+
+A handoff is reported in `notice`, not `error` — nothing went wrong — and is
+painted in the accent colour rather than red.
 
 ### Mergeability
 

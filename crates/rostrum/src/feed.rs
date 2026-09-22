@@ -13,8 +13,8 @@ use gpui::{
     ListAlignment, ListState, Subscription, Window, actions, div, list, prelude::*, px, rems,
 };
 use rostrum_core::{
-    Chrome, Feed, FeedFilter, FeedRow, PrIx, RepoId, RepoIx, RepoState, ReviewDecision, Selection,
-    flatten,
+    Chrome, Feed, FeedFilter, FeedRow, MergeStatus, PrIx, RepoId, RepoIx, RepoState,
+    ReviewDecision, Selection, flatten,
 };
 use rostrum_ui::{
     ActiveTheme, InputEvent, TextInput,
@@ -24,8 +24,9 @@ use rostrum_ui::{
 };
 
 use crate::{
+    localops::LocalResult,
     nav::{self, Nav},
-    sync::Store,
+    sync::{Store, SyncKind},
 };
 
 actions!(
@@ -520,12 +521,36 @@ impl FeedView {
         let checks = pull.checks;
         let decision = pull.review_decision;
         let merge = pull.merge_status();
+        let base_ref = pull.base_ref.clone();
+        // The exact count from the divergence batch, once it has answered.
+        // Only "behind" earns a chip: ahead is the normal state of a pull
+        // request and says nothing the reviewer must act on.
+        let behind = pull
+            .base_divergence
+            .filter(|d| d.is_behind())
+            .map(|d| d.behind);
+        // The merge chip's own "behind" carries less than the count, so it
+        // yields to the count when both are known; every other merge chip
+        // says something the count does not.
+        let merge_chip = merge
+            .chip()
+            .filter(|_| behind.is_none() || merge != MergeStatus::Behind);
         let labels: Vec<_> = pull
             .labels
             .iter()
             .take(3)
             .map(|l| (l.name.clone(), hex_color(&l.color)))
             .collect();
+        // The latest "sync all" verdict, when it is one worth a chip.
+        let sync_chip = self
+            .store
+            .read(cx)
+            .sync_result(&state.id, pull.number)
+            .and_then(|result| {
+                result
+                    .chip()
+                    .map(|text| (text, result.detail(), sync_chip_color(result)))
+            });
 
         let theme = cx.theme().clone();
 
@@ -564,10 +589,23 @@ impl FeedView {
                             .when(is_draft, |el| {
                                 el.child(Chip::new("draft").color(theme.draft))
                             })
+                            .when_some(behind, |el, behind| {
+                                el.child(
+                                    Chip::new(format!("↓{behind}"))
+                                        .color(theme.warning)
+                                        // A distinct tag from the merge chip's:
+                                        // GPUI element ids must be unique
+                                        // within the row, and both can render.
+                                        .tooltip(
+                                            ("behind-count", ix),
+                                            format!("{behind} commit(s) behind {base_ref}"),
+                                        ),
+                                )
+                            })
                             // `chip` returns nothing for draft and unstable:
                             // the draft chip beside this one and the check dot
                             // at the head of the row already say both.
-                            .when_some(merge.chip(), |el, text| {
+                            .when_some(merge_chip, |el, text| {
                                 el.child(
                                     Chip::new(text)
                                         .color(theme.merge_color(merge))
@@ -576,6 +614,16 @@ impl FeedView {
                             })
                             .when_some(review_label(decision), |el, (text, color)| {
                                 el.child(Chip::new(text).color(color(&theme)))
+                            })
+                            .when_some(sync_chip, |el, (text, detail, color)| {
+                                el.child(
+                                    Chip::new(text)
+                                        .color(color(&theme))
+                                        // Its own tag: the merge and behind
+                                        // chips can share the row, and GPUI
+                                        // element ids must not collide.
+                                        .tooltip(("sync-result", ix), detail),
+                                )
                             }),
                     )
                     .child(
@@ -653,6 +701,16 @@ impl FeedView {
         let repo_count = store.state.repos.len();
         let active = store.state.filter.is_active();
         let counts = visible_counts(&store.state.repos, &store.state.filter);
+        let has_clone = store.has_any_clone();
+        let syncing = store.is_syncing();
+        let autostash = store.autostash();
+        let sync_status = store.sync().map(|sync| {
+            if sync.is_finished() {
+                format!("{}: {}", sync.kind.label(), sync.summary().describe())
+            } else {
+                format!("{}: {}/{}…", sync.kind.label(), sync.done, sync.total)
+            }
+        });
 
         v_flex()
             .flex_none()
@@ -708,6 +766,46 @@ impl FeedView {
                         )
                     }),
             )
+            // Only for users with a clone to sync: three greyed-out buttons
+            // would be a puzzle for everyone else.
+            .when(has_clone, |el| {
+                let sync_button = |id: &'static str, kind: SyncKind, cx: &mut Context<Self>| {
+                    Button::new(id, kind.label())
+                        .disabled(syncing)
+                        .tooltip(if syncing {
+                            "A sync is already running"
+                        } else {
+                            "Run on every checked-out pull request of every repository with a clone"
+                        })
+                        .on_click(cx.listener(move |this, _, _window, cx| {
+                            this.store.update(cx, |store, cx| store.sync_all(kind, cx));
+                        }))
+                };
+                el.child(
+                    h_flex()
+                        .gap_2()
+                        .flex_wrap()
+                        .child(sync_button("sync-pull", SyncKind::Pull, cx))
+                        .child(sync_button("sync-merge-base", SyncKind::MergeBase, cx))
+                        .child(sync_button("sync-rebase-base", SyncKind::RebaseBase, cx))
+                        .child(
+                            Checkbox::new("sync-autostash", "Stash local changes", autostash)
+                                .on_toggle(cx.listener(move |this, _, _window, cx| {
+                                    this.store.update(cx, |store, cx| {
+                                        store.set_autostash(!autostash, cx)
+                                    });
+                                })),
+                        )
+                        .when_some(sync_status, |el, status| {
+                            el.child(
+                                div()
+                                    .text_size(rems(0.72))
+                                    .text_color(theme.text_subtle)
+                                    .child(status),
+                            )
+                        }),
+                )
+            })
             .when(self.managing_repos, |el| {
                 el.child(self.render_repo_panel(cx))
             })
@@ -842,6 +940,19 @@ fn card(chrome: Chrome, cx: &App) -> Div {
 
 type ThemeColor = fn(&rostrum_ui::Theme) -> gpui::Hsla;
 
+/// Severity colour for a sync verdict chip: red for what stopped, accent for
+/// what was handed on, amber for what git would not start.
+fn sync_chip_color(result: &LocalResult) -> ThemeColor {
+    match result {
+        LocalResult::Conflicted(_) | LocalResult::Failed(_) => |t| t.danger,
+        LocalResult::HandedOff { .. } => |t| t.accent,
+        LocalResult::Refused(_)
+        | LocalResult::NotCheckedOut
+        | LocalResult::UpToDate
+        | LocalResult::Completed => |t| t.warning,
+    }
+}
+
 fn review_label(decision: Option<ReviewDecision>) -> Option<(&'static str, ThemeColor)> {
     match decision? {
         ReviewDecision::Approved => Some(("approved", |t| t.success)),
@@ -907,6 +1018,7 @@ mod tests {
             labels: Vec::new(),
             comment_count: 0,
             checks: None,
+            base_divergence: None,
         }
     }
 

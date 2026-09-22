@@ -3,6 +3,8 @@
 //! One query per repository returns everything the feed needs, instead of
 //! listing PRs and then fanning out a request per PR for reviews and checks.
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use rostrum_core::{
     CheckState, Divergence, Label, MergeStateStatus, Mergeable, NodeId, PrNumber, PullRequest,
@@ -206,6 +208,136 @@ impl DivergenceQueryData {
             .and_then(|base_ref| base_ref.compare)
             .map(ComparisonNode::into_domain)
     }
+}
+
+// --- batched divergence --------------------------------------------------
+
+/// The document for [`build_divergence_batch`]: one `ref { compare }`
+/// selection per pull request, aliased `p0..pN`, each bound to its own
+/// `$bN`/`$hN` variable pair.
+///
+/// Aliasing is what makes this one request rather than N. GitHub costs the
+/// document as a single query, and the feed refresh that triggers it is
+/// already one request per repository, so the follow-up must not be N more.
+///
+/// Branch names travel as variables, never spliced into the document text: a
+/// name with a quote, a brace or a `#` in it would otherwise change the
+/// document's shape, and a variable is the one place GraphQL guarantees a
+/// string stays a string. The document itself is built from `count` alone.
+///
+/// Only meaningful for `count >= 1`. An empty selection set is a syntax error
+/// in GraphQL, so the client short-circuits an empty batch before reaching
+/// here rather than sending a document GitHub would reject.
+pub fn build_divergence_batch(count: usize) -> String {
+    let mut declarations = String::from("$owner: String!, $name: String!");
+    let mut selections = String::new();
+    for index in 0..count {
+        declarations.push_str(&format!(", $b{index}: String!, $h{index}: String!"));
+        selections.push_str(&format!(
+            "    {}: ref(qualifiedName: $b{index}) {{ compare(headRef: $h{index}) {{ aheadBy behindBy }} }}\n",
+            divergence_alias(index)
+        ));
+    }
+    format!(
+        "query({declarations}) {{\n  repository(owner: $owner, name: $name) {{\n{selections}  }}\n}}\n"
+    )
+}
+
+/// The variables a [`build_divergence_batch`] document of the same length
+/// expects, with `pairs[i]` bound to `$b{i}`/`$h{i}`.
+///
+/// Built here beside the document so the two cannot drift: the test that
+/// checks one against the other is the contract.
+pub fn divergence_batch_variables(
+    owner: &str,
+    name: &str,
+    pairs: &[(String, String)],
+) -> serde_json::Value {
+    let mut variables = serde_json::Map::new();
+    variables.insert("owner".into(), owner.into());
+    variables.insert("name".into(), name.into());
+    for (index, (base, head)) in pairs.iter().enumerate() {
+        variables.insert(format!("b{index}"), base.as_str().into());
+        variables.insert(format!("h{index}"), head.as_str().into());
+    }
+    serde_json::Value::Object(variables)
+}
+
+/// The alias under which pair `index` is selected.
+fn divergence_alias(index: usize) -> String {
+    format!("p{index}")
+}
+
+/// Response to a [`build_divergence_batch`] document.
+///
+/// The aliases are dynamic — `p0..pN` for however many pairs were sent — so
+/// no struct could name them. `repository` decodes as a map from alias to the
+/// same [`BaseRefNode`] the single query uses, and [`Self::into_domain`]
+/// walks it in the order the pairs were sent so the result stays
+/// index-aligned with the request.
+#[derive(Debug, Deserialize)]
+pub struct DivergenceBatchData {
+    /// `null` when the repository does not exist or is not visible. Each value
+    /// is `null` when that base ref cannot be resolved, exactly as in
+    /// [`DivergenceRepositoryNode::base_ref`].
+    pub repository: Option<HashMap<String, Option<BaseRefNode>>>,
+}
+
+impl DivergenceBatchData {
+    /// One entry per pair sent, `None` wherever GitHub declined at any level
+    /// — the repository, that pair's base ref, or the comparison itself — so
+    /// the caller sees one shape of "unknown" however deep the null was.
+    ///
+    /// An alias missing from the map altogether is treated the same way
+    /// rather than as a decode failure: the request asked for it, so its
+    /// absence is GitHub withholding an answer, not a malformed response.
+    pub fn into_domain(self, count: usize) -> Vec<Option<Divergence>> {
+        let mut repository = self.repository.unwrap_or_default();
+        (0..count)
+            .map(|index| {
+                repository
+                    .remove(&divergence_alias(index))
+                    .flatten()
+                    .and_then(|base_ref| base_ref.compare)
+                    .map(ComparisonNode::into_domain)
+            })
+            .collect()
+    }
+}
+
+/// Split a batch response's `errors` into the ones the batch tolerates and
+/// the ones that fail it.
+///
+/// A `NOT_FOUND` whose path is `["repository", "pN", ...]` is the cross-fork
+/// answer for pair N alone: the base repository cannot resolve a head ref
+/// that lives in a fork, and GitHub reports that per alias while still
+/// answering every other alias. Those are expected and are dropped; the
+/// matching `compare` is already `null` in `data`, which is where the caller
+/// reads the `None` from.
+///
+/// Everything else is returned for the caller to fail on: a `NOT_FOUND` for
+/// the repository itself (path `["repository"]`, or no path at all), which
+/// means no alias was answered, and any error of another kind, which the
+/// batch has no fallback for.
+pub fn unexcused_batch_errors(errors: Vec<GraphQlError>, count: usize) -> Vec<GraphQlError> {
+    errors
+        .into_iter()
+        .filter(|error| !is_alias_not_found(error, count))
+        .collect()
+}
+
+fn is_alias_not_found(error: &GraphQlError, count: usize) -> bool {
+    if error.kind.as_deref() != Some("NOT_FOUND") {
+        return false;
+    }
+    let Some(path) = error.path.as_deref() else {
+        return false;
+    };
+    let [root, alias, ..] = path else {
+        return false;
+    };
+    root.as_str() == Some("repository")
+        && (0..count).any(|index| alias.as_str() == Some(divergence_alias(index).as_str()))
 }
 
 // --- updating a branch from its base -------------------------------------
@@ -453,6 +585,9 @@ impl PrNode {
                 .collect(),
             comment_count: self.comments.map_or(0, |c| c.total_count),
             checks,
+            // Filled in by the follow-up divergence batch, never by the feed
+            // query itself.
+            base_divergence: None,
         }
     }
 }
@@ -807,6 +942,151 @@ mod tests {
     fn the_divergence_query_compares_the_base_against_the_head() {
         assert!(PULL_REQUEST_DIVERGENCE.contains("ref(qualifiedName: $base)"));
         assert!(PULL_REQUEST_DIVERGENCE.contains("compare(headRef: $head)"));
+    }
+
+    // --- batched divergence ------------------------------------------------
+
+    /// One alias and one variable pair per pull request, and nothing else
+    /// varies with the count: the document is a function of the number of
+    /// pairs alone, never of the branch names.
+    #[test]
+    fn the_batch_document_declares_one_variable_pair_per_alias() {
+        let one = build_divergence_batch(1);
+        assert!(one.contains("$b0: String!, $h0: String!"), "{one}");
+        assert!(
+            one.contains(
+                "p0: ref(qualifiedName: $b0) { compare(headRef: $h0) { aheadBy behindBy } }"
+            ),
+            "{one}"
+        );
+        assert!(!one.contains("$b1"), "{one}");
+        assert!(!one.contains("p1:"), "{one}");
+
+        let three = build_divergence_batch(3);
+        for index in 0..3 {
+            assert!(three.contains(&format!("$b{index}: String!")), "{three}");
+            assert!(three.contains(&format!("$h{index}: String!")), "{three}");
+            assert!(
+                three.contains(&format!(
+                    "p{index}: ref(qualifiedName: $b{index}) {{ compare(headRef: $h{index})"
+                )),
+                "{three}"
+            );
+        }
+        assert_eq!(three.matches(": ref(qualifiedName:").count(), 3);
+        assert_eq!(three.matches("String!").count(), 2 + 3 * 2);
+        assert!(three.contains("repository(owner: $owner, name: $name)"));
+    }
+
+    /// Every variable the document declares is one the variables object
+    /// supplies, and vice versa — the two are built separately, and GitHub
+    /// rejects a document with an unbound variable.
+    #[test]
+    fn the_batch_variables_match_the_declarations() {
+        let pairs = vec![
+            ("main".to_string(), "feature".to_string()),
+            ("release/2".to_string(), "fix \"quoted\"".to_string()),
+        ];
+        let document = build_divergence_batch(pairs.len());
+        let variables = divergence_batch_variables("a", "b", &pairs);
+        let object = variables.as_object().expect("variables are an object");
+
+        for name in ["owner", "name", "b0", "h0", "b1", "h1"] {
+            assert!(object.contains_key(name), "missing {name}");
+            assert!(
+                document.contains(&format!("${name}: String!")),
+                "{name} undeclared"
+            );
+        }
+        assert_eq!(object.len(), 6);
+        assert_eq!(object["b1"], "release/2");
+        // Branch names never reach the document text.
+        assert!(!document.contains("feature"));
+        assert!(!document.contains("quoted"));
+        assert_eq!(object["h1"], "fix \"quoted\"");
+    }
+
+    /// The batch answers with one alias per pair and the client reads them
+    /// back by position; a partially unresolvable batch must keep the
+    /// positions of the aliases that did resolve.
+    #[test]
+    fn a_batch_response_decodes_index_aligned_with_nulls_where_declined() {
+        let body = r#"{
+          "data": {
+            "repository": {
+              "p0": { "compare": { "aheadBy": 3, "behindBy": 0 } },
+              "p1": { "compare": null },
+              "p2": null,
+              "p3": { "compare": { "aheadBy": 0, "behindBy": 7 } }
+            }
+          },
+          "errors": [{
+            "type": "NOT_FOUND",
+            "path": ["repository", "p1", "compare"],
+            "message": "Could not resolve to a Ref with the name 'fork:feature'."
+          }]
+        }"#;
+        let response: GraphQlResponse<DivergenceBatchData> =
+            serde_json::from_str(body).expect("should decode");
+        let divergences = response.data.expect("data present").into_domain(4);
+        assert_eq!(
+            divergences,
+            vec![
+                Some(Divergence::new(3, 0)),
+                None,
+                None,
+                Some(Divergence::new(0, 7)),
+            ]
+        );
+        assert!(unexcused_batch_errors(response.errors, 4).is_empty());
+    }
+
+    /// A repository GitHub will not show answers `null` at the top, which
+    /// must fan out to one `None` per pair rather than a shorter vector.
+    #[test]
+    fn a_withheld_repository_yields_one_absent_answer_per_pair() {
+        let body = r#"{"data":{"repository":null}}"#;
+        let response: GraphQlResponse<DivergenceBatchData> =
+            serde_json::from_str(body).expect("should decode");
+        assert_eq!(
+            response.data.expect("data present").into_domain(3),
+            vec![None, None, None]
+        );
+    }
+
+    /// Only a `NOT_FOUND` scoped to one of this batch's aliases is the
+    /// expected cross-fork answer. Anything else must reach the caller.
+    #[test]
+    fn only_alias_scoped_not_founds_are_excused() {
+        fn error(kind: Option<&str>, path: Option<&[&str]>) -> GraphQlError {
+            GraphQlError {
+                message: "m".into(),
+                path: path.map(|p| p.iter().map(|s| serde_json::Value::from(*s)).collect()),
+                kind: kind.map(str::to_string),
+            }
+        }
+
+        let excused = [
+            error(Some("NOT_FOUND"), Some(&["repository", "p0", "compare"])),
+            error(Some("NOT_FOUND"), Some(&["repository", "p2"])),
+        ];
+        assert!(unexcused_batch_errors(excused.to_vec(), 3).is_empty());
+
+        let kept = [
+            // The repository itself: no alias was answered.
+            error(Some("NOT_FOUND"), Some(&["repository"])),
+            error(Some("NOT_FOUND"), None),
+            // An alias this batch did not send.
+            error(Some("NOT_FOUND"), Some(&["repository", "p3", "compare"])),
+            // Right shape, wrong kind.
+            error(Some("FORBIDDEN"), Some(&["repository", "p0", "compare"])),
+            error(None, Some(&["repository", "p0", "compare"])),
+        ];
+        let unexcused = unexcused_batch_errors(kept.to_vec(), 3);
+        assert_eq!(unexcused.len(), kept.len());
+
+        let mixed: Vec<GraphQlError> = excused.iter().chain(kept.iter()).cloned().collect();
+        assert_eq!(unexcused_batch_errors(mixed, 3).len(), kept.len());
     }
 
     // --- updating a branch from its base -----------------------------------

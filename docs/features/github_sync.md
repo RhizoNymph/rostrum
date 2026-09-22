@@ -256,10 +256,17 @@ Two decisions worth stating:
   locally. Decoding it as a closed enum would let a value GitHub adds later fail
   the whole query.
 
-This is a per-pull-request read, issued lazily by the detail pane, not part of
-the feed query — `Ref.compare` takes the head ref name as an argument, and a
-GraphQL field cannot reference a sibling field's value, so folding it into the
-feed would mean building a document with one aliased `compare` per pull request.
+`Ref.compare` takes the head ref name as an argument, and a GraphQL field
+cannot reference a sibling field's value, so the count cannot be folded into
+the feed query. It is instead a second request per repository, issued from
+`apply_refresh`: `build_divergence_batch(n)` generates one document with an
+aliased `pN: ref(...) { compare(...) }` per pull request and a matching
+`$bN`/`$hN` variable pair, so branch names travel as variables and never reach
+the document text. Verified live at cost 1. A `NOT_FOUND` scoped to one alias
+(`path: ["repository", "pN", "compare"]`) excuses only that alias —
+`unexcused_batch_errors` keeps everything else — so one cross-fork pull request
+cannot blank out the batch. The single `divergence()` remains for callers that
+want one answer.
 
 ### One GraphQL path for reads and writes
 

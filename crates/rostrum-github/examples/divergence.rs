@@ -2,10 +2,10 @@
 //!
 //!     cargo run -p rostrum-github --example divergence -- RhizoNymph/rostrum
 //!
-//! Reads every open pull request in a repository and asks GitHub how far each
-//! head branch has drifted from its base. The counts are the ones the detail
-//! pane renders, so a mismatch with `git rev-list --left-right --count` here is
-//! a mismatch in the app.
+//! Reads every open pull request in a repository and asks GitHub, in one
+//! batched request, how far each head branch has drifted from its base. The
+//! counts are the ones the feed row and detail pane render, so a mismatch with
+//! `git rev-list --left-right --count` here is a mismatch in the app.
 //!
 //! A pull request from a fork prints `(not comparable)`: the base repository
 //! cannot resolve a head ref that lives elsewhere, and GitHub answers with a
@@ -38,9 +38,16 @@ async fn main() -> Result<()> {
         open.pull_requests.len()
     );
 
-    for pr in &open.pull_requests {
-        let divergence = client.divergence(&repo, &pr.base_ref, &pr.head_ref).await?;
+    // One aliased request for the whole list, which is what the feed does
+    // after every refresh; per-pull-request calls would cost N requests.
+    let pairs: Vec<(String, String)> = open
+        .pull_requests
+        .iter()
+        .map(|pr| (pr.base_ref.clone(), pr.head_ref.clone()))
+        .collect();
+    let divergences = client.divergences(&repo, &pairs).await?;
 
+    for (pr, divergence) in open.pull_requests.iter().zip(divergences) {
         match divergence {
             Some(d) => println!(
                 "  {:>6}  {} -> {}\n          ahead {}, behind {}  ({:?}, fast-forwards: {})",
