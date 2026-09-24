@@ -7,8 +7,10 @@
 //! list, and the per-repo "container" look is reconstructed by having each row
 //! draw the part of the border that belongs to it (see [`Feed::chrome`]).
 
+use std::collections::BTreeSet;
+
 use crate::{
-    model::PullRequest,
+    model::{LoginKey, PullRequest},
     state::{LoadState, RepoState},
 };
 
@@ -88,6 +90,16 @@ pub struct FeedFilter {
     /// show. On by default: a feed of a dozen repositories is mostly empty
     /// headers most of the time.
     pub hide_empty_repos: bool,
+    /// Logins the feed is narrowed to. Empty means every author, which is why
+    /// this is a set rather than an `Option<Vec<_>>`: "none selected" and "all
+    /// shown" are the same state, and giving them two representations would
+    /// invite them to disagree.
+    pub authors: BTreeSet<LoginKey>,
+    /// Widen [`FeedFilter::authors`] from "opened by" to "waiting on" —
+    /// assignee and requested reviewer as well as author. Inert while
+    /// `authors` is empty, which is what lets it be a plain checkbox rather
+    /// than a third selection mode.
+    pub include_involved: bool,
 }
 
 impl Default for FeedFilter {
@@ -96,6 +108,8 @@ impl Default for FeedFilter {
             query: String::new(),
             hide_drafts: false,
             hide_empty_repos: true,
+            authors: BTreeSet::new(),
+            include_involved: false,
         }
     }
 }
@@ -105,11 +119,39 @@ impl FeedFilter {
         if self.hide_drafts && pr.is_draft {
             return false;
         }
+        if !self.accepts_author(pr) {
+            return false;
+        }
         pr.matches_query(&self.query)
     }
 
+    /// Whether the author selection lets `pr` through. An empty selection lets
+    /// everything through; otherwise one selected login must match.
+    fn accepts_author(&self, pr: &PullRequest) -> bool {
+        if self.authors.is_empty() {
+            return true;
+        }
+        self.authors.iter().any(|login| {
+            if self.include_involved {
+                pr.involves(login)
+            } else {
+                pr.is_authored_by(login)
+            }
+        })
+    }
+
     pub fn is_active(&self) -> bool {
-        !self.query.is_empty() || self.hide_drafts
+        !self.query.is_empty() || self.hide_drafts || !self.authors.is_empty()
+    }
+
+    /// Add or remove a login from the selection, reporting the state it landed
+    /// in so a caller can persist it without re-reading.
+    pub fn toggle_author(&mut self, login: LoginKey) -> bool {
+        if self.authors.remove(&login) {
+            return false;
+        }
+        self.authors.insert(login);
+        true
     }
 }
 
@@ -230,7 +272,9 @@ pub fn flatten(repos: &[RepoState], filter: &FeedFilter) -> Feed {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{MergeStateStatus, Mergeable, NodeId, PrNumber, PullRequest, RepoId};
+    use crate::model::{
+        LoginKey, MergeStateStatus, Mergeable, NodeId, PrNumber, PullRequest, RepoId, User,
+    };
     use chrono::Utc;
 
     fn pr(number: u32, draft: bool) -> PullRequest {
@@ -252,6 +296,8 @@ mod tests {
             mergeable: Mergeable::Unknown,
             merge_state: MergeStateStatus::Unknown,
             review_decision: None,
+            assignees: Vec::new(),
+            review_requests: Vec::new(),
             labels: Vec::new(),
             comment_count: 0,
             checks: None,
@@ -530,6 +576,147 @@ mod tests {
     #[test]
     fn no_repos_yields_no_rows() {
         let feed = flatten(&[], &FeedFilter::default());
+        assert!(feed.is_empty());
+    }
+
+    // --- author filter ------------------------------------------------------
+
+    fn user(login: &str) -> User {
+        User {
+            login: login.to_string(),
+            avatar_url: None,
+        }
+    }
+
+    fn authored_by(login: &str) -> PullRequest {
+        PullRequest {
+            author: Some(user(login)),
+            ..pr(1, false)
+        }
+    }
+
+    /// "Nobody selected" and "everybody shown" are the same state, so an empty
+    /// set must not filter anything out.
+    #[test]
+    fn no_author_selected_shows_everyone() {
+        let filter = FeedFilter::default();
+        assert!(filter.authors.is_empty());
+        assert!(filter.accepts(&authored_by("alice")));
+        assert!(filter.accepts(&pr(1, false)));
+        assert!(!filter.is_active());
+    }
+
+    #[test]
+    fn selecting_an_author_hides_everyone_else() {
+        let filter = FeedFilter {
+            authors: BTreeSet::from([LoginKey::new("alice")]),
+            ..Default::default()
+        };
+        assert!(filter.accepts(&authored_by("Alice")));
+        assert!(!filter.accepts(&authored_by("bob")));
+        assert!(filter.is_active());
+    }
+
+    #[test]
+    fn several_selected_authors_are_a_union() {
+        let filter = FeedFilter {
+            authors: BTreeSet::from([LoginKey::new("alice"), LoginKey::new("bob")]),
+            ..Default::default()
+        };
+        assert!(filter.accepts(&authored_by("alice")));
+        assert!(filter.accepts(&authored_by("bob")));
+        assert!(!filter.accepts(&authored_by("carol")));
+    }
+
+    /// The checkbox only ever widens the selection; it must never let through
+    /// a pull request the narrow filter would have shown, or hide one.
+    #[test]
+    fn include_involved_widens_authorship_to_assignee_and_reviewer() {
+        let waiting_on_me = PullRequest {
+            assignees: vec![user("me")],
+            ..authored_by("alice")
+        };
+        let review_requested = PullRequest {
+            review_requests: vec![user("me")],
+            ..authored_by("alice")
+        };
+
+        let narrow = FeedFilter {
+            authors: BTreeSet::from([LoginKey::new("me")]),
+            ..Default::default()
+        };
+        assert!(!narrow.accepts(&waiting_on_me));
+        assert!(!narrow.accepts(&review_requested));
+
+        let wide = FeedFilter {
+            include_involved: true,
+            ..narrow.clone()
+        };
+        assert!(wide.accepts(&waiting_on_me));
+        assert!(wide.accepts(&review_requested));
+        assert!(wide.accepts(&authored_by("me")));
+        assert!(!wide.accepts(&authored_by("alice")));
+    }
+
+    /// Without a selection the checkbox has nothing to widen, which is what
+    /// lets it be a plain checkbox rather than a third mode.
+    #[test]
+    fn include_involved_is_inert_with_nothing_selected() {
+        let filter = FeedFilter {
+            include_involved: true,
+            ..Default::default()
+        };
+        assert!(filter.accepts(&authored_by("anyone")));
+        assert!(!filter.is_active());
+    }
+
+    /// The author filter composes with the others rather than overriding them.
+    #[test]
+    fn the_author_filter_intersects_the_query_and_the_draft_toggle() {
+        let filter = FeedFilter {
+            authors: BTreeSet::from([LoginKey::new("alice")]),
+            hide_drafts: true,
+            query: "PR 1".into(),
+            ..Default::default()
+        };
+
+        assert!(filter.accepts(&authored_by("alice")));
+        // Right author, wrong everything else.
+        assert!(!filter.accepts(&PullRequest {
+            is_draft: true,
+            ..authored_by("alice")
+        }));
+        assert!(!filter.accepts(&PullRequest {
+            author: Some(user("alice")),
+            ..pr(2, false)
+        }));
+    }
+
+    #[test]
+    fn toggling_an_author_reports_the_state_it_landed_in() {
+        let mut filter = FeedFilter::default();
+        assert!(filter.toggle_author(LoginKey::new("alice")));
+        assert_eq!(filter.authors.len(), 1);
+        assert!(!filter.toggle_author(LoginKey::new("Alice")));
+        assert!(filter.authors.is_empty());
+    }
+
+    /// A repository whose every pull request belongs to someone unselected is
+    /// empty as far as the feed is concerned, and `hide_empty_repos` applies.
+    #[test]
+    fn filtering_by_author_can_empty_a_repository() {
+        let state = repo(
+            "a/b",
+            vec![authored_by("alice")],
+            LoadState::Loaded { at: Utc::now() },
+        );
+        let feed = flatten(
+            &[state],
+            &FeedFilter {
+                authors: BTreeSet::from([LoginKey::new("bob")]),
+                ..Default::default()
+            },
+        );
         assert!(feed.is_empty());
     }
 }

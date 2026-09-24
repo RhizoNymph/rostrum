@@ -3,11 +3,11 @@
 //! Non-secret and human-editable. Tokens never appear here.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
-use rostrum_core::{RepoId, model::ParseRepoIdError};
+use rostrum_core::{FeedFilter, LoginKey, RepoId, model::ParseRepoIdError};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -56,6 +56,22 @@ pub struct Config {
     /// that *can* resolve conflicts gets to.
     #[serde(default)]
     pub conflict_handler: Option<ConflictHandler>,
+    /// Hide draft pull requests. Persisted alongside `hide_empty_repos`
+    /// because it is the same kind of setting: a standing preference about
+    /// what the feed is for, not a search you are part-way through.
+    #[serde(default)]
+    pub hide_drafts: bool,
+    /// Logins the feed is narrowed to; empty means every author.
+    ///
+    /// Stored as logins rather than as anything derived from the feed, because
+    /// the feed is rebuilt from the network on every launch and a selection has
+    /// to outlive it. A login here that no longer has open work is kept rather
+    /// than pruned — see `docs/features/author_filter.md`.
+    #[serde(default)]
+    pub authors: BTreeSet<LoginKey>,
+    /// Widen the author selection from "opened by" to "waiting on".
+    #[serde(default)]
+    pub include_involved: bool,
 }
 
 impl Default for Config {
@@ -72,6 +88,9 @@ impl Default for Config {
             clones: BTreeMap::new(),
             autostash: false,
             conflict_handler: None,
+            hide_drafts: false,
+            authors: BTreeSet::new(),
+            include_involved: false,
         }
     }
 }
@@ -102,18 +121,29 @@ impl Config {
     /// config yields defaults plus a warning, because refusing to start over a
     /// malformed file would be worse than showing the default repo list.
     pub fn load() -> (Self, Vec<Warning>) {
-        let mut warnings = Vec::new();
-
         let Some(path) = Self::path() else {
-            warnings.push(Warning(
-                "could not determine a config directory; using defaults".into(),
-            ));
-            return (Self::default(), warnings);
+            return (
+                Self::default(),
+                vec![Warning(
+                    "could not determine a config directory; using defaults".into(),
+                )],
+            );
         };
+        Self::load_from(&path)
+    }
+
+    /// The body of [`Config::load`], against an explicit path.
+    ///
+    /// Split out so every round trip can be tested against a temporary
+    /// directory. "Remembered across restarts" is a claim about this function
+    /// and [`Config::save_to`] agreeing, and it should not take a restart to
+    /// find out that they do not.
+    pub fn load_from(path: &Path) -> (Self, Vec<Warning>) {
+        let mut warnings = Vec::new();
 
         if !path.exists() {
             let config = Self::default();
-            if let Err(err) = config.save() {
+            if let Err(err) = config.save_to(path) {
                 warnings.push(Warning(format!(
                     "could not write default config to {}: {err}",
                     path.display()
@@ -122,7 +152,7 @@ impl Config {
             return (config, warnings);
         }
 
-        match std::fs::read_to_string(&path) {
+        match std::fs::read_to_string(path) {
             Ok(text) => match serde_json::from_str::<Self>(&text) {
                 Ok(config) => (config, warnings),
                 Err(err) => {
@@ -145,11 +175,49 @@ impl Config {
 
     pub fn save(&self) -> anyhow::Result<()> {
         let path = Self::path().ok_or_else(|| anyhow::anyhow!("no config directory"))?;
+        self.save_to(&path)
+    }
+
+    pub fn save_to(&self, path: &Path) -> anyhow::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&path, serde_json::to_string_pretty(self)?)?;
+        std::fs::write(path, serde_json::to_string_pretty(self)?)?;
         Ok(())
+    }
+
+    /// The feed filter this config describes.
+    ///
+    /// The single place startup filter state is derived from the file, so a
+    /// setting cannot be persisted and then quietly not restored — which is
+    /// exactly how `hide_drafts` came to be forgotten on every launch.
+    ///
+    /// `query` is deliberately absent: a search is something you are part-way
+    /// through, not a preference, and restoring one would open the app onto a
+    /// narrowed feed for a reason the user no longer remembers.
+    pub fn feed_filter(&self) -> FeedFilter {
+        FeedFilter {
+            query: String::new(),
+            hide_drafts: self.hide_drafts,
+            hide_empty_repos: self.hide_empty_repos,
+            authors: self
+                .authors
+                .iter()
+                .filter(|login| !login.is_empty())
+                .cloned()
+                .collect(),
+            include_involved: self.include_involved,
+        }
+    }
+
+    /// Record a filter's persistable parts. The inverse of
+    /// [`Config::feed_filter`], and the only writer of those fields, so the two
+    /// cannot come to describe different sets of settings.
+    pub fn absorb_filter(&mut self, filter: &FeedFilter) {
+        self.hide_drafts = filter.hide_drafts;
+        self.hide_empty_repos = filter.hide_empty_repos;
+        self.authors = filter.authors.clone();
+        self.include_involved = filter.include_involved;
     }
 
     /// Parse the configured repositories, reporting malformed entries rather
@@ -238,6 +306,153 @@ fn expand_tilde(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A config file in a directory of its own, removed when the test ends.
+    /// Matching the pattern already used in `rostrum-handoff` and `rostrum-db`
+    /// rather than adding a dependency for three tests.
+    struct TempConfig {
+        dir: PathBuf,
+    }
+
+    impl TempConfig {
+        fn new(tag: &str) -> Self {
+            let unique = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock is after the epoch")
+                .as_nanos();
+            Self {
+                dir: std::env::temp_dir().join(format!("rostrum-config-{tag}-{unique}")),
+            }
+        }
+
+        fn path(&self) -> PathBuf {
+            self.dir.join("config.json")
+        }
+
+        /// Write, then read back through the same door startup uses.
+        fn round_trip(&self, config: &Config) -> Config {
+            config.save_to(&self.path()).expect("save should succeed");
+            let (loaded, warnings) = Config::load_from(&self.path());
+            assert!(warnings.is_empty(), "{warnings:?}");
+            loaded
+        }
+    }
+
+    impl Drop for TempConfig {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    // --- persistence across restarts ----------------------------------------
+
+    /// The whole point of the feature: every setting the UI can check must come
+    /// back the way it was left. One test over all of them, so adding a setting
+    /// without persisting it fails here rather than on the user's next launch.
+    #[test]
+    fn every_persisted_setting_survives_a_round_trip() {
+        let temp = TempConfig::new("round-trip");
+        let saved = Config {
+            hide_empty_repos: false,
+            autostash: true,
+            hide_drafts: true,
+            include_involved: true,
+            authors: BTreeSet::from([LoginKey::new("alice"), LoginKey::new("bob")]),
+            notifications: true,
+            ..Default::default()
+        };
+
+        let loaded = temp.round_trip(&saved);
+
+        assert!(!loaded.hide_empty_repos);
+        assert!(loaded.autostash);
+        assert!(loaded.hide_drafts);
+        assert!(loaded.include_involved);
+        assert_eq!(loaded.authors, saved.authors);
+        assert!(loaded.notifications);
+    }
+
+    /// Persisting is only half of it. A setting that is written and then not
+    /// read back into the filter is indistinguishable, to the user, from one
+    /// that was never written — which is what `hide_drafts` did before this.
+    #[test]
+    fn a_reloaded_config_reproduces_the_filter_that_was_saved() {
+        let temp = TempConfig::new("filter");
+        let filter = FeedFilter {
+            query: "half-typed search".into(),
+            hide_drafts: true,
+            hide_empty_repos: false,
+            authors: BTreeSet::from([LoginKey::new("alice")]),
+            include_involved: true,
+        };
+
+        let mut config = Config::default();
+        config.absorb_filter(&filter);
+        let restored = temp.round_trip(&config).feed_filter();
+
+        assert_eq!(restored.hide_drafts, filter.hide_drafts);
+        assert_eq!(restored.hide_empty_repos, filter.hide_empty_repos);
+        assert_eq!(restored.authors, filter.authors);
+        assert_eq!(restored.include_involved, filter.include_involved);
+        // …except the search, which is not a preference.
+        assert!(restored.query.is_empty());
+    }
+
+    /// A config written before the author filter existed must keep loading, and
+    /// must not arrive with a filter switched on that the user never chose.
+    #[test]
+    fn a_config_from_before_the_author_filter_loads_unfiltered() {
+        let config: Config = serde_json::from_str(r#"{ "repos": ["a/b"], "autostash": true }"#)
+            .expect("older config should parse");
+        assert!(config.autostash);
+
+        let filter = config.feed_filter();
+        assert!(filter.authors.is_empty());
+        assert!(!filter.include_involved);
+        assert!(!filter.hide_drafts);
+        assert!(filter.hide_empty_repos);
+        assert!(!filter.is_active());
+    }
+
+    /// The file is hand-editable, so logins arrive in whatever casing a person
+    /// typed. They have to normalise, or the restored filter silently matches
+    /// nobody.
+    #[test]
+    fn hand_written_logins_normalise_on_load() {
+        let config: Config = serde_json::from_str(r#"{ "authors": ["RhizoNymph", "  "] }"#)
+            .expect("config should parse");
+        let filter = config.feed_filter();
+        assert_eq!(
+            filter.authors,
+            BTreeSet::from([LoginKey::new("rhizonymph")])
+        );
+    }
+
+    /// `load_from` on a path that does not exist writes the defaults, so the
+    /// next launch reads a real file rather than re-deriving them.
+    #[test]
+    fn a_missing_config_is_written_out_with_the_defaults() {
+        let temp = TempConfig::new("missing");
+        let (config, warnings) = Config::load_from(&temp.path());
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(temp.path().exists());
+
+        let (reloaded, _) = Config::load_from(&temp.path());
+        assert_eq!(reloaded.repos, config.repos);
+        assert_eq!(reloaded.autostash, config.autostash);
+    }
+
+    /// A malformed file must not stop startup, and must say why.
+    #[test]
+    fn a_malformed_config_yields_defaults_and_a_warning() {
+        let temp = TempConfig::new("malformed");
+        std::fs::create_dir_all(&temp.dir).expect("temp dir");
+        std::fs::write(temp.path(), "{ not json").expect("write");
+
+        let (config, warnings) = Config::load_from(&temp.path());
+        assert_eq!(config.repos, Config::default().repos);
+        assert_eq!(warnings.len(), 1);
+    }
 
     // --- conflict handler ---------------------------------------------------
 

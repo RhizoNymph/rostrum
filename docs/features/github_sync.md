@@ -72,6 +72,7 @@ One query per repo, returning everything the feed row needs plus enough for the
 detail header, avoiding a fan-out of per-PR requests:
 
 ```graphql
+viewer { login avatarUrl }
 repository(owner: $owner, name: $name) {
   pullRequests(states: OPEN, first: 50,
                orderBy: {field: UPDATED_AT, direction: DESC}) {
@@ -81,6 +82,12 @@ repository(owner: $owner, name: $name) {
       headRefName baseRefName
       additions deletions changedFiles
       mergeable mergeStateStatus reviewDecision
+      assignees(first: 10) { nodes { login avatarUrl } }
+      reviewRequests(first: 10) { nodes { requestedReviewer {
+        ... on User { login avatarUrl }
+        ... on Bot { login avatarUrl }
+        ... on Mannequin { login avatarUrl }
+      } } }
       labels(first: 10) { nodes { name color } }
       comments { totalCount }
       commits(last: 1) { nodes { commit {
@@ -90,6 +97,20 @@ repository(owner: $owner, name: $name) {
   }
 }
 ```
+
+`viewer` rides along rather than being a one-shot query at auth time: it costs
+nothing extra and re-resolves by itself if the token changes underneath a
+running app. Whichever repository answers first sets it — it is a property of
+the token, not the repository.
+
+`assignees` and `reviewRequests` feed the author filter's "include involved in".
+`requestedReviewer` is a union whose `Team` member has a `name` but no `login`,
+so the query asks for `login` only on the three members that have one; a team
+request then decodes as a reviewer with no login and is dropped, rather than
+failing the repository's whole decode over a reviewer the filter could never
+have matched. This is why `AuthorNode.login` is `Option<String>`. Both
+connections are capped at ten — two bounded lists, no extra round trips. See
+`docs/features/author_filter.md`.
 
 The conversation timeline for a selected PR is a second, deeper query issued
 lazily on selection (comments, reviews with bodies, review threads with their
@@ -309,7 +330,17 @@ per-page ETag bookkeeping across a paginated response).
 cache entry is regardless of whether the validator came from an HTTP header.
 
 Config is separate and human-editable: `~/.config/rostrum/config.json` holds the
-repo list, poll intervals, theme choice, and default merge method. No secrets.
+repo list, poll intervals, clone paths, and the feed's standing preferences —
+`hide_empty_repos`, `hide_drafts`, `authors`, `include_involved`, `autostash`.
+No secrets.
+
+Every field is `#[serde(default)]`, so a config written by an older build keeps
+loading and arrives with new settings off rather than with a filter the user
+never chose. `Config::load_from`/`save_to` take an explicit path so the round
+trip is testable against a temporary directory; `feed_filter`/`absorb_filter`
+are inverses and the only reader/writer of the filter fields, which is what
+keeps "saved" and "restored" from drifting apart. The search query is
+deliberately not persisted.
 
 ## Error taxonomy
 

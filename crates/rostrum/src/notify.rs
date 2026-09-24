@@ -185,6 +185,8 @@ mod tests {
             mergeable: Mergeable::Unknown,
             merge_state: MergeStateStatus::Unknown,
             review_decision: None,
+            assignees: Vec::new(),
+            review_requests: Vec::new(),
             labels: Vec::new(),
             comment_count: 0,
             checks: None,
