@@ -11,10 +11,10 @@ pub mod timeline;
 pub use feed::flatten;
 pub use feed::{Chrome, Feed, FeedFilter, FeedRow, PrIx, RepoIx};
 pub use model::{
-    CheckState, Label, MergeStateStatus, MergeStatus, Mergeable, PrNumber, PullRequest, RepoId,
-    ReviewDecision, Side, User,
+    CheckState, Divergence, Label, MergeStateStatus, MergeStatus, Mergeable, NodeId, PrNumber,
+    PullRequest, Relation, RepoId, ReviewDecision, Side, User,
 };
-pub use state::{AppState, LoadState, RepoState, Selection};
+pub use state::{AppState, LoadState, RepoState, Selection, carry_forward_divergence};
 pub use timeline::{
     CheckRun, CommentId, Conversation, EventKind, ReviewId, ReviewState, ReviewThread,
     ThreadComment, ThreadId, TimelineItem,

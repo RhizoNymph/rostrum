@@ -3,6 +3,7 @@
 mod config;
 mod detail;
 mod feed;
+mod localops;
 mod nav;
 mod notify;
 mod sync;

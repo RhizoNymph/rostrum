@@ -5,14 +5,18 @@ use reqwest::{
     Client, Method, RequestBuilder, StatusCode,
     header::{ACCEPT, HeaderMap},
 };
-use rostrum_core::{Conversation, Label, PrNumber, PullRequest, RepoId};
+use rostrum_core::{Conversation, Divergence, Label, NodeId, PrNumber, PullRequest, RepoId};
+use serde::de::DeserializeOwned;
 use serde_json::json;
 
 use crate::{
     auth::Token,
     conversation::{ConversationNode, ConversationQueryData, PULL_REQUEST_CONVERSATION},
     error::GitHubError,
-    graphql::{self, GraphQlResponse, PrNode, RateLimit, RepoQueryData},
+    graphql::{
+        self, BranchUpdateMethod, DivergenceBatchData, DivergenceQueryData, DraftState,
+        GraphQlResponse, PrNode, RateLimit, RepoQueryData, SetDraftData, UpdateBranchData,
+    },
     rest::{AddLabels, IssueState, MergeMethod, PullRequestFile, SubmitReview},
 };
 
@@ -50,56 +54,18 @@ impl GitHubClient {
         repo: &RepoId,
         limit: u32,
     ) -> Result<RepoPullRequests, GitHubError> {
-        let body = json!({
-            "query": graphql::OPEN_PULL_REQUESTS,
-            "variables": {
-                "owner": repo.owner(),
-                "name": repo.name(),
-                "first": limit,
-            },
-        });
-
-        let response = self
-            .http
-            .post(GRAPHQL_URL)
-            .bearer_auth(self.token.as_str())
-            .json(&body)
-            .send()
+        let data: RepoQueryData = self
+            .graphql(
+                graphql::OPEN_PULL_REQUESTS,
+                json!({
+                    "owner": repo.owner(),
+                    "name": repo.name(),
+                    "first": limit,
+                }),
+                &repo.to_string(),
+            )
             .await?;
 
-        let status = response.status();
-        let headers = response.headers().clone();
-        let text = response.text().await?;
-
-        if let Some(err) = classify_status(status, &headers, &text, &repo.to_string()) {
-            return Err(err);
-        }
-
-        let parsed: GraphQlResponse<RepoQueryData> =
-            serde_json::from_str(&text).map_err(|source| GitHubError::Decode {
-                context: format!("pull requests for {repo}"),
-                source,
-            })?;
-
-        // A GraphQL request can return HTTP 200 and still have failed, so
-        // errors are checked before `data` is trusted.
-        if !parsed.errors.is_empty() {
-            let all_not_found = parsed
-                .errors
-                .iter()
-                .all(|e| e.kind.as_deref() == Some("NOT_FOUND"));
-            return Err(if all_not_found {
-                GitHubError::NotFound {
-                    resource: repo.to_string(),
-                }
-            } else {
-                GitHubError::GraphQl {
-                    errors: parsed.errors,
-                }
-            });
-        }
-
-        let data = parsed.data.ok_or(GitHubError::EmptyData)?;
         let rate_limit = data.rate_limit.clone();
         let repository = data.repository.ok_or_else(|| GitHubError::NotFound {
             resource: repo.to_string(),
@@ -126,51 +92,19 @@ impl GitHubClient {
         number: PrNumber,
     ) -> Result<Conversation, GitHubError> {
         let resource = resource_name(repo, number);
-        let body = json!({
-            "query": PULL_REQUEST_CONVERSATION,
-            "variables": {
-                "owner": repo.owner(),
-                "name": repo.name(),
-                "number": number.0,
-            },
-        });
-
-        let response = self
-            .execute(
-                self.http
-                    .post(GRAPHQL_URL)
-                    .bearer_auth(self.token.as_str())
-                    .json(&body),
+        let data: ConversationQueryData = self
+            .graphql(
+                PULL_REQUEST_CONVERSATION,
+                json!({
+                    "owner": repo.owner(),
+                    "name": repo.name(),
+                    "number": number.0,
+                }),
+                &resource,
             )
             .await?;
-        response.check_status(&resource)?;
 
-        let parsed: GraphQlResponse<ConversationQueryData> =
-            serde_json::from_str(&response.body).map_err(|source| GitHubError::Decode {
-                context: format!("conversation for {resource}"),
-                source,
-            })?;
-
-        // HTTP 200 with a populated `errors` array is a normal GraphQL failure,
-        // so errors are checked before `data` is trusted.
-        if !parsed.errors.is_empty() {
-            let all_not_found = parsed
-                .errors
-                .iter()
-                .all(|e| e.kind.as_deref() == Some("NOT_FOUND"));
-            return Err(if all_not_found {
-                GitHubError::NotFound { resource }
-            } else {
-                GitHubError::GraphQl {
-                    errors: parsed.errors,
-                }
-            });
-        }
-
-        parsed
-            .data
-            .ok_or(GitHubError::EmptyData)?
-            .repository
+        data.repository
             .and_then(|repository| repository.pull_request)
             .map(ConversationNode::into_domain)
             .ok_or(GitHubError::NotFound { resource })
@@ -415,6 +349,259 @@ impl GitHubClient {
         self.execute(self.rest(Method::PATCH, &url).json(&body))
             .await?
             .check_status(&resource_name(repo, number))
+    }
+
+    /// Move the pull request into or out of draft state.
+    ///
+    /// The one mutation in this client that is not REST. GitHub's REST API
+    /// accepts `draft` only when a pull request is created; `PATCH` ignores it,
+    /// and the only way to change it afterwards is the GraphQL pair
+    /// `convertPullRequestToDraft` / `markPullRequestReadyForReview`. Both take
+    /// a node id rather than an `owner/name/number` triple, which is why
+    /// [`PullRequest::node_id`] is fetched with the feed.
+    ///
+    /// The mutation returns the resulting `isDraft`, so a response that somehow
+    /// lands on the wrong side is reported rather than assumed.
+    pub async fn set_draft(
+        &self,
+        repo: &RepoId,
+        number: PrNumber,
+        id: &NodeId,
+        state: DraftState,
+    ) -> Result<(), GitHubError> {
+        let resource = resource_name(repo, number);
+        let data: SetDraftData = self
+            .graphql(state.mutation(), json!({ "id": id.as_str() }), &resource)
+            .await?;
+
+        // GitHub may withhold the pull request while still having applied the
+        // mutation. Only a value that is present and disagrees is a failure.
+        let landed = data
+            .payload
+            .and_then(|payload| payload.pull_request)
+            .map(|pull| pull.is_draft);
+        match landed {
+            Some(is_draft) if is_draft != state.is_draft() => Err(GitHubError::Unexpected {
+                status: 200,
+                body: format!("{resource} is still reported as is_draft={is_draft}"),
+            }),
+            _ => Ok(()),
+        }
+    }
+
+    /// How far the head branch has drifted from its base, or `None` when GitHub
+    /// cannot answer.
+    ///
+    /// `Ok(None)` is the cross-fork case: the base repository cannot resolve a
+    /// head ref that lives in a fork, and GitHub reports that as a null
+    /// `compare` *plus* a `NOT_FOUND` entry in `errors`. That is a routine
+    /// answer, not a failure — the caller compares against a local clone
+    /// instead — so it must not reach the user as an error.
+    ///
+    /// The `NOT_FOUND` is caught here rather than by threading a "some
+    /// NOT_FOUNDs are fine" option through [`Self::graphql`]: every other
+    /// caller of that helper genuinely wants a missing resource to be an error,
+    /// and this is the one query with a fallback to fall back to. Keeping the
+    /// exemption at the call site leaves the shared contract intact.
+    ///
+    /// A repository this token cannot see arrives as the same `NOT_FOUND` and
+    /// so also yields `Ok(None)`, which is the behaviour that is wanted anyway:
+    /// a local clone can answer for a repository the API will not.
+    pub async fn divergence(
+        &self,
+        repo: &RepoId,
+        base_ref: &str,
+        head_ref: &str,
+    ) -> Result<Option<Divergence>, GitHubError> {
+        let resource = format!("{repo} {base_ref}...{head_ref}");
+        let data: DivergenceQueryData = match self
+            .graphql(
+                graphql::PULL_REQUEST_DIVERGENCE,
+                json!({
+                    "owner": repo.owner(),
+                    "name": repo.name(),
+                    "base": base_ref,
+                    "head": head_ref,
+                }),
+                &resource,
+            )
+            .await
+        {
+            Ok(data) => data,
+            Err(GitHubError::NotFound { .. }) => return Ok(None),
+            Err(err) => return Err(err),
+        };
+
+        // A ref that resolved but produced no comparison lands here as `None`
+        // too, so both shapes of "GitHub declined" look the same to the caller.
+        Ok(data.into_domain())
+    }
+
+    /// [`Self::divergence`] for every open pull request of one repository, in
+    /// one request.
+    ///
+    /// `pairs[i]` is `(base_ref, head_ref)` and the result is index-aligned
+    /// with it: `None` at `i` wherever GitHub could not compare that pair.
+    /// An empty `pairs` answers `Ok(vec![])` without a request, since a
+    /// document with no selections is a syntax error.
+    ///
+    /// The feed calls this once per repository per refresh, so the N pull
+    /// requests must cost one aliased query rather than N; see
+    /// [`graphql::build_divergence_batch`].
+    ///
+    /// This deliberately does not go through [`Self::graphql`]. That helper
+    /// turns an `errors` array of nothing but `NOT_FOUND` into one
+    /// [`GitHubError::NotFound`] for the whole document, which is right for
+    /// every single-resource query — and wrong here, where one cross-fork pull
+    /// request produces exactly such an entry scoped to its own alias while
+    /// every other alias still carries an answer. Collapsing that would blank
+    /// the whole repository's counts because of one fork. So the raw response
+    /// is taken from [`Self::graphql_raw`] and the errors are sorted by
+    /// [`graphql::unexcused_batch_errors`]: a `NOT_FOUND` at
+    /// `["repository", "pN", ...]` is that pair's `None` and nothing more; a
+    /// `NOT_FOUND` for the repository itself is [`GitHubError::NotFound`]; any
+    /// other error is [`GitHubError::GraphQl`]. The single-pair
+    /// [`Self::divergence`] keeps its whole-document treatment because a lone
+    /// `NOT_FOUND` there can only mean its one pair.
+    pub async fn divergences(
+        &self,
+        repo: &RepoId,
+        pairs: &[(String, String)],
+    ) -> Result<Vec<Option<Divergence>>, GitHubError> {
+        if pairs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let resource = format!("{repo} divergence of {} pull requests", pairs.len());
+        let document = graphql::build_divergence_batch(pairs.len());
+        let variables = graphql::divergence_batch_variables(repo.owner(), repo.name(), pairs);
+
+        let parsed: GraphQlResponse<DivergenceBatchData> =
+            self.graphql_raw(&document, variables, &resource).await?;
+
+        let unexcused = graphql::unexcused_batch_errors(parsed.errors, pairs.len());
+        if !unexcused.is_empty() {
+            let all_not_found = unexcused
+                .iter()
+                .all(|e| e.kind.as_deref() == Some("NOT_FOUND"));
+            return Err(if all_not_found {
+                GitHubError::NotFound {
+                    resource: repo.to_string(),
+                }
+            } else {
+                GitHubError::GraphQl { errors: unexcused }
+            });
+        }
+
+        Ok(parsed
+            .data
+            .ok_or(GitHubError::EmptyData)?
+            .into_domain(pairs.len()))
+    }
+
+    /// Catch a branch up with its base, by merge or by rebase.
+    ///
+    /// GraphQL rather than REST because `PUT /pulls/{n}/update-branch` can only
+    /// merge, and rebase is the half of the choice that keeps a linear history.
+    /// Like [`Self::set_draft`] the mutation takes a node id, which is why
+    /// [`PullRequest::node_id`] travels with the feed.
+    ///
+    /// `expected_head` is the head oid the caller last saw. GitHub compares it
+    /// against the branch's current tip and refuses the mutation if they differ,
+    /// so a branch that moved since the view was rendered is never silently
+    /// rewritten — that refusal arrives in the `errors` array and becomes a
+    /// [`GitHubError::GraphQl`] naming GitHub's own reason.
+    pub async fn update_branch(
+        &self,
+        repo: &RepoId,
+        number: PrNumber,
+        id: &NodeId,
+        expected_head: &str,
+        method: BranchUpdateMethod,
+    ) -> Result<(), GitHubError> {
+        let resource = resource_name(repo, number);
+        // The payload is decoded but not asserted on: unlike the draft
+        // mutations there is no end state to contradict, since every way this
+        // can fail — a moved head, a conflict, no write access — is reported in
+        // `errors` and has already become an error by the time this returns.
+        let _: UpdateBranchData = self
+            .graphql(
+                graphql::UPDATE_PULL_REQUEST_BRANCH,
+                json!({
+                    "id": id.as_str(),
+                    "oid": expected_head,
+                    "method": method.as_api_str(),
+                }),
+                &resource,
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Send one GraphQL document and return its `data`.
+    ///
+    /// Folds the three separate ways a GraphQL call fails into one place: a
+    /// non-success HTTP status, a 200 carrying a populated `errors` array, and a
+    /// 200 whose `data` is null. `resource` names what the document addresses,
+    /// so a `NOT_FOUND` — which GraphQL reports inside `errors` rather than in
+    /// the status line — comes back as [`GitHubError::NotFound`] naming it.
+    async fn graphql<T: DeserializeOwned>(
+        &self,
+        query: &str,
+        variables: serde_json::Value,
+        resource: &str,
+    ) -> Result<T, GitHubError> {
+        let parsed: GraphQlResponse<T> = self.graphql_raw(query, variables, resource).await?;
+
+        // A GraphQL request can return HTTP 200 and still have failed, so
+        // errors are checked before `data` is trusted.
+        if !parsed.errors.is_empty() {
+            let all_not_found = parsed
+                .errors
+                .iter()
+                .all(|e| e.kind.as_deref() == Some("NOT_FOUND"));
+            return Err(if all_not_found {
+                GitHubError::NotFound {
+                    resource: resource.to_string(),
+                }
+            } else {
+                GitHubError::GraphQl {
+                    errors: parsed.errors,
+                }
+            });
+        }
+
+        parsed.data.ok_or(GitHubError::EmptyData)
+    }
+
+    /// Send one GraphQL document and return the decoded envelope, `errors`
+    /// and all.
+    ///
+    /// The transport half of [`Self::graphql`]: HTTP status and JSON decoding
+    /// are checked here, but the `errors` array is handed back uninterpreted.
+    /// It exists for the one caller — [`Self::divergences`] — whose document
+    /// legitimately answers with partial data and per-alias errors, and which
+    /// therefore has to read both halves itself.
+    async fn graphql_raw<T: DeserializeOwned>(
+        &self,
+        query: &str,
+        variables: serde_json::Value,
+        resource: &str,
+    ) -> Result<GraphQlResponse<T>, GitHubError> {
+        let body = json!({ "query": query, "variables": variables });
+        let response = self
+            .execute(
+                self.http
+                    .post(GRAPHQL_URL)
+                    .bearer_auth(self.token.as_str())
+                    .json(&body),
+            )
+            .await?;
+        response.check_status(resource)?;
+
+        serde_json::from_str(&response.body).map_err(|source| GitHubError::Decode {
+            context: format!("GraphQL response for {resource}"),
+            source,
+        })
     }
 
     /// A REST request with the auth and versioning headers already applied.

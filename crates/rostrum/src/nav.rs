@@ -65,13 +65,14 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use rostrum_core::{
-        FeedFilter, LoadState, MergeStateStatus, Mergeable, PrNumber, PullRequest, RepoId,
+        FeedFilter, LoadState, MergeStateStatus, Mergeable, NodeId, PrNumber, PullRequest, RepoId,
         RepoState, flatten,
     };
 
     fn pr(number: u32) -> PullRequest {
         PullRequest {
             number: PrNumber(number),
+            node_id: NodeId(format!("PR_{}", number)),
             title: format!("PR {number}"),
             url: String::new(),
             is_draft: false,
@@ -90,6 +91,7 @@ mod tests {
             labels: Vec::new(),
             comment_count: 0,
             checks: None,
+            base_divergence: None,
         }
     }
 

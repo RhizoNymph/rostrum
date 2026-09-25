@@ -20,13 +20,24 @@ Overview:
       per-repo containers.
     pr_detail: >
       Master/detail right pane. Tabbed Conversation / Files / Checks view for a
-      selected PR, including the comment composer and PR-level actions.
+      selected PR, including the comment composer and the PR-level actions:
+      comment, review, merge, close, and draft conversion.
     diff_review: >
       Unified-diff parsing, syntax highlighting, virtualized diff rendering,
       inline comment threads, and pending-review batching.
     github_sync: >
       All network I/O. Token acquisition, GraphQL reads, REST mutations, the
       polling scheduler, the SQLite cache, and rate-limit handling.
+    local_git: >
+      The local half of a pull request: which worktree a branch is checked out
+      in, how far it has drifted from GitHub and from its base, and pull/merge/
+      rebase on it — one at a time from the detail pane, or across every open
+      pull request from the feed. Drives the `git` command line; never writes
+      to a remote.
+    conflict_handoff: >
+      When a local rebase or merge stops on conflicts and a handler is
+      configured, leaves the worktree in place and spawns the handler in a
+      named tmux session with a pre-gathered context bundle.
 
   data_flow: >
     At startup the app resolves a GitHub token (`gh auth token`, falling back to
@@ -49,7 +60,10 @@ Overview:
     those line numbers are what inline comments are anchored to when submitted.
 
     Mutations (comment, review, merge) go out over REST, are applied optimistically
-    to local state where safe, and are reconciled by the next poll.
+    to local state where safe, and are reconciled by the next poll. Draft
+    conversion and updating a branch from its base are the exceptions: REST
+    cannot express either one fully, so both go out as GraphQL mutations keyed by
+    the pull request's node id.
 
 Features Index:
   ui_foundation:
@@ -82,6 +96,16 @@ Features Index:
     entry_points: [crates/rostrum-github/src/lib.rs, crates/rostrum/src/sync.rs]
     depends_on: []
     doc: docs/features/github_sync.md
+  local_git:
+    description: Worktree-aware clone status, divergence, pull/merge/rebase, sync-all.
+    entry_points: [crates/rostrum-git/src/lib.rs, crates/rostrum/src/localops.rs, crates/rostrum/src/sync.rs]
+    depends_on: [pr_detail, repo_feed]
+    doc: docs/features/local_git.md
+  conflict_handoff:
+    description: Hand a stopped rebase/merge to a configured command in tmux, with context.
+    entry_points: [crates/rostrum-handoff/src/lib.rs, crates/rostrum-git/src/context.rs]
+    depends_on: [local_git]
+    doc: docs/features/conflict_handoff.md
 ```
 
 ## Workspace layout
@@ -96,6 +120,8 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 | `rostrum-db` | no | SQLite cache and draft persistence |
 | `rostrum-github` | no | GraphQL reads, REST mutations, auth, rate limiting, errors |
 | `rostrum-diff` | no | Unified-diff parsing, `DiffRow` model, syntax highlighting |
+| `rostrum-git` | no | Worktrees, clone status, divergence, pull/merge/rebase, conflict context via the `git` CLI |
+| `rostrum-handoff` | no | Context bundle rendering and tmux session spawning for conflict handoff |
 | `rostrum-md` | no | `pulldown-cmark` → renderable markdown model |
 | `rostrum-ui` | yes | Theme, components, text/selection, markdown element |
 | `rostrum` | yes | Bootstrap, window, root views, `SyncEngine` |
@@ -106,10 +132,16 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 |---|---|---|
 | Auth | `gh auth token`, `$GITHUB_TOKEN` fallback | No secret storage of our own; `gh` handles SSO and refresh |
 | Reads | GraphQL v4 | One round-trip per repo instead of dozens; cost-based rate limit |
-| Mutations | REST v3 | Simpler, better-documented endpoints for merge/review/comment |
+| Mutations | REST v3, except draft conversion and branch updates | Simpler, better-documented endpoints for merge/review/comment. REST accepts `draft` only at creation, and its `update-branch` endpoint can only merge, so those two go through GraphQL |
+| Node ids | Fetched with the feed query | GraphQL mutations address a pull request by node id only. Carrying it on `PullRequest` makes a conversion one round trip, and is what the other GraphQL-only operations will need |
 | UI deps | `gpui` + `gpui_platform` only | Zed's `ui`/`theme`/`syntax_theme` are GPL-3.0-or-later |
 | Diff parsing | hand-rolled | `diffy` requires `---`/`+++` headers GitHub's per-file patches lack, and exposes neither `\ No newline` nor the raw `@@` line |
 | Highlighting | `syntect` (pure-Rust regex) | One dependency covering many languages, versus matching the tree-sitter ABI across a grammar crate per language. Tree-sitter remains the better long-term choice |
+| Local git | Drive the `git` CLI, not libgit2 | Inherits the user's credential helpers, ssh agent, hooks, and `rerere` for free; libgit2's rebase is a partial substitute and its credential negotiation would have to be reimplemented. `auth.rs` already shells out to `gh` |
+| Local writes | Never push | A local merge or rebase leaves the clone ahead, and that count is the cue to push. Keeps force-push out of the app entirely |
+| Feed distance | One batched `Ref.compare` per repository after each refresh | A GraphQL field cannot read a sibling's value, so the count cannot join the feed query; aliasing one `compare` per PR keeps it to one request, cost 1 |
+| Conflicts | Abort by default; leave and hand off to tmux when a handler is configured | Rostrum has no conflict editor. Either the clone is left as found, or something that can edit is running in a named session with the context gathered |
+| Handoff environment | tmux inherits rostrum's full env; `rostrum-git` uses an allowlist | The two spawn different things for different reasons: git's output is parsed and must be deterministic; the harness is the user's own tool and needs their `PATH`, `DISPLAY`, and keys |
 | Cache | SQLite via `sqlx` | Instant cold start, offline reads, ETag storage |
 | Async | Tokio bridged into GPUI's executor | GPUI's executor is not Tokio; `reqwest` requires a Tokio reactor |
 | Mergeability | `mergeable` **and** `mergeStateStatus`, collapsed into one `MergeStatus` in `rostrum-core` | `mergeable` cannot distinguish "blocked by a required review" from "behind its base"; deriving the verdict once keeps the chip, the button, and its tooltip from disagreeing |
@@ -155,11 +187,16 @@ then add `"x11"` back to the `gpui`/`gpui_platform` feature lists in the root
 
 ## Dependency sourcing
 
-The workspace currently points `gpui`, `gpui_platform`, and `gpui_tokio` at a
-local Zed checkout (`/home/nymph/Code/devtools/zed`) for fast iteration — Zed's
-git history is ~500 MB, so a cargo git dependency would clone that on first
-build. The portable form (a pinned git rev on all three) is documented inline in
-the root `Cargo.toml`.
+`gpui`, `gpui_platform`, and `gpui_tokio` are pinned to one Zed git rev in the
+root `Cargo.toml`. The rev is spelled out three times rather than shared, because
+cargo has no way to factor it out; moving it means editing all three lines
+together, and the three must never disagree.
+
+Zed's git history is ~500 MB, so the first build clones it into cargo's shared
+git cache (`~/.cargo/git`). That cost is paid once per machine per rev, not once
+per project. Iterating on GPUI itself is the case that wants a local checkout:
+swap all three for `path` deps into its `crates/`, and swap them back before
+committing.
 
 Zed patches `async-process`, `async-task`, and `calloop` to its own forks. The
 root `Cargo.toml` replicates those `[patch.crates-io]` entries, without which the
@@ -182,7 +219,7 @@ Each phase leaves a usable application.
 
 ## Status
 
-All five phases are complete and verified against the live API. 418 tests pass;
+All five phases are complete and verified against the live API. 598 tests pass;
 clippy is clean across the workspace.
 
 End-to-end verification (`cargo run -p rostrum --example review`) against real

@@ -9,7 +9,10 @@ PR-level actions.
 - PR header (title, state, branches, author, labels, mergeability).
 - Conversation timeline: body, issue comments, reviews, review threads, events.
 - Comment composer.
-- PR-level actions: merge, close, reopen, ready-for-review.
+- PR-level actions: merge, close, reopen, draft conversion in both directions,
+  and updating a branch from its base by merge or rebase.
+- Branch divergence: how far behind the base this branch is, and how far behind
+  its remote counterpart the local clone is.
 - Checks tab.
 
 ## Non-scope
@@ -92,13 +95,100 @@ diff view.
 | Approve / Request changes / Comment review | Submits pending review if one exists, else a bodied review |
 | Merge | Confirmation required; method from config (merge/squash/rebase) |
 | Close / Reopen | Confirmation required |
-| Ready for review | Clears draft status |
+| Convert to draft / Ready for review | Fires immediately; one button, labelled by the state it moves to |
+| Update: Merge / Update: Rebase | Shown only when behind the base; sends `expectedHeadOid` as a race guard |
+| Pull (rebase) / Merge remote / Merge base / Rebase onto base | On the local worktree, when a clone is configured; nothing is pushed |
+| Abort | When a rebase or merge is in progress in the worktree |
 | Add / remove label | Toggles a label via the issues API |
 
 **Merge and close require explicit confirmation.** They are outward-facing and
 effectively irreversible from the app's perspective. The merge confirmation shows
 the target branch, the method, and any blocking state (failing checks, requested
 changes, conflicts) so the decision is made with the relevant facts visible.
+
+**Draft conversion deliberately does not.** It is the one PR-level state change
+that is undone by pressing the same button again, and neither direction ends the
+pull request, so a confirmation would cost a click on every use and buy nothing.
+
+The draft button carries the *end state* it moves to, computed when the row was
+rendered: `DraftState::toggled_from(pull.is_draft)`. A poll landing between
+render and click can therefore only make the request redundant — GitHub refuses
+a conversion to a state the pull request is already in, and the refusal lands in
+the error banner — never invert it. Converting to a draft also makes `Merge`
+unavailable, because `MergeStatus::Draft` blocks it; both read the same
+`is_draft`, so the two cannot disagree.
+
+### Branch divergence
+
+`MergeStatus::Behind` answers "is this branch behind?"; the header chip and the
+branch-sync row answer "by how much, and what would you like to do about it".
+
+The count is `pull.base_divergence`, filled by the batched compare the store
+issues after every feed refresh (see `docs/features/repo_feed.md`). The detail
+pane no longer fetches it separately: one source of truth, one fewer request
+per selection, and the feed row and the detail header can never disagree.
+
+| Value | Meaning | Renders as |
+|---|---|---|
+| `Some(d)` where `d.is_behind()` | Behind by `d.behind` | Chip + branch-sync row |
+| `Some(d)` where `!d.is_behind()` | Current, or merely ahead | Nothing |
+| `None` | Not yet fetched, or GitHub declined to compare | Nothing |
+
+The last row covers the cross-fork case: `Ref.compare` cannot resolve a head
+ref that lives in a different repository, and GitHub says so with a null
+comparison rather than an error. An unanswerable question costs an absent chip,
+not an error banner on a pull request that is otherwise perfectly healthy.
+
+Every open pull request is ahead of its base, so "ahead" alone earns no chip.
+Only `behind` does.
+
+### Updating from the base
+
+Two buttons, `Update: Merge` and `Update: Rebase`, shown only when the branch is
+actually behind. Both go through `GitHubClient::update_branch` and therefore
+through the same `mutate` helper as every other PR-level action, so the
+in-flight guard, error banner, and authoritative reload apply unchanged.
+
+Neither is held behind a confirmation. Both only ever *add* the base's commits
+to a branch that is behind it, and the mutation carries `expectedHeadOid` from
+the head sha the view was rendered with — so a branch someone pushed to between
+render and click is refused by GitHub rather than rewritten from a stale view.
+That is the same race guard the draft toggle gets from asking for an end state,
+made explicit here because "update from base" has no end state to check.
+
+When `Divergence::fast_forwards()` — the branch is behind but has no commits of
+its own — the two methods produce identical results, and both tooltips say so
+rather than leaving the reader to work it out.
+
+### The local row
+
+When a clone is configured for the repository, `PrDetail::local` is a
+`Loadable<LocalState>`:
+
+- **`NotCheckedOut`** — the clone exists but no worktree has this branch
+  checked out. One quiet line, no buttons. Common in a one-worktree-per-branch
+  layout for pull requests the user is not working on.
+- **`CheckedOut(LocalBranch)`** — the worktree the branch lives in (found via
+  `Repo::worktree_for`, never assumed to be the configured path), its
+  divergence from `origin/<head>`, whether the fetch that preceded the count
+  succeeded, the preflight blocker if any, whether an operation is in progress,
+  and — when it is and a handler is configured — whether the handoff session
+  still exists.
+
+Four buttons, all routed through `localops::run_local_job` — the same function
+the feed's sync-all runs, so the two cannot drift: `Pull (rebase)` and `Merge
+remote` against `origin/<head>`; `Merge base` and `Rebase onto base` against
+`origin/<base>`. The stash checkbox toggles the persisted `autostash` setting
+and re-runs preflight, because a dirty worktree blocks with it off and not with
+it on.
+
+An operation in progress takes over the row: the message names it, says
+whether a handoff session is running (`tmux attach -t =X`) or gone, and offers
+Abort. Abort takes its target from the worktree's own state via
+`InProgress::abort_target()`, so it cannot run the wrong `--abort`.
+
+A handoff is reported in `notice`, not `error` — nothing went wrong — and is
+painted in the accent colour rather than red.
 
 ### Mergeability
 
@@ -184,6 +274,9 @@ scheduled in phase 2.
 - A `ThreadId` maps to exactly one stored thread, shared by both views.
 - Timeline items are ordered by `created_at` ascending.
 - Destructive or outward-facing actions (merge, close) require confirmation.
+  Draft conversion is exempt: it is reversible by the same button.
+- The draft button's target is an end state fixed at render, never a toggle
+  evaluated at click time.
 - Optimistic updates are tagged and replaced wholesale by the next authoritative
   refresh; they are never merged field-by-field.
 

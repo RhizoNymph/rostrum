@@ -9,15 +9,15 @@ each in its own container, in a single continuous scroll.
 
 Complete: the multi-repo feed, the conversation timeline with markdown, the
 syntax-highlighted diff, inline comments (single- and multi-line) with
-pending-review batching, review submission, merge/close, a local SQLite cache,
-text selection, keyboard navigation, filtering, and optional desktop
-notifications. `docs/OVERVIEW.md` lists what is deliberately still missing.
+pending-review batching, review submission, merge/close, draft conversion in
+both directions, branch divergence with merge/rebase from the base, local clone
+sync, a local SQLite cache, text selection, keyboard navigation, filtering, and
+optional desktop notifications. `docs/OVERVIEW.md` lists what is deliberately
+still missing.
 
 ## Requirements
 
 - Rust nightly (edition 2024)
-- A local Zed checkout at `/home/nymph/Code/devtools/zed` (see "Dependency
-  sourcing" in `docs/OVERVIEW.md` for the portable git-dependency form)
 - [`gh`](https://cli.github.com/) authenticated (`gh auth login`), or
   `GITHUB_TOKEN` set
 - Wayland. X11 additionally needs `sudo apt install libxkbcommon-x11-dev`
@@ -27,6 +27,9 @@ notifications. `docs/OVERVIEW.md` lists what is deliberately still missing.
 ```sh
 cargo run -p rostrum
 ```
+
+GPUI comes from a pinned Zed git rev, so the first build clones Zed's history
+(~500 MB) into cargo's shared git cache. Subsequent builds reuse it.
 
 Verify the data layer alone, without opening a window:
 
@@ -48,9 +51,32 @@ cargo run -p rostrum --example review -- zed-industries/zed 62051
   "repos": ["zed-industries/zed", "rust-lang/rust"],
   "refresh_secs": 60,
   "prs_per_repo": 25,
-  "notifications": false
+  "notifications": false,
+  "clones": {
+    "zed-industries/zed": "~/Code/zed"
+  },
+  "autostash": false,
+  "conflict_handler": {
+    "command": "claude 'Resolve the conflicts described in {context}'"
+  }
 }
 ```
+
+`clones` is optional and maps `owner/name` to any worktree of a local
+checkout. A repository with one gains a local section on its pull requests —
+the worktree the branch is checked out in, how far it has drifted from GitHub,
+and buttons to pull, merge, or rebase it — plus a `Pull all` / `Merge base into
+all` / `Rebase all onto base` row in the feed that runs across every open pull
+request with a checked-out worktree. Nothing is ever pushed — after a local
+merge or rebase the "ahead" count is the cue to push it yourself. `autostash`
+decides whether those operations pass `--autostash`; it is also a checkbox.
+
+`conflict_handler` is optional. Without it a local conflict is aborted and the
+worktree left as it was. With it, the worktree is left mid-rebase and the
+command is typed into a new tmux session (`rostrum-<owner>-<repo>-<n>`) whose
+working directory is the worktree; `{context}` is replaced by the path of a
+markdown bundle describing the conflict — the conflicted regions, the commits
+on each side, the pull request body, and the exact commands to continue.
 
 Set `notifications` to `true` for a desktop notification when a pull request
 appears. The cache lives at `~/.local/share/rostrum/cache.db`; deleting it is

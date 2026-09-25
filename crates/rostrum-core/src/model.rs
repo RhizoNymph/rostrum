@@ -1,6 +1,6 @@
 //! Domain types describing repositories and pull requests.
 
-use std::{fmt, str::FromStr};
+use std::{fmt, num::NonZeroU32, str::FromStr};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -82,6 +82,35 @@ pub struct PrNumber(pub u32);
 impl fmt::Display for PrNumber {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "#{}", self.0)
+    }
+}
+
+/// A GitHub GraphQL node identifier: opaque, and stable for the life of the
+/// object it names.
+///
+/// Kept distinct from [`PrNumber`] because the two are not interchangeable. The
+/// number is what a human types and what REST paths are built from; the node id
+/// is the only handle GraphQL mutations accept. Confusing them is a runtime
+/// error GitHub reports late, so the type system separates them here.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct NodeId(pub String);
+
+impl NodeId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for NodeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<String> for NodeId {
+    fn from(value: String) -> Self {
+        Self(value)
     }
 }
 
@@ -218,6 +247,77 @@ impl MergeStatus {
     }
 }
 
+/// How far two commits have drifted apart, in commits each carries that the
+/// other does not.
+///
+/// Always both counts. "Behind by 3" alone cannot distinguish a branch that
+/// will fast-forward from one that has also moved on, and those two want
+/// different buttons — so the pair is the unit of currency, and a caller
+/// cannot read one while forgetting the other.
+///
+/// Direction is fixed by the order of the arguments that produced it: `ahead`
+/// counts what the left side has, `behind` what the right side has. For a pull
+/// request the left is the head branch and the right is whatever it is being
+/// compared against, so `behind` is always "work this branch has not caught up
+/// with".
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Divergence {
+    pub ahead: u32,
+    pub behind: u32,
+}
+
+/// The verdict a caller acts on, projected from a [`Divergence`].
+///
+/// `NonZeroU32` is what keeps the projection honest: `Ahead(0)` is not
+/// constructible, so a match arm can never be reached with a count that
+/// contradicts the variant it arrived in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Relation {
+    Identical,
+    Ahead(NonZeroU32),
+    Behind(NonZeroU32),
+    Diverged {
+        ahead: NonZeroU32,
+        behind: NonZeroU32,
+    },
+}
+
+impl Divergence {
+    pub const IDENTICAL: Self = Self {
+        ahead: 0,
+        behind: 0,
+    };
+
+    pub const fn new(ahead: u32, behind: u32) -> Self {
+        Self { ahead, behind }
+    }
+
+    pub fn relation(self) -> Relation {
+        match (NonZeroU32::new(self.ahead), NonZeroU32::new(self.behind)) {
+            (None, None) => Relation::Identical,
+            (Some(ahead), None) => Relation::Ahead(ahead),
+            (None, Some(behind)) => Relation::Behind(behind),
+            (Some(ahead), Some(behind)) => Relation::Diverged { ahead, behind },
+        }
+    }
+
+    /// Whether catching up is a fast-forward — nothing of this branch's own
+    /// would be rewritten, so merge and rebase would produce the same result.
+    pub fn fast_forwards(self) -> bool {
+        self.behind > 0 && self.ahead == 0
+    }
+
+    pub fn is_identical(self) -> bool {
+        self.ahead == 0 && self.behind == 0
+    }
+
+    /// Whether there is anything to catch up with. The buttons that act on a
+    /// divergence are pointless without it.
+    pub fn is_behind(self) -> bool {
+        self.behind > 0
+    }
+}
+
 /// Which side of a diff a line or comment belongs to.
 ///
 /// GitHub's review-comment API anchors by `path` + `line` + `side`, where
@@ -250,6 +350,10 @@ pub struct Label {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PullRequest {
     pub number: PrNumber,
+    /// Handle for the GraphQL mutations that have no REST equivalent, draft
+    /// conversion among them. Fetched with the feed query rather than looked up
+    /// per mutation, so toggling draft state is one round trip.
+    pub node_id: NodeId,
     pub title: String,
     pub url: String,
     pub is_draft: bool,
@@ -275,6 +379,11 @@ pub struct PullRequest {
     pub labels: Vec<Label>,
     pub comment_count: u32,
     pub checks: Option<CheckState>,
+    /// How far this branch has drifted from its base, from a follow-up query
+    /// issued after the feed refresh. Defaulted for the same reason as
+    /// `merge_state`: rows cached before it existed must still decode.
+    #[serde(default)]
+    pub base_divergence: Option<Divergence>,
 }
 
 impl PullRequest {
@@ -358,9 +467,60 @@ mod tests {
         assert!("".parse::<RepoId>().is_err());
     }
 
+    // --- divergence ---------------------------------------------------------
+
+    /// The full cross product, stated as a table so a change to the projection
+    /// has to be a deliberate edit here.
+    #[test]
+    fn projects_counts_onto_a_relation() {
+        let nz = |n: u32| NonZeroU32::new(n).expect("non-zero");
+        let cases = [
+            (0, 0, Relation::Identical),
+            (3, 0, Relation::Ahead(nz(3))),
+            (0, 7, Relation::Behind(nz(7))),
+            (
+                2,
+                5,
+                Relation::Diverged {
+                    ahead: nz(2),
+                    behind: nz(5),
+                },
+            ),
+        ];
+        for (ahead, behind, expected) in cases {
+            assert_eq!(
+                Divergence::new(ahead, behind).relation(),
+                expected,
+                "ahead {ahead}, behind {behind}"
+            );
+        }
+    }
+
+    /// Only a branch with nothing of its own fast-forwards. A branch that is
+    /// both ahead and behind must not be offered a plain merge as if it were
+    /// free.
+    #[test]
+    fn only_a_purely_behind_branch_fast_forwards() {
+        assert!(Divergence::new(0, 4).fast_forwards());
+        assert!(!Divergence::new(1, 4).fast_forwards());
+        assert!(!Divergence::new(0, 0).fast_forwards());
+        assert!(!Divergence::new(3, 0).fast_forwards());
+    }
+
+    #[test]
+    fn identical_is_neither_ahead_nor_behind() {
+        assert!(Divergence::IDENTICAL.is_identical());
+        assert!(!Divergence::IDENTICAL.is_behind());
+        assert_eq!(Divergence::default(), Divergence::IDENTICAL);
+        assert!(!Divergence::new(0, 1).is_identical());
+        assert!(Divergence::new(0, 1).is_behind());
+        assert!(!Divergence::new(1, 0).is_behind());
+    }
+
     fn pr(title: &str, author: &str) -> PullRequest {
         PullRequest {
             number: PrNumber(1),
+            node_id: NodeId("PR_kwDOAbc".into()),
             title: title.into(),
             url: String::new(),
             is_draft: false,
@@ -385,6 +545,7 @@ mod tests {
             }],
             comment_count: 0,
             checks: None,
+            base_divergence: None,
         }
     }
 
@@ -479,6 +640,23 @@ mod tests {
         let decoded: PullRequest =
             serde_json::from_value(value).expect("decodes without the field");
         assert_eq!(decoded.merge_state, MergeStateStatus::Unknown);
+    }
+
+    /// `base_divergence` arrived later still, and comes from a separate query
+    /// rather than the feed, so a cached row without it must decode to "not
+    /// yet known" rather than fail.
+    #[test]
+    fn decodes_a_payload_without_base_divergence() {
+        let mut value = serde_json::to_value(pr("t", "a")).expect("encodes");
+        value
+            .as_object_mut()
+            .expect("object")
+            .remove("base_divergence")
+            .expect("field was present");
+
+        let decoded: PullRequest =
+            serde_json::from_value(value).expect("decodes without the field");
+        assert_eq!(decoded.base_divergence, None);
     }
 
     /// The wire spelling has to survive the round trip, since these values are

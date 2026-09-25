@@ -12,29 +12,31 @@ license = "Apache-2.0"
 rostrum-core = { path = "crates/rostrum-core" }
 rostrum-db = { path = "crates/rostrum-db" }
 rostrum-diff = { path = "crates/rostrum-diff" }
+rostrum-git = { path = "crates/rostrum-git" }
+rostrum-handoff = { path = "crates/rostrum-handoff" }
 rostrum-github = { path = "crates/rostrum-github" }
 rostrum-md = { path = "crates/rostrum-md" }
 rostrum-ui = { path = "crates/rostrum-ui" }
 
 # --- GPUI -------------------------------------------------------------------
-# NOTE: these point at a local Zed checkout for fast iteration. The portable
-# form is a pinned git dependency on all three from the SAME rev:
+# All three come from the SAME git rev. Do NOT mix sources: `gpui` is on
+# crates.io as 0.2.2, but `gpui_platform` is unpublished and declares `gpui` as
+# a bare path dep with no version, so a git dep on it resolves gpui from the git
+# checkout. Declaring gpui from crates.io alongside it compiles two incompatible
+# copies of gpui.
 #
-#   gpui          = { git = "https://github.com/zed-industries/zed", rev = "<rev>", ... }
-#   gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "<rev>", ... }
-#   gpui_tokio    = { git = "https://github.com/zed-industries/zed", rev = "<rev>" }
-#
-# Do NOT mix sources: `gpui` is on crates.io as 0.2.2, but `gpui_platform` is
-# unpublished and declares `gpui` as a bare path dep with no version, so a git
-# dep on it resolves gpui from the git checkout. Declaring gpui from crates.io
-# alongside it compiles two incompatible copies of gpui.
-gpui = { path = "/home/nymph/Code/devtools/zed/crates/gpui", default-features = false, features = [
+# The first build clones Zed's history (~500 MB) into cargo's shared git cache;
+# afterwards it is only refetched when the rev below moves. To iterate against a
+# local Zed checkout, swap all three for `path` deps pointing at its
+# `crates/gpui`, `crates/gpui_platform`, and `crates/gpui_tokio` — all three, or
+# two copies of gpui end up in the graph.
+gpui = { git = "https://github.com/zed-industries/zed", rev = "5e03f2d387e629237c10a4e4fed881b64abd8fea", default-features = false, features = [
     "wayland",
 ] }
-gpui_platform = { path = "/home/nymph/Code/devtools/zed/crates/gpui_platform", default-features = false, features = [
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "5e03f2d387e629237c10a4e4fed881b64abd8fea", default-features = false, features = [
     "wayland",
 ] }
-gpui_tokio = { path = "/home/nymph/Code/devtools/zed/crates/gpui_tokio" }
+gpui_tokio = { git = "https://github.com/zed-industries/zed", rev = "5e03f2d387e629237c10a4e4fed881b64abd8fea" }
 
 # --- Third party ------------------------------------------------------------
 anyhow = "1.0.100"
@@ -65,11 +67,17 @@ sqlx = { version = "0.8.6", default-features = false, features = [
 ] }
 serde_json = "1.0.145"
 thiserror = "2.0.17"
+# `time` is declared because `tokio::time::timeout` is used directly (every
+# subprocess in rostrum-git is bounded by one). It currently compiles without
+# it only because reqwest happens to enable the feature elsewhere in the graph;
+# depending on another crate's feature selection is exactly what pinning
+# workspace dependencies exists to prevent.
 tokio = { version = "1.48.0", features = [
     "rt",
     "rt-multi-thread",
     "process",
     "macros",
+    "time",
 ] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
