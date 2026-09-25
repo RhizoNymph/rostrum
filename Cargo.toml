@@ -19,24 +19,24 @@ rostrum-md = { path = "crates/rostrum-md" }
 rostrum-ui = { path = "crates/rostrum-ui" }
 
 # --- GPUI -------------------------------------------------------------------
-# NOTE: these point at a local Zed checkout for fast iteration. The portable
-# form is a pinned git dependency on all three from the SAME rev:
+# All three come from the SAME git rev. Do NOT mix sources: `gpui` is on
+# crates.io as 0.2.2, but `gpui_platform` is unpublished and declares `gpui` as
+# a bare path dep with no version, so a git dep on it resolves gpui from the git
+# checkout. Declaring gpui from crates.io alongside it compiles two incompatible
+# copies of gpui.
 #
-#   gpui          = { git = "https://github.com/zed-industries/zed", rev = "<rev>", ... }
-#   gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "<rev>", ... }
-#   gpui_tokio    = { git = "https://github.com/zed-industries/zed", rev = "<rev>" }
-#
-# Do NOT mix sources: `gpui` is on crates.io as 0.2.2, but `gpui_platform` is
-# unpublished and declares `gpui` as a bare path dep with no version, so a git
-# dep on it resolves gpui from the git checkout. Declaring gpui from crates.io
-# alongside it compiles two incompatible copies of gpui.
-gpui = { path = "/home/nymph/Code/devtools/zed/crates/gpui", default-features = false, features = [
+# The first build clones Zed's history (~500 MB) into cargo's shared git cache;
+# afterwards it is only refetched when the rev below moves. To iterate against a
+# local Zed checkout, swap all three for `path` deps pointing at its
+# `crates/gpui`, `crates/gpui_platform`, and `crates/gpui_tokio` — all three, or
+# two copies of gpui end up in the graph.
+gpui = { git = "https://github.com/zed-industries/zed", rev = "5e03f2d387e629237c10a4e4fed881b64abd8fea", default-features = false, features = [
     "wayland",
 ] }
-gpui_platform = { path = "/home/nymph/Code/devtools/zed/crates/gpui_platform", default-features = false, features = [
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "5e03f2d387e629237c10a4e4fed881b64abd8fea", default-features = false, features = [
     "wayland",
 ] }
-gpui_tokio = { path = "/home/nymph/Code/devtools/zed/crates/gpui_tokio" }
+gpui_tokio = { git = "https://github.com/zed-industries/zed", rev = "5e03f2d387e629237c10a4e4fed881b64abd8fea" }
 
 # --- Third party ------------------------------------------------------------
 anyhow = "1.0.100"
