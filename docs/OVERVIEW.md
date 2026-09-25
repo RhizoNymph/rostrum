@@ -34,6 +34,10 @@ Overview:
       rebase on it — one at a time from the detail pane, or across every open
       pull request from the feed. Drives the `git` command line; never writes
       to a remote.
+    author_filter: >
+      Narrowing the feed to chosen people — authored, or optionally also
+      assigned/review-requested — and the persistence of every feed setting
+      that is a standing preference rather than a half-finished search.
     conflict_handoff: >
       When a local rebase or merge stops on conflicts and a handler is
       configured, leaves the worktree in place and spawns the handler in a
@@ -42,7 +46,10 @@ Overview:
   data_flow: >
     At startup the app resolves a GitHub token (`gh auth token`, falling back to
     $GITHUB_TOKEN) and loads config + cached state from SQLite, so the feed
-    paints before any network round-trip completes.
+    paints before any network round-trip completes. `Config::feed_filter()`
+    seeds `AppState.filter` in the same step, so the feed's standing
+    preferences — hidden drafts, hidden empty repos, the author selection —
+    are in force on the first painted frame rather than snapping on later.
 
     `SyncEngine` (a GPUI entity) then runs a poll loop: one GraphQL query per
     configured repo, staggered, guarded against overlap by an in-flight `Task`
@@ -58,6 +65,13 @@ Overview:
     conversation timeline and, on first visit to the Files tab, the changed-file
     patches. Patches are parsed into `DiffRow`s carrying old/new line numbers;
     those line numbers are what inline comments are anchored to when submitted.
+
+    Filter changes run the other way: every persisted toggle goes through
+    `Store::edit_filter`, which applies the edit, folds it back into `Config`
+    via `absorb_filter`, and writes the file. `feed_filter`/`absorb_filter` are
+    inverses and the only reader/writer of those fields, so what is saved and
+    what is restored cannot drift apart. The search query is the one filter
+    excluded, deliberately.
 
     Mutations (comment, review, merge) go out over REST, are applied optimistically
     to local state where safe, and are reconciled by the next poll. Draft
@@ -96,6 +110,11 @@ Features Index:
     entry_points: [crates/rostrum-git/src/lib.rs, crates/rostrum/src/localops.rs, crates/rostrum/src/sync.rs]
     depends_on: [pr_detail, repo_feed]
     doc: docs/features/local_git.md
+  author_filter:
+    description: Author/involvement filtering of the feed, and persisted feed settings.
+    entry_points: [crates/rostrum-core/src/authors.rs, crates/rostrum/src/config.rs]
+    depends_on: [repo_feed, github_sync]
+    doc: docs/features/author_filter.md
   conflict_handoff:
     description: Hand a stopped rebase/merge to a configured command in tmux, with context.
     entry_points: [crates/rostrum-handoff/src/lib.rs, crates/rostrum-git/src/context.rs]

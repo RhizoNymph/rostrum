@@ -18,6 +18,7 @@ use crate::error::GraphQlError;
 pub const OPEN_PULL_REQUESTS: &str = r#"
 query($owner: String!, $name: String!, $first: Int!) {
   rateLimit { cost remaining resetAt }
+  viewer { login avatarUrl }
   repository(owner: $owner, name: $name) {
     pullRequests(states: OPEN, first: $first, orderBy: {field: UPDATED_AT, direction: DESC}) {
       nodes {
@@ -38,6 +39,16 @@ query($owner: String!, $name: String!, $first: Int!) {
         mergeable
         mergeStateStatus
         reviewDecision
+        assignees(first: 10) { nodes { login avatarUrl } }
+        reviewRequests(first: 10) {
+          nodes {
+            requestedReviewer {
+              ... on User { login avatarUrl }
+              ... on Bot { login avatarUrl }
+              ... on Mannequin { login avatarUrl }
+            }
+          }
+        }
         labels(first: 10) { nodes { name color } }
         comments { totalCount }
         commits(last: 1) {
@@ -452,6 +463,12 @@ impl<T> Connection<T> {
 #[serde(rename_all = "camelCase")]
 pub struct RepoQueryData {
     pub rate_limit: Option<RateLimit>,
+    /// Who the token belongs to.
+    ///
+    /// Ridden along on the feed query rather than fetched once at auth time:
+    /// it costs nothing extra, and it re-resolves by itself if the token is
+    /// ever swapped underneath a running app.
+    pub viewer: Option<AuthorNode>,
     /// `null` when the repository does not exist or is not visible.
     pub repository: Option<RepositoryNode>,
 }
@@ -500,6 +517,12 @@ pub struct PrNode {
     #[serde(default)]
     pub merge_state_status: MergeStateStatus,
     pub review_decision: Option<ReviewDecision>,
+    /// Defaulted so a response from before these fields were requested — a
+    /// replayed fixture, or a cached body — still decodes.
+    #[serde(default)]
+    pub assignees: Option<Connection<AuthorNode>>,
+    #[serde(default)]
+    pub review_requests: Option<Connection<ReviewRequestNode>>,
     pub labels: Option<Connection<LabelNode>>,
     pub comments: Option<TotalCount>,
     pub commits: Option<Connection<CommitEdge>>,
@@ -508,8 +531,33 @@ pub struct PrNode {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthorNode {
-    pub login: String,
+    /// Absent for a `Team` review request, which the query cannot ask a login
+    /// of. Every other actor has one.
+    pub login: Option<String>,
     pub avatar_url: Option<String>,
+}
+
+impl AuthorNode {
+    /// The person this node names, or `None` when it names something that is
+    /// not one.
+    pub fn into_user(self) -> Option<User> {
+        self.login.map(|login| User {
+            login,
+            avatar_url: self.avatar_url,
+        })
+    }
+}
+
+/// One entry of `reviewRequests`.
+///
+/// `requestedReviewer` is a union. The query asks for `login` on the three
+/// member types that have one, so a `Team` request decodes as a node with no
+/// login rather than failing the whole repository — teams are not people, and
+/// the author filter matches people.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewRequestNode {
+    pub requested_reviewer: Option<AuthorNode>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -560,10 +608,7 @@ impl PrNode {
             is_draft: self.is_draft,
             created_at: self.created_at,
             updated_at: self.updated_at,
-            author: self.author.map(|a| User {
-                login: a.login,
-                avatar_url: a.avatar_url,
-            }),
+            author: self.author.and_then(AuthorNode::into_user),
             head_ref: self.head_ref_name,
             head_sha: self.head_ref_oid.unwrap_or_default(),
             base_ref: self.base_ref_name,
@@ -573,6 +618,20 @@ impl PrNode {
             mergeable: self.mergeable,
             merge_state: self.merge_state_status,
             review_decision: self.review_decision,
+            assignees: self
+                .assignees
+                .map(Connection::into_vec)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(AuthorNode::into_user)
+                .collect(),
+            review_requests: self
+                .review_requests
+                .map(Connection::into_vec)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|request| request.requested_reviewer?.into_user())
+                .collect(),
             labels: self
                 .labels
                 .map(Connection::into_vec)
@@ -601,6 +660,7 @@ mod tests {
     const SAMPLE: &str = r#"{
       "data": {
         "rateLimit": { "cost": 1, "remaining": 4999, "resetAt": "2026-08-01T12:00:00Z" },
+        "viewer": { "login": "RhizoNymph", "avatarUrl": null },
         "repository": {
           "pullRequests": {
             "nodes": [
@@ -622,6 +682,12 @@ mod tests {
                 "mergeable": "MERGEABLE",
                 "mergeStateStatus": "BLOCKED",
                 "reviewDecision": "APPROVED",
+                "assignees": { "nodes": [{ "login": "assignee", "avatarUrl": null }] },
+                "reviewRequests": { "nodes": [
+                  { "requestedReviewer": { "login": "reviewer", "avatarUrl": null } },
+                  { "requestedReviewer": {} },
+                  { "requestedReviewer": null }
+                ] },
                 "labels": { "nodes": [{ "name": "bug", "color": "d73a4a" }] },
                 "comments": { "totalCount": 4 },
                 "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "SUCCESS" } } }] }
@@ -1160,5 +1226,73 @@ mod tests {
             serde_json::from_str(body).expect("should decode");
         assert_eq!(response.errors.len(), 1);
         assert!(response.data.expect("data key present").payload.is_none());
+    }
+
+    // --- involvement --------------------------------------------------------
+
+    #[test]
+    fn decodes_assignees_and_requested_reviewers() {
+        let prs = parse();
+        let logins = |users: &[User]| {
+            users
+                .iter()
+                .map(|user| user.login.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(logins(&prs[0].assignees), ["assignee"]);
+        // The team request and the null one are dropped; the person survives.
+        assert_eq!(logins(&prs[0].review_requests), ["reviewer"]);
+    }
+
+    /// A `Team` review request decodes as a reviewer with no login rather than
+    /// failing the repository's whole decode, which would cost the feed a repo
+    /// over a reviewer the filter could never have matched anyway.
+    #[test]
+    fn a_team_review_request_is_dropped_not_fatal() {
+        let node: ReviewRequestNode = serde_json::from_str(r#"{"requestedReviewer": {}}"#)
+            .expect("a team reviewer should decode");
+        assert!(
+            node.requested_reviewer
+                .expect("node present")
+                .into_user()
+                .is_none()
+        );
+    }
+
+    /// Pull requests fetched before involvement was asked for must still
+    /// decode — a replayed fixture or a cached body has neither field.
+    #[test]
+    fn a_pr_without_involvement_fields_decodes_to_empty_lists() {
+        let prs = parse();
+        assert!(prs[1].assignees.is_empty());
+        assert!(prs[1].review_requests.is_empty());
+    }
+
+    #[test]
+    fn decodes_the_viewer_from_the_feed_query() {
+        let response: GraphQlResponse<RepoQueryData> =
+            serde_json::from_str(SAMPLE).expect("sample should decode");
+        let viewer = response
+            .data
+            .expect("data present")
+            .viewer
+            .and_then(AuthorNode::into_user)
+            .expect("viewer present");
+        assert_eq!(viewer.login, "RhizoNymph");
+    }
+
+    /// The viewer is a convenience, not a precondition. A response without one
+    /// must still yield a feed.
+    #[test]
+    fn a_response_without_a_viewer_still_decodes() {
+        let text = SAMPLE.replace(
+            r#""viewer": { "login": "RhizoNymph", "avatarUrl": null },"#,
+            r#""viewer": null,"#,
+        );
+        let response: GraphQlResponse<RepoQueryData> =
+            serde_json::from_str(&text).expect("sample should decode");
+        let data = response.data.expect("data present");
+        assert!(data.viewer.is_none());
+        assert!(data.repository.is_some());
     }
 }

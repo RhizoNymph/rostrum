@@ -5,7 +5,7 @@ use reqwest::{
     Client, Method, RequestBuilder, StatusCode,
     header::{ACCEPT, HeaderMap},
 };
-use rostrum_core::{Conversation, Divergence, Label, NodeId, PrNumber, PullRequest, RepoId};
+use rostrum_core::{Conversation, Divergence, Label, NodeId, PrNumber, PullRequest, RepoId, User};
 use serde::de::DeserializeOwned;
 use serde_json::json;
 
@@ -14,7 +14,7 @@ use crate::{
     conversation::{ConversationNode, ConversationQueryData, PULL_REQUEST_CONVERSATION},
     error::GitHubError,
     graphql::{
-        self, BranchUpdateMethod, DivergenceBatchData, DivergenceQueryData, DraftState,
+        self, AuthorNode, BranchUpdateMethod, DivergenceBatchData, DivergenceQueryData, DraftState,
         GraphQlResponse, PrNode, RateLimit, RepoQueryData, SetDraftData, UpdateBranchData,
     },
     rest::{AddLabels, IssueState, MergeMethod, PullRequestFile, SubmitReview},
@@ -34,6 +34,11 @@ const MAX_PAGES: usize = 100;
 pub struct RepoPullRequests {
     pub pull_requests: Vec<PullRequest>,
     pub rate_limit: Option<RateLimit>,
+    /// Who the token belongs to, as reported by this same round trip. `None`
+    /// only if GitHub omitted it, which nothing in the app treats as an error:
+    /// without a viewer the author filter simply has no one pinned to the
+    /// front of its list.
+    pub viewer: Option<User>,
 }
 
 #[derive(Clone)]
@@ -67,6 +72,7 @@ impl GitHubClient {
             .await?;
 
         let rate_limit = data.rate_limit.clone();
+        let viewer = data.viewer.and_then(AuthorNode::into_user);
         let repository = data.repository.ok_or_else(|| GitHubError::NotFound {
             resource: repo.to_string(),
         })?;
@@ -79,6 +85,7 @@ impl GitHubClient {
                 .map(PrNode::into_domain)
                 .collect(),
             rate_limit,
+            viewer,
         })
     }
 
