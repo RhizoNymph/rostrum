@@ -134,6 +134,50 @@ explaining itself on hover. `Draft` and `Unstable` produce no chip: the row
 already carries a draft chip and a CI dot, and repeating them would be noise.
 The derivation lives in `rostrum-core`; see `docs/features/pr_detail.md`.
 
+## Distance from base on a row
+
+`MergeStatus::Behind` says *that* a branch is behind; the row also says *by
+how much*. When `pull.base_divergence` is known and `behind > 0` the row shows
+`↓N` in `theme.warning`, with the base branch named in the tooltip, and the
+plain `behind` chip is suppressed — it would say the same thing with less
+information. When the count is unknown (cross-fork, or not yet fetched) the
+existing chip stands.
+
+The count is not part of the feed query. `Ref.compare` takes the head ref
+name as an argument and a GraphQL field cannot read a sibling's value, so it
+is a second, batched request per repository issued from `apply_refresh`: one
+document with an aliased `compare` per pull request, branch names passed as
+variables so no user data reaches the document text. Verified live at cost 1.
+The result is written onto `PullRequest::base_divergence`, which
+`apply_refresh` carries forward across the wholesale `repo.prs` replacement so
+the chip does not flicker to absent for the round-trip.
+
+## Sync all worktrees
+
+When any repository has a clone configured, the header gains a row of three
+buttons — `Pull all`, `Merge base into all`, `Rebase all onto base` — the
+`Stash local changes` checkbox (the same `autostash` setting the detail pane
+uses), and a progress line.
+
+`Store::sync_all(kind)` enumerates every open pull request in every repository
+with a clone, synchronously, into `LocalJob`s, then runs them **one at a
+time** inside one retained task: git operations on one clone share refs, and
+one-at-a-time is what the progress line reads. Each job is the same
+`localops::run_local_job` the detail pane's buttons call — find the worktree,
+run, hand off or abort a conflict — so the two cannot drift. A pull request
+whose branch is not checked out anywhere is skipped with `NotCheckedOut`.
+Dropping the task cancels between jobs, never mid-git.
+
+Results stay on `Store` until the next sync replaces them, and each row shows
+a chip for its outcome when it is not plain success: `handed off` (accent),
+`conflict` / `failed` (danger), `refused` (warning), with the detail in the
+tooltip. The progress line reads `Pull all: 3/12…` while running and
+`Pull all: 9 updated, 2 handed off, 1 conflicts` afterwards, zero buckets
+omitted.
+
+Nothing is pushed. After a local merge or rebase the detail pane's "ahead"
+count is the cue.
+
 ## Filtering and navigation
 
 The filter bar writes into `AppState.filter`, which `flatten` already consults —
@@ -189,3 +233,5 @@ repositories, and is what everything below assumes.
 | `crates/rostrum/src/feed/mod.rs` | Feed view entity, `ListState` ownership, splice logic |
 | `crates/rostrum/src/feed/rows.rs` | Per-variant row renderers |
 | `crates/rostrum/src/feed/nav.rs` | Keyboard navigation, selection actions |
+| `crates/rostrum/src/sync.rs` | `fetch_divergences` (the batched compare), `sync_all` |
+| `crates/rostrum/src/localops.rs` | `run_local_job`, one job of a sync |

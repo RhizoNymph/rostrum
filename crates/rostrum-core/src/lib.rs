@@ -14,7 +14,7 @@ pub use model::{
     CheckState, Divergence, Label, MergeStateStatus, MergeStatus, Mergeable, NodeId, PrNumber,
     PullRequest, Relation, RepoId, ReviewDecision, Side, User,
 };
-pub use state::{AppState, LoadState, RepoState, Selection};
+pub use state::{AppState, LoadState, RepoState, Selection, carry_forward_divergence};
 pub use timeline::{
     CheckRun, CommentId, Conversation, EventKind, ReviewId, ReviewState, ReviewThread,
     ThreadComment, ThreadId, TimelineItem,

@@ -8,7 +8,7 @@ mod checks;
 mod conversation;
 mod files;
 
-use std::{collections::HashSet, rc::Rc, sync::Arc};
+use std::{collections::HashSet, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
 use futures::future::BoxFuture;
 use gpui::{
@@ -18,10 +18,11 @@ use gpui::{
 use gpui_tokio::Tokio;
 use rostrum_core::{
     Conversation, Divergence, Label, PrNumber, PullRequest, RepoId, ReviewDecision, Side,
+    TimelineItem,
 };
 use rostrum_db::Db;
 use rostrum_diff::{DiffFile, FileStatus, Highlighter, PatchAvailability, parse_patch};
-use rostrum_git::{Autostash, BranchName, GitError, Operation, Outcome, RemoteRef, Repo, Rev};
+use rostrum_git::{Autostash, BranchName, GitError, InProgress, Operation, RemoteRef, Repo, Rev};
 use rostrum_github::{
     BranchUpdateMethod, DraftComment, DraftState, GitHubClient, GitHubError, IssueState,
     MergeMethod, PullRequestFile, ReviewEvent, SubmitReview,
@@ -34,7 +35,12 @@ use rostrum_ui::{
     },
 };
 
-use crate::sync::Store;
+use rostrum_handoff::{PrMeta, session_exists, session_name};
+
+use crate::{
+    localops::{LocalJob, LocalOp, LocalResult, run_local_job},
+    sync::Store,
+};
 
 gpui::actions!(detail, [CopySelection]);
 
@@ -171,9 +177,18 @@ impl DraftAnchor {
 /// reading other people's work, and only a repository the user has configured a
 /// clone for can answer any of this. `Loadable::Idle` is therefore the ordinary
 /// resting state, not a sign that anything went wrong.
+pub(crate) enum LocalState {
+    /// The clone exists but no worktree has this branch checked out. Common
+    /// in a one-worktree-per-branch layout for pull requests the user is not
+    /// working on, so it is a quiet line rather than a failure.
+    NotCheckedOut,
+    CheckedOut(LocalBranch),
+}
+
 pub(crate) struct LocalBranch {
-    /// The clone. Cheap to clone — `Arc`-backed, like `GitHubClient`.
-    repo: Repo,
+    /// The worktree this branch is checked out in — not necessarily the
+    /// configured clone path, which may be any worktree of the repository.
+    worktree: PathBuf,
     branch: BranchName,
     remote: RemoteRef,
     /// The local branch measured against its remote counterpart: `ahead` is
@@ -185,6 +200,24 @@ pub(crate) struct LocalBranch {
     fetched: bool,
     /// Why a local action cannot run, if anything is in the way.
     blocker: Option<String>,
+    /// A rebase or merge git has started and not finished in this worktree.
+    in_progress: Option<InProgress>,
+    /// When something is in progress and a handler is configured: whether the
+    /// tmux session that was (or would have been) handed the conflict exists.
+    handoff: Option<HandoffState>,
+}
+
+/// Whether a handed-off conflict still has someone working on it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum HandoffState {
+    Running {
+        session: String,
+    },
+    /// The worktree is mid-operation but no session by the expected name
+    /// exists — the harness finished without continuing, or was killed.
+    Gone {
+        session: String,
+    },
 }
 
 pub struct PrDetail {
@@ -197,13 +230,8 @@ pub struct PrDetail {
     /// Every label defined on the repository — the picker's palette, not the
     /// labels on this pull request. Fetched on first open of the picker.
     pub(crate) repo_labels: Loadable<Vec<Label>>,
-    /// How far this branch has drifted from its base, from GitHub.
-    ///
-    /// Stays `Idle` when GitHub declines to compare — a cross-fork pull request
-    /// — so an unanswerable question renders as no chip rather than an error.
-    pub(crate) base_divergence: Loadable<Divergence>,
     /// The local clone's view of this branch, when a clone is configured.
-    pub(crate) local: Loadable<LocalBranch>,
+    pub(crate) local: Loadable<LocalState>,
     /// Whether the label picker panel is showing.
     label_picker_open: bool,
     composer: Entity<TextInput>,
@@ -228,6 +256,9 @@ pub struct PrDetail {
     /// Label of an in-flight mutation; also blocks duplicate submission.
     busy: Option<&'static str>,
     error: Option<String>,
+    /// Something worth saying that is not a failure — a conflict handed off to
+    /// a tmux session. Kept apart from `error` so it is not painted red.
+    notice: Option<String>,
     pub(crate) highlighter: Rc<Highlighter>,
     tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -252,7 +283,6 @@ impl PrDetail {
             conversation: Loadable::Idle,
             files: Loadable::Idle,
             repo_labels: Loadable::Idle,
-            base_divergence: Loadable::Idle,
             local: Loadable::Idle,
             label_picker_open: false,
             composer,
@@ -267,6 +297,7 @@ impl PrDetail {
             confirm: None,
             busy: None,
             error: None,
+            notice: None,
             highlighter,
             tasks: Vec::new(),
             _subscriptions: subscriptions,
@@ -274,7 +305,6 @@ impl PrDetail {
         tracing::debug!(repo = %detail.repo, pr = %detail.number, "opened pull request");
         detail.load_cached(cx);
         detail.load_conversation(cx);
-        detail.load_base_divergence(cx);
         detail.load_local(cx);
         detail
     }
@@ -515,6 +545,10 @@ impl PrDetail {
     /// per `PrDetail`, so the fetch it performs is bounded by the selection
     /// changing rather than by a timer.
     ///
+    /// The configured path is any worktree of the clone; the branch is looked
+    /// up across all of them, because a one-worktree-per-branch layout keeps
+    /// `main` at the configured path and every pull request somewhere else.
+    ///
     /// The fetch is allowed to fail. Its only job is to make the remote-tracking
     /// ref current; when it cannot — no network, a locked credential — the
     /// counts are still computed, still truthful about what is on disk, and
@@ -526,11 +560,14 @@ impl PrDetail {
         let Some(head_ref) = self.pull(cx).map(|pull| pull.head_ref.clone()) else {
             return;
         };
-        let autostash = if self.store.read(cx).autostash() {
+        let store = self.store.read(cx);
+        let autostash = if store.autostash() {
             Autostash::Enabled
         } else {
             Autostash::Disabled
         };
+        let handler_configured = store.conflict_handler().is_some();
+        let session = session_name(&self.repo, self.number);
 
         self.local = Loadable::Loading;
         cx.notify();
@@ -538,7 +575,10 @@ impl PrDetail {
         self.tasks.push(cx.spawn(async move |this, cx| {
             let result = Tokio::spawn(&*cx, async move {
                 let branch = BranchName::new(head_ref)?;
-                let repo = Repo::open(&path).await?;
+                let clone = Repo::open(&path).await?;
+                let Some(repo) = clone.worktree_for(&branch).await? else {
+                    return Ok::<_, GitError>(LocalState::NotCheckedOut);
+                };
                 let remote = RemoteRef::origin(branch.clone());
 
                 let fetched = match repo.fetch(&remote).await {
@@ -559,19 +599,41 @@ impl PrDetail {
                     .divergence(&Rev::Local(branch.clone()), &Rev::Remote(remote.clone()))
                     .await?;
 
+                let status = repo.status().await?;
+                let in_progress = status.in_progress;
+
                 let blocker = repo
                     .preflight(Operation::PullRebase, Some(&branch), autostash)
                     .await?
                     .reason();
 
-                Ok::<_, GitError>(LocalBranch {
-                    repo,
+                // Only worth asking tmux when there is something a session
+                // could be working on. An error here degrades to "unknown"
+                // rather than failing a panel that is otherwise fine.
+                let handoff = match (in_progress, handler_configured) {
+                    (Some(_), true) => {
+                        match session_exists(&session, Duration::from_secs(5)).await {
+                            Ok(true) => Some(HandoffState::Running { session }),
+                            Ok(false) => Some(HandoffState::Gone { session }),
+                            Err(error) => {
+                                tracing::warn!(%error, "could not ask tmux about the handoff session");
+                                None
+                            }
+                        }
+                    }
+                    _ => None,
+                };
+
+                Ok(LocalState::CheckedOut(LocalBranch {
+                    worktree: repo.root().to_path_buf(),
                     branch,
                     remote,
                     divergence,
                     fetched,
                     blocker,
-                })
+                    in_progress,
+                    handoff,
+                }))
             })
             .await;
 
@@ -587,65 +649,90 @@ impl PrDetail {
         }));
     }
 
-    /// Run one local git operation.
+    /// Run one local git operation on this pull request's worktree.
     ///
-    /// Shares the in-flight guard and error banner with [`Self::mutate`], but
-    /// not its body: a git call returns an [`Outcome`] rather than `()`, and a
-    /// conflict is a *successful* call that did not finish the job. It belongs
-    /// in the banner with git's own wording, not discarded as an error.
+    /// The whole sequence — find the worktree, run, hand off a conflict or
+    /// abort it — is [`run_local_job`], shared with the feed's sync-all, so the
+    /// two cannot drift. This method only owns the in-flight guard and the
+    /// banner. A conflict is a *successful* call that did not finish the job,
+    /// and is reported in git's own words; a handoff is reported as a notice,
+    /// not an error, because nothing went wrong.
     ///
-    /// The clone is re-read whichever way it went. A refused or conflicted
-    /// operation can still have changed what the buttons should offer.
-    fn run_local<F>(&mut self, label: &'static str, cx: &mut Context<Self>, call: F)
-    where
-        F: FnOnce(
-                Repo,
-                BranchName,
-                RemoteRef,
-                Autostash,
-            ) -> BoxFuture<'static, Result<Outcome, GitError>>
-            + Send
-            + 'static,
-    {
+    /// The clone is re-read whichever way it went: a refused, conflicted, or
+    /// handed-off operation changes what the buttons should offer.
+    fn run_local_op(&mut self, op: LocalOp, cx: &mut Context<Self>) {
         if self.busy.is_some() {
             return;
         }
-        let Some(local) = self.local.loaded() else {
+        let Some(pull) = self.pull(cx) else {
             return;
         };
-        let (repo, branch, remote) = (
-            local.repo.clone(),
-            local.branch.clone(),
-            local.remote.clone(),
-        );
-        let autostash = if self.store.read(cx).autostash() {
-            Autostash::Enabled
-        } else {
-            Autostash::Disabled
+        let store = self.store.read(cx);
+        let Some(clone) = store.local_path(&self.repo) else {
+            return;
+        };
+        let (branch, base) = match (
+            BranchName::new(pull.head_ref.clone()),
+            BranchName::new(pull.base_ref.clone()),
+        ) {
+            (Ok(branch), Ok(base)) => (branch, base),
+            (Err(err), _) | (_, Err(err)) => {
+                self.error = Some(err.to_string());
+                cx.notify();
+                return;
+            }
+        };
+        let job = LocalJob {
+            clone,
+            branch,
+            base,
+            op,
+            autostash: if store.autostash() {
+                Autostash::Enabled
+            } else {
+                Autostash::Disabled
+            },
+            handler: store.conflict_handler(),
+            pr: PrMeta {
+                repo: self.repo.clone(),
+                number: self.number,
+                title: pull.title.clone(),
+                url: pull.url.clone(),
+                // The feed row carries no body; the conversation does, when
+                // loaded, as its first timeline item. Hand over what is at hand.
+                body: self
+                    .conversation
+                    .loaded()
+                    .and_then(|conversation| {
+                        conversation.items.iter().find_map(|item| match item {
+                            TimelineItem::Body { body, .. } => Some(body.clone()),
+                            _ => None,
+                        })
+                    })
+                    .unwrap_or_default(),
+                head_ref: pull.head_ref.clone(),
+                base_ref: pull.base_ref.clone(),
+            },
         };
 
-        self.busy = Some(label);
+        self.busy = Some(op.progress_label());
         self.error = None;
+        self.notice = None;
         cx.notify();
 
         self.tasks.push(cx.spawn(async move |this, cx| {
-            let result = Tokio::spawn(
-                &*cx,
-                async move { call(repo, branch, remote, autostash).await },
-            )
-            .await;
+            let result = Tokio::spawn(&*cx, run_local_job(job)).await;
 
             this.update(cx, |this, cx| {
                 this.busy = None;
-                this.error = match result {
-                    Ok(Ok(Outcome::Conflicted(conflict))) => Some(conflict.message().to_string()),
-                    Ok(Ok(outcome)) => {
-                        tracing::debug!(?outcome, "local operation finished");
-                        None
+                match result {
+                    Ok(LocalResult::UpToDate | LocalResult::Completed) => {}
+                    Ok(handed @ LocalResult::HandedOff { .. }) => {
+                        this.notice = Some(handed.detail());
                     }
-                    Ok(Err(err)) => Some(err.to_string()),
-                    Err(err) => Some(err.to_string()),
-                };
+                    Ok(other) => this.error = Some(other.detail()),
+                    Err(err) => this.error = Some(err.to_string()),
+                }
                 this.load_local(cx);
                 cx.notify();
             })
@@ -653,64 +740,46 @@ impl PrDetail {
         }));
     }
 
-    fn pull_local(&mut self, cx: &mut Context<Self>) {
-        self.run_local("Pulling", cx, |repo, _branch, remote, autostash| {
-            Box::pin(async move { repo.pull_rebase(&remote, autostash).await })
-        });
-    }
-
-    fn merge_local(&mut self, cx: &mut Context<Self>) {
-        self.run_local("Merging locally", cx, |repo, branch, remote, autostash| {
-            Box::pin(async move { repo.merge_from(&branch, &remote, autostash).await })
-        });
-    }
-
-    /// Fetch how far this branch has drifted from its base.
+    /// Abort whatever rebase or merge is stopped in this branch's worktree.
     ///
-    /// `MergeStateStatus` already says *whether* a branch is behind; this is the
-    /// only source of *how far*, and the number is what separates "click update"
-    /// from "this has drifted far enough to look at by hand".
-    ///
-    /// `Ok(None)` is not a failure. GitHub answers that way for a head ref the
-    /// base repository cannot resolve — a cross-fork pull request — and the
-    /// honest rendering of "GitHub will not tell us" is an absent chip, not an
-    /// error banner on an otherwise healthy pull request.
-    fn load_base_divergence(&mut self, cx: &mut Context<Self>) {
-        let Some(client) = self.client(cx) else {
+    /// Reachable only when the panel shows one in progress, and it takes the
+    /// abort target from the worktree's own state rather than from memory, so
+    /// it cannot run `merge --abort` on a rebase.
+    fn abort_local(&mut self, cx: &mut Context<Self>) {
+        if self.busy.is_some() {
+            return;
+        }
+        let Some(LocalState::CheckedOut(local)) = self.local.loaded() else {
             return;
         };
-        let Some((base_ref, head_ref)) = self
-            .pull(cx)
-            .map(|pull| (pull.base_ref.clone(), pull.head_ref.clone()))
-        else {
-            return;
-        };
+        let worktree = local.worktree.clone();
 
-        self.base_divergence = Loadable::Loading;
+        self.busy = Some("Aborting");
+        self.error = None;
+        self.notice = None;
         cx.notify();
 
-        let repo = self.repo.clone();
         self.tasks.push(cx.spawn(async move |this, cx| {
             let result = Tokio::spawn(&*cx, async move {
-                client.divergence(&repo, &base_ref, &head_ref).await
+                let repo = Repo::open(&worktree).await?;
+                let status = repo.status().await?;
+                let Some(target) = status.in_progress.and_then(InProgress::abort_target) else {
+                    return Err(GitError::NothingToDescribe {
+                        in_progress: status.in_progress,
+                    });
+                };
+                repo.abort(target).await
             })
             .await;
 
             this.update(cx, |this, cx| {
-                this.base_divergence = match result {
-                    Ok(Ok(Some(divergence))) => {
-                        tracing::debug!(
-                            ahead = divergence.ahead,
-                            behind = divergence.behind,
-                            "base divergence loaded"
-                        );
-                        Loadable::Loaded(divergence)
-                    }
-                    // Unresolvable head ref: nothing to show, nothing wrong.
-                    Ok(Ok(None)) => Loadable::Idle,
-                    Ok(Err(err)) => Loadable::Failed(err.to_string()),
-                    Err(err) => Loadable::Failed(err.to_string()),
-                };
+                this.busy = None;
+                match result {
+                    Ok(Ok(())) => {}
+                    Ok(Err(err)) => this.error = Some(err.to_string()),
+                    Err(err) => this.error = Some(err.to_string()),
+                }
+                this.load_local(cx);
                 cx.notify();
             })
             .ok();
@@ -768,7 +837,6 @@ impl PrDetail {
 
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         self.load_conversation(cx);
-        self.load_base_divergence(cx);
         self.load_local(cx);
         if !self.files.is_idle() {
             self.load_files(cx);
@@ -1117,9 +1185,7 @@ impl PrDetail {
                     // pull request is ahead of its base, so a chip saying so on
                     // all of them would be noise.
                     .when_some(
-                        self.base_divergence
-                            .loaded()
-                            .copied()
+                        pull.base_divergence
                             .filter(|divergence| divergence.is_behind()),
                         |el, divergence| {
                             el.child(
@@ -1285,19 +1351,36 @@ impl PrDetail {
         }
     }
 
-    /// The local clone's row: how far the checkout has drifted from the branch
-    /// on GitHub, and the two ways to catch it up.
+    /// The local clone's row: where the checkout stands relative to the branch
+    /// on GitHub and its base, and the ways to move it.
     ///
     /// Rendered only when a clone is configured and loaded. Everything here acts
     /// on the clone alone — nothing is pushed — so after a local merge or rebase
     /// the "ahead" count is what tells the user there is something to push.
     fn render_local(
         &self,
-        local: &LocalBranch,
+        state: &LocalState,
         busy: bool,
         theme: &rostrum_ui::Theme,
         cx: &Context<Self>,
     ) -> impl IntoElement {
+        let local = match state {
+            LocalState::NotCheckedOut => {
+                return h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(Dot::new(theme.text_subtle))
+                    .child(
+                        div()
+                            .text_size(rems(0.75))
+                            .text_color(theme.text_subtle)
+                            .child("Not checked out in any worktree of the clone"),
+                    )
+                    .into_any_element();
+            }
+            LocalState::CheckedOut(local) => local,
+        };
+
         let divergence = local.divergence;
         let summary = match (divergence.behind, divergence.ahead) {
             (0, 0) => format!("Local {} matches {}", local.branch, local.remote),
@@ -1312,19 +1395,67 @@ impl PrDetail {
             ),
         };
 
-        // A blocker disables the buttons and explains itself; being up to date
-        // disables them because there is simply nothing to do.
+        // An operation git has not finished takes over the row: nothing else
+        // can run until it is continued elsewhere or aborted here.
+        if let Some(in_progress) = local.in_progress {
+            let (text, color) = match &local.handoff {
+                Some(HandoffState::Running { session }) => (
+                    format!(
+                        "{}, handed off to tmux session `{session}` — tmux attach -t ={session}",
+                        capitalise(in_progress.describe())
+                    ),
+                    theme.accent,
+                ),
+                Some(HandoffState::Gone { session }) => (
+                    format!(
+                        "{} and no handoff session `{session}` is running — finish it in a terminal, or abort it here",
+                        capitalise(in_progress.describe())
+                    ),
+                    theme.warning,
+                ),
+                None => (
+                    format!(
+                        "{} in this worktree — finish it in a terminal, or abort it here",
+                        capitalise(in_progress.describe())
+                    ),
+                    theme.warning,
+                ),
+            };
+            return h_flex()
+                .gap_2()
+                .flex_wrap()
+                .items_center()
+                .child(Dot::new(color))
+                .child(
+                    div()
+                        .text_size(rems(0.75))
+                        .text_color(theme.text_muted)
+                        .child(text),
+                )
+                .child(
+                    Button::new("local-abort", "Abort")
+                        .style(ButtonStyle::Danger)
+                        .disabled(busy)
+                        .tooltip("Run the matching --abort and return the worktree to how it was")
+                        .on_click(Self::on_click(cx, |this, cx| this.abort_local(cx))),
+                )
+                .into_any_element();
+        }
+
         let blocked = local.blocker.is_some();
+        let disabled = busy || blocked;
+        let tooltip = |when_clear: String| -> String {
+            match &local.blocker {
+                Some(reason) => reason.clone(),
+                None => when_clear,
+            }
+        };
         let nothing_to_pull = !divergence.is_behind();
-        let disabled = busy || blocked || nothing_to_pull;
-        let why = |verb: &'static str| -> String {
-            match (&local.blocker, nothing_to_pull) {
-                (Some(reason), _) => reason.clone(),
-                (None, true) => format!("Nothing to {verb}: the clone is up to date"),
-                (None, false) => match verb {
-                    "pull" => "Fetch and rebase your local commits on top".to_string(),
-                    _ => format!("Merge {} into your local branch", local.remote),
-                },
+        let pull_tip = |verb: &str| {
+            if nothing_to_pull {
+                format!("Nothing to {verb}: the clone matches {}", local.remote)
+            } else {
+                format!("{} {} into your local branch", verb, local.remote)
             }
         };
 
@@ -1357,18 +1488,48 @@ impl PrDetail {
                                     "Could not reach the remote; these counts come from the refs already on disk",
                                 ),
                         )
-                    })
+                    }),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .flex_wrap()
+                    .items_center()
                     .child(
                         Button::new("local-pull", "Pull (rebase)")
-                            .disabled(disabled)
-                            .tooltip(why("pull"))
-                            .on_click(Self::on_click(cx, |this, cx| this.pull_local(cx))),
+                            .disabled(disabled || nothing_to_pull)
+                            .tooltip(tooltip(pull_tip("Fetch and rebase")))
+                            .on_click(Self::on_click(cx, |this, cx| {
+                                this.run_local_op(LocalOp::PullRebase, cx)
+                            })),
                     )
                     .child(
-                        Button::new("local-merge", "Merge")
+                        Button::new("local-merge-remote", "Merge remote")
+                            .disabled(disabled || nothing_to_pull)
+                            .tooltip(tooltip(pull_tip("Merge")))
+                            .on_click(Self::on_click(cx, |this, cx| {
+                                this.run_local_op(LocalOp::MergeRemote, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("local-merge-base", "Merge base")
                             .disabled(disabled)
-                            .tooltip(why("merge"))
-                            .on_click(Self::on_click(cx, |this, cx| this.merge_local(cx))),
+                            .tooltip(tooltip(
+                                "Merge the base branch into this worktree; nothing is pushed".into(),
+                            ))
+                            .on_click(Self::on_click(cx, |this, cx| {
+                                this.run_local_op(LocalOp::MergeBase, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("local-rebase-base", "Rebase onto base")
+                            .disabled(disabled)
+                            .tooltip(tooltip(
+                                "Rebase this worktree onto the base branch; nothing is pushed".into(),
+                            ))
+                            .on_click(Self::on_click(cx, |this, cx| {
+                                this.run_local_op(LocalOp::RebaseBase, cx)
+                            })),
                     ),
             )
             .child(
@@ -1384,6 +1545,7 @@ impl PrDetail {
                     }),
                 ),
             )
+            .into_any_element()
     }
 
     /// The "your branch is behind its base" row, with the two ways to fix it.
@@ -1471,6 +1633,14 @@ impl PrDetail {
                         .child(message),
                 )
             })
+            .when_some(self.notice.clone(), |el, message| {
+                el.child(
+                    div()
+                        .text_size(rems(0.75))
+                        .text_color(theme.accent)
+                        .child(message),
+                )
+            })
             .when_some(self.busy, |el, label| {
                 el.child(
                     div()
@@ -1547,9 +1717,7 @@ impl PrDetail {
             })
             .child(self.composer.clone())
             .when_some(
-                self.base_divergence
-                    .loaded()
-                    .copied()
+                pull.base_divergence
                     .filter(|divergence| divergence.is_behind()),
                 |el, divergence| {
                     el.child(self.render_branch_sync(pull, divergence, busy, &theme, cx))
@@ -1742,6 +1910,15 @@ fn review_chip(decision: Option<ReviewDecision>) -> Option<(&'static str, ThemeC
         ReviewDecision::Approved => Some(("approved", |t| t.success)),
         ReviewDecision::ChangesRequested => Some(("changes requested", |t| t.danger)),
         ReviewDecision::ReviewRequired => Some(("review required", |t| t.text_muted)),
+    }
+}
+
+/// First letter upper-cased, for a phrase git gave us mid-sentence.
+fn capitalise(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
     }
 }
 

@@ -30,6 +30,23 @@ async fn main() -> Result<()> {
     println!("git dir:    {}", repo.git_dir().display());
     println!("common dir: {}", repo.common_dir().display());
 
+    // Cross-check against `git worktree list`.
+    println!("\nworktrees:");
+    for entry in repo.worktrees().await? {
+        let head = entry
+            .head
+            .as_ref()
+            .map(|oid| oid.short().to_string())
+            .unwrap_or_else(|| "-".to_string());
+        let what = match (&entry.branch, entry.bare, entry.detached) {
+            (Some(branch), _, _) => format!("[{branch}]"),
+            (None, true, _) => "(bare)".to_string(),
+            (None, _, true) => "(detached)".to_string(),
+            (None, false, false) => "(?)".to_string(),
+        };
+        println!("  {} {head} {what}", entry.path.display());
+    }
+
     let status = repo.status().await?;
     match &status.head {
         Head::Branch {

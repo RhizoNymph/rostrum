@@ -28,6 +28,7 @@ use crate::{
     command::CommandKind,
     preflight::{Blocker, Operation},
     refs::NameRejection,
+    status::InProgress,
 };
 
 /// Everything that can go wrong driving the `git` command line.
@@ -113,6 +114,14 @@ pub enum GitError {
     /// An object id was not the 40 or 64 lowercase hex digits git prints.
     #[error("`{value}` is not an object id")]
     InvalidOid { value: String },
+
+    /// [`Repo::conflict_context`](crate::Repo::conflict_context) was asked to
+    /// describe a stopped rebase or merge, but the worktree is not in one this
+    /// crate started. `None` means nothing is in progress at all; `Some` is a
+    /// foreign operation — `am`, cherry-pick, revert, bisect — which is the
+    /// user's own and not rostrum's to describe or continue.
+    #[error("nothing to describe: {}", in_progress.map(InProgress::describe).unwrap_or("no operation is in progress"))]
+    NothingToDescribe { in_progress: Option<InProgress> },
 }
 
 impl GitError {

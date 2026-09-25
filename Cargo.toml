@@ -13,6 +13,7 @@ rostrum-core = { path = "crates/rostrum-core" }
 rostrum-db = { path = "crates/rostrum-db" }
 rostrum-diff = { path = "crates/rostrum-diff" }
 rostrum-git = { path = "crates/rostrum-git" }
+rostrum-handoff = { path = "crates/rostrum-handoff" }
 rostrum-github = { path = "crates/rostrum-github" }
 rostrum-md = { path = "crates/rostrum-md" }
 rostrum-ui = { path = "crates/rostrum-ui" }

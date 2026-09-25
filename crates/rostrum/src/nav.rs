@@ -91,6 +91,7 @@ mod tests {
             labels: Vec::new(),
             comment_count: 0,
             checks: None,
+            base_divergence: None,
         }
     }
 

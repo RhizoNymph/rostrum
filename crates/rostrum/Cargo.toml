@@ -14,6 +14,7 @@ rostrum-db.workspace = true
 rostrum-diff.workspace = true
 rostrum-git.workspace = true
 rostrum-github.workspace = true
+rostrum-handoff.workspace = true
 rostrum-md.workspace = true
 rostrum-ui.workspace = true
 

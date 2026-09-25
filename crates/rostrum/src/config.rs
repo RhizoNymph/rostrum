@@ -47,6 +47,15 @@ pub struct Config {
     /// Persisted because it is a working habit, not a per-pull-request choice.
     #[serde(default)]
     pub autostash: bool,
+    /// What to do when a local rebase or merge stops on a conflict.
+    ///
+    /// Absent, the conflict is aborted and the clone left as it was found —
+    /// rostrum has no conflict editor, so that is the honest answer to a
+    /// button press. Present, the worktree is left mid-operation and the
+    /// command is run in a tmux session with a context bundle, so something
+    /// that *can* resolve conflicts gets to.
+    #[serde(default)]
+    pub conflict_handler: Option<ConflictHandler>,
 }
 
 impl Default for Config {
@@ -62,8 +71,22 @@ impl Default for Config {
             hide_empty_repos: true,
             clones: BTreeMap::new(),
             autostash: false,
+            conflict_handler: None,
         }
     }
+}
+
+/// A command to hand a stopped rebase or merge to.
+///
+/// `command` is a shell template. `{context}` is replaced by the path of a
+/// markdown bundle describing the conflict, and `{worktree}` by the worktree
+/// the operation stopped in; both are shell-quoted on substitution. The
+/// template is typed into an interactive shell in a detached tmux session
+/// whose working directory is the worktree, so anything the user could run
+/// from a terminal there works here — `claude`, `aider`, a script.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConflictHandler {
+    pub command: String,
 }
 
 /// Anything the user should know about but that should not stop startup.
@@ -215,6 +238,25 @@ fn expand_tilde(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- conflict handler ---------------------------------------------------
+
+    #[test]
+    fn a_config_without_a_handler_keeps_the_abort_default() {
+        let config: Config =
+            serde_json::from_str(r#"{ "repos": ["a/b"] }"#).expect("older config should parse");
+        assert!(config.conflict_handler.is_none());
+    }
+
+    #[test]
+    fn a_handler_command_round_trips() {
+        let text = r#"{ "conflict_handler": { "command": "claude 'fix {context}'" } }"#;
+        let config: Config = serde_json::from_str(text).expect("should parse");
+        let back = serde_json::to_string(&config).expect("should serialise");
+        assert!(back.contains("fix {context}"));
+        let handler = config.conflict_handler.expect("handler present");
+        assert_eq!(handler.command, "claude 'fix {context}'");
+    }
 
     // --- local clones -------------------------------------------------------
 

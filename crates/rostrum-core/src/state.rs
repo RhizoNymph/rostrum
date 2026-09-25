@@ -104,10 +104,32 @@ impl AppState {
     }
 }
 
+/// Copy each pull request's `base_divergence` from `old` onto the entry in
+/// `new` with the same number.
+///
+/// A refresh replaces a repository's list wholesale, and the divergence
+/// counts arrive from a separate query issued after it. Without this the row
+/// chip would blink out on every poll and reappear a round trip later; with it
+/// the previous answer stands until the new one lands. Matched by number, not
+/// position, because the feed is ordered by update time and a refresh is
+/// exactly when that order changes.
+///
+/// Only a known value is carried: a `None` in `new` stays `None` when the
+/// old list had nothing for that number, and a `Some` already in `new` is
+/// left alone.
+pub fn carry_forward_divergence(old: &[PullRequest], new: &mut [PullRequest]) {
+    for pr in new.iter_mut().filter(|pr| pr.base_divergence.is_none()) {
+        pr.base_divergence = old
+            .iter()
+            .find(|previous| previous.number == pr.number)
+            .and_then(|previous| previous.base_divergence);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{MergeStateStatus, Mergeable, NodeId, PrNumber};
+    use crate::model::{Divergence, MergeStateStatus, Mergeable, NodeId, PrNumber};
 
     fn repo_with(id: &str, numbers: &[u32]) -> RepoState {
         let mut state = RepoState::new(id.parse().expect("valid repo id"));
@@ -134,6 +156,7 @@ mod tests {
                 labels: Vec::new(),
                 comment_count: 0,
                 checks: None,
+                base_divergence: None,
             })
             .collect();
         state.load = LoadState::Loaded { at: Utc::now() };
@@ -167,6 +190,30 @@ mod tests {
             ..Default::default()
         };
         assert!(state.selected_pr().is_none());
+    }
+
+    /// The carry matches by number so a reordered refresh keeps each count
+    /// on its own pull request, and a fresh answer is never overwritten by
+    /// a stale one.
+    #[test]
+    fn carries_divergence_forward_by_number_without_clobbering_fresh_values() {
+        let mut old = repo_with("a/b", &[1, 2, 3]).prs;
+        old[0].base_divergence = Some(Divergence::new(0, 4));
+        old[1].base_divergence = None;
+        old[2].base_divergence = Some(Divergence::new(2, 0));
+
+        // Reordered, one gone (#3), one new (#9), and #2 already answered.
+        let mut new = repo_with("a/b", &[2, 9, 1]).prs;
+        new[0].base_divergence = Some(Divergence::new(1, 1));
+
+        carry_forward_divergence(&old, &mut new);
+
+        assert_eq!(new[0].number, PrNumber(2));
+        assert_eq!(new[0].base_divergence, Some(Divergence::new(1, 1)));
+        assert_eq!(new[1].number, PrNumber(9));
+        assert_eq!(new[1].base_divergence, None);
+        assert_eq!(new[2].number, PrNumber(1));
+        assert_eq!(new[2].base_divergence, Some(Divergence::new(0, 4)));
     }
 
     #[test]

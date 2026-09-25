@@ -379,6 +379,11 @@ pub struct PullRequest {
     pub labels: Vec<Label>,
     pub comment_count: u32,
     pub checks: Option<CheckState>,
+    /// How far this branch has drifted from its base, from a follow-up query
+    /// issued after the feed refresh. Defaulted for the same reason as
+    /// `merge_state`: rows cached before it existed must still decode.
+    #[serde(default)]
+    pub base_divergence: Option<Divergence>,
 }
 
 impl PullRequest {
@@ -540,6 +545,7 @@ mod tests {
             }],
             comment_count: 0,
             checks: None,
+            base_divergence: None,
         }
     }
 
@@ -634,6 +640,23 @@ mod tests {
         let decoded: PullRequest =
             serde_json::from_value(value).expect("decodes without the field");
         assert_eq!(decoded.merge_state, MergeStateStatus::Unknown);
+    }
+
+    /// `base_divergence` arrived later still, and comes from a separate query
+    /// rather than the feed, so a cached row without it must decode to "not
+    /// yet known" rather than fail.
+    #[test]
+    fn decodes_a_payload_without_base_divergence() {
+        let mut value = serde_json::to_value(pr("t", "a")).expect("encodes");
+        value
+            .as_object_mut()
+            .expect("object")
+            .remove("base_divergence")
+            .expect("field was present");
+
+        let decoded: PullRequest =
+            serde_json::from_value(value).expect("decodes without the field");
+        assert_eq!(decoded.base_divergence, None);
     }
 
     /// The wire spelling has to survive the round trip, since these values are

@@ -54,16 +54,28 @@ cargo run -p rostrum --example review -- zed-industries/zed 62051
   "clones": {
     "zed-industries/zed": "~/Code/zed"
   },
-  "autostash": false
+  "autostash": false,
+  "conflict_handler": {
+    "command": "claude 'Resolve the conflicts described in {context}'"
+  }
 }
 ```
 
-`clones` is optional and maps `owner/name` to a local checkout. A repository
-with one gains a local section on its pull requests: how far the checkout has
-drifted from the branch on GitHub, and buttons to pull or merge. Nothing is ever
-pushed — after a local merge or rebase the "ahead" count is the cue to push it
-yourself. `autostash` decides whether those operations pass `--autostash`; it is
-also a checkbox next to the buttons.
+`clones` is optional and maps `owner/name` to any worktree of a local
+checkout. A repository with one gains a local section on its pull requests —
+the worktree the branch is checked out in, how far it has drifted from GitHub,
+and buttons to pull, merge, or rebase it — plus a `Pull all` / `Merge base into
+all` / `Rebase all onto base` row in the feed that runs across every open pull
+request with a checked-out worktree. Nothing is ever pushed — after a local
+merge or rebase the "ahead" count is the cue to push it yourself. `autostash`
+decides whether those operations pass `--autostash`; it is also a checkbox.
+
+`conflict_handler` is optional. Without it a local conflict is aborted and the
+worktree left as it was. With it, the worktree is left mid-rebase and the
+command is typed into a new tmux session (`rostrum-<owner>-<repo>-<n>`) whose
+working directory is the worktree; `{context}` is replaced by the path of a
+markdown bundle describing the conflict — the conflicted regions, the commits
+on each side, the pull request body, and the exact commands to continue.
 
 Set `notifications` to `true` for a desktop notification when a pull request
 appears. The cache lives at `~/.local/share/rostrum/cache.db`; deleting it is

@@ -14,8 +14,8 @@ use crate::{
     conversation::{ConversationNode, ConversationQueryData, PULL_REQUEST_CONVERSATION},
     error::GitHubError,
     graphql::{
-        self, BranchUpdateMethod, DivergenceQueryData, DraftState, GraphQlResponse, PrNode,
-        RateLimit, RepoQueryData, SetDraftData, UpdateBranchData,
+        self, BranchUpdateMethod, DivergenceBatchData, DivergenceQueryData, DraftState,
+        GraphQlResponse, PrNode, RateLimit, RepoQueryData, SetDraftData, UpdateBranchData,
     },
     rest::{AddLabels, IssueState, MergeMethod, PullRequestFile, SubmitReview},
 };
@@ -437,6 +437,67 @@ impl GitHubClient {
         Ok(data.into_domain())
     }
 
+    /// [`Self::divergence`] for every open pull request of one repository, in
+    /// one request.
+    ///
+    /// `pairs[i]` is `(base_ref, head_ref)` and the result is index-aligned
+    /// with it: `None` at `i` wherever GitHub could not compare that pair.
+    /// An empty `pairs` answers `Ok(vec![])` without a request, since a
+    /// document with no selections is a syntax error.
+    ///
+    /// The feed calls this once per repository per refresh, so the N pull
+    /// requests must cost one aliased query rather than N; see
+    /// [`graphql::build_divergence_batch`].
+    ///
+    /// This deliberately does not go through [`Self::graphql`]. That helper
+    /// turns an `errors` array of nothing but `NOT_FOUND` into one
+    /// [`GitHubError::NotFound`] for the whole document, which is right for
+    /// every single-resource query — and wrong here, where one cross-fork pull
+    /// request produces exactly such an entry scoped to its own alias while
+    /// every other alias still carries an answer. Collapsing that would blank
+    /// the whole repository's counts because of one fork. So the raw response
+    /// is taken from [`Self::graphql_raw`] and the errors are sorted by
+    /// [`graphql::unexcused_batch_errors`]: a `NOT_FOUND` at
+    /// `["repository", "pN", ...]` is that pair's `None` and nothing more; a
+    /// `NOT_FOUND` for the repository itself is [`GitHubError::NotFound`]; any
+    /// other error is [`GitHubError::GraphQl`]. The single-pair
+    /// [`Self::divergence`] keeps its whole-document treatment because a lone
+    /// `NOT_FOUND` there can only mean its one pair.
+    pub async fn divergences(
+        &self,
+        repo: &RepoId,
+        pairs: &[(String, String)],
+    ) -> Result<Vec<Option<Divergence>>, GitHubError> {
+        if pairs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let resource = format!("{repo} divergence of {} pull requests", pairs.len());
+        let document = graphql::build_divergence_batch(pairs.len());
+        let variables = graphql::divergence_batch_variables(repo.owner(), repo.name(), pairs);
+
+        let parsed: GraphQlResponse<DivergenceBatchData> =
+            self.graphql_raw(&document, variables, &resource).await?;
+
+        let unexcused = graphql::unexcused_batch_errors(parsed.errors, pairs.len());
+        if !unexcused.is_empty() {
+            let all_not_found = unexcused
+                .iter()
+                .all(|e| e.kind.as_deref() == Some("NOT_FOUND"));
+            return Err(if all_not_found {
+                GitHubError::NotFound {
+                    resource: repo.to_string(),
+                }
+            } else {
+                GitHubError::GraphQl { errors: unexcused }
+            });
+        }
+
+        Ok(parsed
+            .data
+            .ok_or(GitHubError::EmptyData)?
+            .into_domain(pairs.len()))
+    }
+
     /// Catch a branch up with its base, by merge or by rebase.
     ///
     /// GraphQL rather than REST because `PUT /pulls/{n}/update-branch` can only
@@ -489,22 +550,7 @@ impl GitHubClient {
         variables: serde_json::Value,
         resource: &str,
     ) -> Result<T, GitHubError> {
-        let body = json!({ "query": query, "variables": variables });
-        let response = self
-            .execute(
-                self.http
-                    .post(GRAPHQL_URL)
-                    .bearer_auth(self.token.as_str())
-                    .json(&body),
-            )
-            .await?;
-        response.check_status(resource)?;
-
-        let parsed: GraphQlResponse<T> =
-            serde_json::from_str(&response.body).map_err(|source| GitHubError::Decode {
-                context: format!("GraphQL response for {resource}"),
-                source,
-            })?;
+        let parsed: GraphQlResponse<T> = self.graphql_raw(query, variables, resource).await?;
 
         // A GraphQL request can return HTTP 200 and still have failed, so
         // errors are checked before `data` is trusted.
@@ -525,6 +571,37 @@ impl GitHubClient {
         }
 
         parsed.data.ok_or(GitHubError::EmptyData)
+    }
+
+    /// Send one GraphQL document and return the decoded envelope, `errors`
+    /// and all.
+    ///
+    /// The transport half of [`Self::graphql`]: HTTP status and JSON decoding
+    /// are checked here, but the `errors` array is handed back uninterpreted.
+    /// It exists for the one caller — [`Self::divergences`] — whose document
+    /// legitimately answers with partial data and per-alias errors, and which
+    /// therefore has to read both halves itself.
+    async fn graphql_raw<T: DeserializeOwned>(
+        &self,
+        query: &str,
+        variables: serde_json::Value,
+        resource: &str,
+    ) -> Result<GraphQlResponse<T>, GitHubError> {
+        let body = json!({ "query": query, "variables": variables });
+        let response = self
+            .execute(
+                self.http
+                    .post(GRAPHQL_URL)
+                    .bearer_auth(self.token.as_str())
+                    .json(&body),
+            )
+            .await?;
+        response.check_status(resource)?;
+
+        serde_json::from_str(&response.body).map_err(|source| GitHubError::Decode {
+            context: format!("GraphQL response for {resource}"),
+            source,
+        })
     }
 
     /// A REST request with the auth and versioning headers already applied.
