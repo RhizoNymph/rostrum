@@ -88,6 +88,8 @@ mod tests {
             mergeable: Mergeable::Unknown,
             merge_state: MergeStateStatus::Unknown,
             review_decision: None,
+            assignees: Vec::new(),
+            review_requests: Vec::new(),
             labels: Vec::new(),
             comment_count: 0,
             checks: None,
@@ -160,6 +162,7 @@ mod tests {
                 query: "PR 2".into(),
                 hide_drafts: false,
                 hide_empty_repos: false,
+                ..Default::default()
             },
         );
         assert_eq!(
@@ -256,6 +259,7 @@ mod tests {
                 query: "PR 2".into(),
                 hide_drafts: false,
                 hide_empty_repos: false,
+                ..Default::default()
             },
         );
         assert_eq!(navigate(&feed, None, Nav::First), Some(1));

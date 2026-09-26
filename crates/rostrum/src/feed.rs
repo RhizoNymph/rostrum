@@ -10,11 +10,13 @@ use std::rc::Rc;
 use chrono::{DateTime, Utc};
 use gpui::{
     AnyElement, App, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding,
-    ListAlignment, ListState, Subscription, Window, actions, div, list, prelude::*, px, rems,
+    ListAlignment, ListState, SharedString, Subscription, Window, actions, div, list, prelude::*,
+    px, rems,
 };
 use rostrum_core::{
-    Chrome, Feed, FeedFilter, FeedRow, MergeStatus, PrIx, RepoId, RepoIx, RepoState,
-    ReviewDecision, Selection, flatten,
+    AuthorEntry, Chrome, Feed, FeedFilter, FeedRow, LoginKey, MergeStatus, PrIx, RepoId, RepoIx,
+    RepoState, ReviewDecision, Selection, VisibleAuthors, authors::visible as visible_authors,
+    flatten,
 };
 use rostrum_ui::{
     ActiveTheme, InputEvent, TextInput,
@@ -80,6 +82,15 @@ pub enum FeedEvent {
 /// Corner radius of a repo container, in pixels.
 const ROW_RADIUS: f32 = 8.;
 
+/// How many authors the row shows before collapsing the rest behind "+N more".
+///
+/// A dozen watched repositories can easily carry fifty distinct authors, and a
+/// filter control taller than the feed it filters is not a control. The cap is
+/// on the *unselected* tail only: the viewer and every selected author are
+/// always drawn, because a chip you cannot see is a filter you cannot switch
+/// off.
+const AUTHOR_CHIP_LIMIT: usize = 12;
+
 pub struct FeedView {
     store: Entity<Store>,
     filter: Entity<TextInput>,
@@ -87,6 +98,10 @@ pub struct FeedView {
     repo_input: Entity<TextInput>,
     /// Whether the repository management panel is open.
     managing_repos: bool,
+    /// Whether the author row is showing everyone rather than the first
+    /// [`AUTHOR_CHIP_LIMIT`]. Deliberately *not* persisted: it is a glance at a
+    /// long list, not a preference about what the feed shows.
+    authors_expanded: bool,
     /// Why the last add attempt failed, shown under the input.
     repo_error: Option<String>,
     focus_handle: FocusHandle,
@@ -123,6 +138,7 @@ impl FeedView {
             filter,
             repo_input,
             managing_repos: false,
+            authors_expanded: false,
             repo_error: None,
             focus_handle: cx.focus_handle(),
             feed,
@@ -259,6 +275,11 @@ impl FeedView {
 
     /// Mutate the live filter and let the store's notification rebuild the rows,
     /// so filter state has exactly one home.
+    /// Edit the parts of the filter that live and die with the session.
+    ///
+    /// Only the search query qualifies. Everything else is a preference and
+    /// goes through a `Store` setter, which writes it to the config as well —
+    /// see [`Store::set_hide_drafts`] and friends.
     fn update_filter(&mut self, edit: impl FnOnce(&mut FeedFilter), cx: &mut Context<Self>) {
         self.store.update(cx, |store, cx| {
             edit(&mut store.state.filter);
@@ -274,13 +295,31 @@ impl FeedView {
     }
 
     fn toggle_drafts(&mut self, cx: &mut Context<Self>) {
-        self.update_filter(|filter| filter.hide_drafts = !filter.hide_drafts, cx);
+        let hide = !self.store.read(cx).state.filter.hide_drafts;
+        self.store
+            .update(cx, |store, cx| store.set_hide_drafts(hide, cx));
+    }
+
+    fn toggle_author(&mut self, login: LoginKey, cx: &mut Context<Self>) {
+        self.store
+            .update(cx, |store, cx| store.toggle_author(login, cx));
+    }
+
+    fn toggle_include_involved(&mut self, cx: &mut Context<Self>) {
+        let include = !self.store.read(cx).state.filter.include_involved;
+        self.store
+            .update(cx, |store, cx| store.set_include_involved(include, cx));
+    }
+
+    /// Show every author again without disturbing the rest of the filter.
+    fn clear_authors(&mut self, cx: &mut Context<Self>) {
+        self.store.update(cx, |store, cx| store.clear_authors(cx));
     }
 
     /// Reset the whole filter, including the text box that drives it.
     fn clear_filter(&mut self, cx: &mut Context<Self>) {
         self.filter.update(cx, |input, cx| input.clear(cx));
-        self.update_filter(|filter| *filter = FeedFilter::default(), cx);
+        self.store.update(cx, |store, cx| store.clear_filter(cx));
     }
 
     // --- keyboard navigation -----------------------------------------------
@@ -692,6 +731,122 @@ impl FeedView {
             .into_any_element()
     }
 
+    /// The author filter: a chip per person with open work, the viewer first
+    /// and everyone else by recency, with the checkbox that widens a selection
+    /// from "opened by" to "waiting on".
+    ///
+    /// Returns `None` before the first refresh answers. An empty row of a
+    /// control that is about to populate itself is worse than no row.
+    fn render_author_filter(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let theme = cx.theme().clone();
+        let store = self.store.read(cx);
+        let selected = store.state.filter.authors.clone();
+        let include_involved = store.state.filter.include_involved;
+        let entries = store.authors();
+
+        if entries.is_empty() {
+            return None;
+        }
+
+        // Expanding is "no cap", expressed as a limit nothing exceeds. The
+        // rule about what a cap may and may not drop lives in core, with its
+        // tests; see [`rostrum_core::authors::visible`].
+        let limit = if self.authors_expanded {
+            entries.len()
+        } else {
+            AUTHOR_CHIP_LIMIT
+        };
+        let VisibleAuthors { shown, hidden } = visible_authors(entries, &selected, limit);
+
+        Some(
+            v_flex()
+                .gap_1p5()
+                .child(
+                    h_flex()
+                        .gap_1p5()
+                        .flex_wrap()
+                        .child(
+                            div()
+                                .text_size(rems(0.7))
+                                .text_color(theme.text_subtle)
+                                .child("authors"),
+                        )
+                        .children(shown.into_iter().map(|entry| {
+                            let checked = selected.contains(&entry.key);
+                            let login = entry.key.clone();
+                            Button::new(
+                                SharedString::from(format!("author-{}", entry.key)),
+                                entry.user.login.clone(),
+                            )
+                            .style(if checked {
+                                ButtonStyle::Primary
+                            } else {
+                                ButtonStyle::Subtle
+                            })
+                            .tooltip(author_tooltip(&entry, checked))
+                            .on_click(cx.listener(
+                                move |this, _, _window, cx| this.toggle_author(login.clone(), cx),
+                            ))
+                        }))
+                        .when(hidden > 0, |el| {
+                            el.child(
+                                Button::new("authors-more", format!("+{hidden} more"))
+                                    .tooltip("Show every author with open work")
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.authors_expanded = true;
+                                        cx.notify();
+                                    })),
+                            )
+                        })
+                        .when(self.authors_expanded, |el| {
+                            el.child(
+                                Button::new("authors-less", "fewer")
+                                    .tooltip("Collapse the author list")
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.authors_expanded = false;
+                                        cx.notify();
+                                    })),
+                            )
+                        }),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            Checkbox::new(
+                                "authors-include-involved",
+                                "include involved in",
+                                include_involved,
+                            )
+                            .on_toggle(
+                                cx.listener(|this, _, _window, cx| {
+                                    this.toggle_include_involved(cx)
+                                }),
+                            ),
+                        )
+                        .child(
+                            div()
+                                .text_size(rems(0.7))
+                                .text_color(theme.text_subtle)
+                                .child(if include_involved {
+                                    "opened by, assigned to, or awaiting review from"
+                                } else {
+                                    "opened by"
+                                }),
+                        )
+                        .when(!selected.is_empty(), |el| {
+                            el.child(
+                                Button::new("authors-clear", "all authors")
+                                    .tooltip("Stop filtering by author")
+                                    .on_click(
+                                        cx.listener(|this, _, _window, cx| this.clear_authors(cx)),
+                                    ),
+                            )
+                        }),
+                ),
+        )
+    }
+
     fn render_filter_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let store = self.store.read(cx);
@@ -806,6 +961,7 @@ impl FeedView {
                         }),
                 )
             })
+            .children(self.render_author_filter(cx))
             .when(self.managing_repos, |el| {
                 el.child(self.render_repo_panel(cx))
             })
@@ -830,6 +986,26 @@ impl FeedView {
                 )
             })
     }
+}
+
+/// What a chip says on hover: who they are, and what clicking will do.
+fn author_tooltip(entry: &AuthorEntry, checked: bool) -> String {
+    let who = if entry.is_viewer {
+        "You".to_string()
+    } else {
+        entry.user.login.clone()
+    };
+    let work = match entry.open_prs {
+        0 => "no open pull requests".to_string(),
+        1 => "1 open pull request".to_string(),
+        n => format!("{n} open pull requests"),
+    };
+    let action = if checked {
+        "click to unselect"
+    } else {
+        "click to filter to them"
+    };
+    format!("{who} — {work}; {action}")
 }
 
 /// How much of the feed a filter is letting through.
@@ -1015,6 +1191,8 @@ mod tests {
             mergeable: rostrum_core::Mergeable::Unknown,
             merge_state: rostrum_core::MergeStateStatus::Unknown,
             review_decision: None,
+            assignees: Vec::new(),
+            review_requests: Vec::new(),
             labels: Vec::new(),
             comment_count: 0,
             checks: None,
@@ -1053,6 +1231,7 @@ mod tests {
                 query: String::new(),
                 hide_drafts: true,
                 hide_empty_repos: false,
+                ..Default::default()
             },
         );
         assert_eq!(

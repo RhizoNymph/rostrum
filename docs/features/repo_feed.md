@@ -184,6 +184,18 @@ The filter bar writes into `AppState.filter`, which `flatten` already consults â
 filter state has exactly one home, and the existing store-changed path rebuilds
 rows live as the query is typed.
 
+The bar holds, top to bottom: the search box with the `drafts` and `repos`
+buttons; the `hide empty repos` checkbox; the sync-all row when any repo has a
+clone; and the author row â€” a chip per person with open work, the viewer first
+and everyone else by recency, with the `include involved in` checkbox beneath
+it. The author row and its ordering, capping and persistence rules belong to
+`author_filter`; see `docs/features/author_filter.md`.
+
+Everything in the bar except the search query is a *preference* and is written
+to the config as it changes, through `Store::edit_filter`. `FeedView::update_filter`
+mutates `AppState.filter` without persisting and is now reserved for the query
+alone.
+
 Visible counts are computed from `RepoState.prs`, not from feed rows. A
 collapsed repo hides its rows without the filter having rejected anything, so
 counting rows would misreport what the filter is doing.

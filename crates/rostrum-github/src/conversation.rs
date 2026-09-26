@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use rostrum_core::{
     CheckRun, CheckState, CommentId, Conversation, EventKind, ReviewId, ReviewState, ReviewThread,
-    Side, ThreadComment, ThreadId, TimelineItem, User,
+    Side, ThreadComment, ThreadId, TimelineItem,
 };
 use serde::Deserialize;
 
@@ -292,13 +292,6 @@ pub struct CheckContextNode {
     pub target_url: Option<String>,
 }
 
-fn into_user(author: AuthorNode) -> User {
-    User {
-        login: author.login,
-        avatar_url: author.avatar_url,
-    }
-}
-
 /// Collapse a check run's `conclusion`/`status` pair onto the same scale the
 /// older status API uses, so both kinds of check render identically.
 ///
@@ -383,7 +376,7 @@ impl TimelineEventNode {
 
         Some(TimelineItem::Event {
             kind,
-            actor: self.actor.map(into_user),
+            actor: self.actor.and_then(AuthorNode::into_user),
             created_at,
         })
     }
@@ -409,7 +402,7 @@ impl ReviewThreadNode {
                 ThreadComment {
                     id: CommentId(comment.id),
                     database_id: comment.database_id,
-                    author: comment.author.map(into_user),
+                    author: comment.author.and_then(AuthorNode::into_user),
                     body: comment.body,
                     created_at: comment.created_at,
                 }
@@ -433,7 +426,7 @@ impl ReviewThreadNode {
 impl ConversationNode {
     pub fn into_domain(self) -> Conversation {
         let mut items = vec![TimelineItem::Body {
-            author: self.author.map(into_user),
+            author: self.author.and_then(AuthorNode::into_user),
             body: self.body,
             created_at: self.created_at,
         }];
@@ -441,7 +434,7 @@ impl ConversationNode {
         for comment in self.comments.map(Connection::into_vec).unwrap_or_default() {
             items.push(TimelineItem::Comment {
                 id: CommentId(comment.id),
-                author: comment.author.map(into_user),
+                author: comment.author.and_then(AuthorNode::into_user),
                 body: comment.body,
                 created_at: comment.created_at,
             });
@@ -470,7 +463,7 @@ impl ConversationNode {
             let thread_ids = threads_by_review.remove(&review.id).unwrap_or_default();
             items.push(TimelineItem::Review {
                 id: ReviewId(review.id),
-                author: review.author.map(into_user),
+                author: review.author.and_then(AuthorNode::into_user),
                 state: review.state,
                 body: review.body,
                 created_at: review.created_at,

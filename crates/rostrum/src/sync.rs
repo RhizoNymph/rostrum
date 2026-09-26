@@ -16,8 +16,8 @@ use chrono::Utc;
 use gpui::{Context, Task};
 use gpui_tokio::Tokio;
 use rostrum_core::{
-    AppState, Divergence, LoadState, MergeStatus, PrNumber, PullRequest, RepoId, RepoState,
-    carry_forward_divergence,
+    AppState, AuthorEntry, Divergence, FeedFilter, LoadState, LoginKey, MergeStatus, PrNumber,
+    PullRequest, RepoId, RepoState, User, carry_forward_divergence, roster,
 };
 use rostrum_db::Db;
 use rostrum_git::{Autostash, BranchName};
@@ -180,6 +180,10 @@ pub struct Store {
     /// The sync's driver. Dropping it cancels the sync between jobs — never
     /// mid-git, because each job runs to completion on the Tokio side.
     sync_task: Option<Task<()>>,
+    /// Who the token belongs to, learned from the first refresh that answers.
+    /// `None` before then, and the author filter simply has nobody pinned to
+    /// the front of its roster until it fills in.
+    viewer: Option<User>,
     /// Local cache. `None` until it opens, and `None` forever if it fails —
     /// the app works without it, just without a warm start.
     db: Option<Arc<Db>>,
@@ -193,7 +197,7 @@ impl Store {
         warnings.extend(repo_warnings);
 
         let mut state = AppState::with_repos(repo_ids);
-        state.filter.hide_empty_repos = config.hide_empty_repos;
+        state.filter = config.feed_filter();
 
         let mut store = Self {
             config,
@@ -208,6 +212,7 @@ impl Store {
             divergence_probes: HashMap::new(),
             sync: None,
             sync_task: None,
+            viewer: None,
             db: None,
             _hydrate: None,
         };
@@ -327,10 +332,63 @@ impl Store {
     }
 
     pub fn set_hide_empty_repos(&mut self, hide: bool, cx: &mut Context<Self>) {
-        self.state.filter.hide_empty_repos = hide;
-        self.config.hide_empty_repos = hide;
+        self.edit_filter(|filter| filter.hide_empty_repos = hide, cx);
+    }
+
+    pub fn set_hide_drafts(&mut self, hide: bool, cx: &mut Context<Self>) {
+        self.edit_filter(|filter| filter.hide_drafts = hide, cx);
+    }
+
+    pub fn toggle_author(&mut self, login: LoginKey, cx: &mut Context<Self>) {
+        self.edit_filter(
+            |filter| {
+                filter.toggle_author(login);
+            },
+            cx,
+        );
+    }
+
+    /// Show every author again, leaving the rest of the filter alone.
+    ///
+    /// One edit rather than a toggle per selected login: `edit_filter` writes
+    /// the config, and clearing six authors is one preference change, not six.
+    pub fn clear_authors(&mut self, cx: &mut Context<Self>) {
+        self.edit_filter(|filter| filter.authors.clear(), cx);
+    }
+
+    pub fn set_include_involved(&mut self, include: bool, cx: &mut Context<Self>) {
+        self.edit_filter(|filter| filter.include_involved = include, cx);
+    }
+
+    /// Reset every filter, the author selection included.
+    ///
+    /// A "clear" that left the selection behind would be the worst of both: a
+    /// feed still narrowed, by the control the user just told to stop narrowing
+    /// it.
+    pub fn clear_filter(&mut self, cx: &mut Context<Self>) {
+        self.edit_filter(|filter| *filter = FeedFilter::default(), cx);
+    }
+
+    /// Edit the filter and write the parts of it that outlive the session.
+    ///
+    /// Every persisted filter setting goes through here, so "changed in the UI"
+    /// and "saved to disk" cannot come apart the way they did for `hide_drafts`.
+    /// The search query is edited directly instead — see
+    /// [`crate::config::Config::feed_filter`] for why it is not a preference.
+    fn edit_filter(&mut self, edit: impl FnOnce(&mut FeedFilter), cx: &mut Context<Self>) {
+        edit(&mut self.state.filter);
+        self.config.absorb_filter(&self.state.filter);
         self.persist_config();
         cx.notify();
+    }
+
+    /// The people the author filter can be pointed at, viewer first.
+    pub fn authors(&self) -> Vec<AuthorEntry> {
+        roster(
+            &self.state.repos,
+            self.viewer.as_ref(),
+            &self.state.filter.authors,
+        )
     }
 
     pub fn set_autostash(&mut self, autostash: bool, cx: &mut Context<Self>) {
@@ -635,6 +693,15 @@ impl Store {
 
         match outcome {
             Ok(Ok(mut fetched)) => {
+                // Every repository's response carries it; whichever arrives
+                // first wins and the rest agree, since it is a property of the
+                // token rather than of the repository.
+                if let Some(viewer) = fetched.viewer.take() {
+                    if self.viewer.as_ref() != Some(&viewer) {
+                        tracing::debug!(login = %viewer.login, "resolved the viewer");
+                    }
+                    self.viewer = Some(viewer);
+                }
                 if let Some(repo) = self.state.repo_mut(id) {
                     // The feed query never carries divergence; keep what the
                     // last batch found until the next one answers.

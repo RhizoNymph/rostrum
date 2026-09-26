@@ -48,6 +48,8 @@ fn pr(number: u32) -> PullRequest {
         mergeable: Mergeable::Mergeable,
         merge_state: MergeStateStatus::Unknown,
         review_decision: Some(ReviewDecision::Approved),
+        assignees: Vec::new(),
+        review_requests: Vec::new(),
         labels: vec![Label {
             name: "bug".into(),
             color: "d73a4a".into(),

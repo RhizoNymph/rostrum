@@ -120,6 +120,58 @@ pub struct User {
     pub avatar_url: Option<String>,
 }
 
+impl User {
+    pub fn key(&self) -> LoginKey {
+        LoginKey::new(&self.login)
+    }
+}
+
+/// A GitHub login folded to its comparison form.
+///
+/// GitHub logins are case-insensitive: `RhizoNymph` and `rhizonymph` are the
+/// same account, and the API is free to echo either casing back. Every
+/// comparison and every persisted selection therefore goes through this type
+/// rather than through a bare `String`, so "did the caller remember to
+/// lowercase?" is not a question any call site can get wrong.
+///
+/// The display casing is deliberately *not* carried here. It belongs to the
+/// `User` the login came from, which is what the UI renders; a key is only
+/// ever an identity.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub struct LoginKey(String);
+
+/// Normalising on the way in rather than deriving `Deserialize` is what makes
+/// the invariant hold for *every* source, including the hand-edited config
+/// file where `"RhizoNymph"` is what a person would naturally type.
+impl<'de> Deserialize<'de> for LoginKey {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self::new(&String::deserialize(deserializer)?))
+    }
+}
+
+impl LoginKey {
+    pub fn new(raw: &str) -> Self {
+        Self(raw.trim().to_lowercase())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// A login that is all whitespace identifies nobody. Config is
+    /// hand-editable, so this is reachable without a bug.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl fmt::Display for LoginKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// Aggregate review state. `None` on the wire means "no decision yet", which we
 /// represent as `Option::None` rather than an extra variant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -376,6 +428,20 @@ pub struct PullRequest {
     #[serde(default)]
     pub merge_state: MergeStateStatus,
     pub review_decision: Option<ReviewDecision>,
+    /// Who the pull request is assigned to.
+    ///
+    /// Defaulted for the same reason `merge_state` is: a pull request cached
+    /// before involvement was fetched must still decode. An empty list then
+    /// costs one refresh, where a failed decode would cost the whole cold-start
+    /// cache.
+    #[serde(default)]
+    pub assignees: Vec<User>,
+    /// Who has an outstanding review request on the pull request.
+    ///
+    /// Team review requests are dropped on the way in: a team has a name, not
+    /// a login, and the author filter matches people.
+    #[serde(default)]
+    pub review_requests: Vec<User>,
     pub labels: Vec<Label>,
     pub comment_count: u32,
     pub checks: Option<CheckState>,
@@ -410,6 +476,29 @@ impl PullRequest {
             // than calling it ready.
             (Mergeable::Mergeable, _) => MergeStatus::Ready,
         }
+    }
+
+    /// Whether `login` opened this pull request.
+    pub fn is_authored_by(&self, login: &LoginKey) -> bool {
+        self.author
+            .as_ref()
+            .is_some_and(|author| &author.key() == login)
+    }
+
+    /// Whether `login` is on the hook for this pull request: they opened it,
+    /// it is assigned to them, or their review has been requested.
+    ///
+    /// Deliberately *not* GitHub's full `involves:` qualifier, which also
+    /// counts commenting and being mentioned. Those are traces of having looked
+    /// at a pull request; these three are the ones that mean it is waiting on
+    /// you, which is what the filter is for.
+    pub fn involves(&self, login: &LoginKey) -> bool {
+        self.is_authored_by(login)
+            || self
+                .assignees
+                .iter()
+                .chain(&self.review_requests)
+                .any(|user| &user.key() == login)
     }
 
     /// Text used for feed filtering. Kept here so filtering and display can
@@ -539,6 +628,8 @@ mod tests {
             mergeable: Mergeable::Unknown,
             merge_state: MergeStateStatus::Unknown,
             review_decision: None,
+            assignees: Vec::new(),
+            review_requests: Vec::new(),
             labels: vec![Label {
                 name: "bug".into(),
                 color: "d73a4a".into(),
@@ -547,6 +638,95 @@ mod tests {
             checks: None,
             base_divergence: None,
         }
+    }
+
+    // --- involvement --------------------------------------------------------
+
+    /// GitHub logins are case-insensitive and the API echoes back whatever
+    /// casing it stored, so a filter that only matched exact spelling would
+    /// silently show nothing.
+    #[test]
+    fn authorship_ignores_the_casing_of_the_login() {
+        let pr = pr("t", "RhizoNymph");
+        assert!(pr.is_authored_by(&LoginKey::new("rhizonymph")));
+        assert!(pr.is_authored_by(&LoginKey::new("RHIZONYMPH")));
+        assert!(!pr.is_authored_by(&LoginKey::new("someone-else")));
+    }
+
+    #[test]
+    fn a_pull_request_with_no_author_is_authored_by_nobody() {
+        let pr = PullRequest {
+            author: None,
+            ..pr("t", "a")
+        };
+        assert!(!pr.is_authored_by(&LoginKey::new("a")));
+        assert!(!pr.involves(&LoginKey::new("a")));
+    }
+
+    #[test]
+    fn involvement_covers_author_assignee_and_requested_reviewer() {
+        let pr = PullRequest {
+            assignees: vec![User {
+                login: "Assignee".into(),
+                avatar_url: None,
+            }],
+            review_requests: vec![User {
+                login: "Reviewer".into(),
+                avatar_url: None,
+            }],
+            ..pr("t", "Author")
+        };
+
+        for login in ["author", "assignee", "reviewer"] {
+            assert!(pr.involves(&LoginKey::new(login)), "{login}");
+        }
+        assert!(!pr.involves(&LoginKey::new("bystander")));
+    }
+
+    /// Involvement is strictly wider than authorship: everything authorship
+    /// accepts, it must accept too.
+    #[test]
+    fn involvement_never_rejects_what_authorship_accepts() {
+        let pr = pr("t", "author");
+        let key = LoginKey::new("author");
+        assert!(pr.is_authored_by(&key));
+        assert!(pr.involves(&key));
+    }
+
+    /// Being assigned is not authoring. The narrow filter has to stay narrow.
+    #[test]
+    fn an_assignee_is_not_an_author() {
+        let pr = PullRequest {
+            assignees: vec![User {
+                login: "assignee".into(),
+                avatar_url: None,
+            }],
+            ..pr("t", "author")
+        };
+        assert!(!pr.is_authored_by(&LoginKey::new("assignee")));
+        assert!(pr.involves(&LoginKey::new("assignee")));
+    }
+
+    /// Config is hand-editable, so a blank entry is reachable without a bug.
+    /// It must identify nobody rather than matching the first empty login.
+    #[test]
+    fn a_blank_login_is_recognised_as_empty() {
+        assert!(LoginKey::new("   ").is_empty());
+        assert!(!LoginKey::new("a").is_empty());
+        assert_eq!(LoginKey::new("  Alice  ").as_str(), "alice");
+    }
+
+    /// The config file is hand-edited, so a login typed in its display casing
+    /// must normalise on the way in rather than becoming a key that matches
+    /// nobody.
+    #[test]
+    fn a_login_normalises_however_it_is_deserialised() {
+        let key: LoginKey = serde_json::from_str(r#""RhizoNymph""#).expect("should decode");
+        assert_eq!(key, LoginKey::new("rhizonymph"));
+        assert_eq!(
+            serde_json::to_string(&key).expect("should encode"),
+            r#""rhizonymph""#
+        );
     }
 
     #[test]
