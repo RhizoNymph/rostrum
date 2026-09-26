@@ -7,6 +7,7 @@
 mod checks;
 mod conversation;
 mod files;
+mod overview;
 
 use std::{collections::HashSet, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
@@ -69,6 +70,15 @@ impl DetailTab {
     fn from_index(ix: usize) -> Self {
         Self::ALL.get(ix).copied().unwrap_or(Self::Conversation)
     }
+}
+
+/// How the Files tab presents the diff: the line-by-line diff itself, or the
+/// visual overview of where the changes fall.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum FilesView {
+    #[default]
+    Diff,
+    Overview,
 }
 
 /// Async resource with an explicit failure state, so the UI can tell "still
@@ -247,6 +257,8 @@ pub struct PrDetail {
     pub(crate) reply: Option<(u64, Entity<TextInput>)>,
     /// Files collapsed in the diff view, by index.
     pub(crate) collapsed: HashSet<usize>,
+    /// Which presentation the Files tab is showing.
+    pub(crate) files_view: FilesView,
     /// Selected run of diff lines, for copying.
     pub(crate) line_selection: Option<files::LineSelection>,
     /// Flattened diff rows and the list that renders them.
@@ -291,6 +303,7 @@ impl PrDetail {
             pending_head_sha: None,
             reply: None,
             collapsed: HashSet::new(),
+            files_view: FilesView::default(),
             line_selection: None,
             diff_rows: Rc::new(Vec::new()),
             diff_list: ListState::new(0, ListAlignment::Top, px(600.)),
@@ -1125,6 +1138,29 @@ impl PrDetail {
             return;
         }
         cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+    }
+
+    pub(crate) fn set_files_view(&mut self, view: FilesView, cx: &mut Context<Self>) {
+        self.files_view = view;
+        cx.notify();
+    }
+
+    /// Leave the overview and land the diff on `file`'s header.
+    ///
+    /// The file is expanded first so the header row exists in the flattened
+    /// stream, and the rows are rebuilt before the row index is looked up so
+    /// the scroll target and the list's item count agree.
+    pub(crate) fn jump_to_file(&mut self, file: usize, cx: &mut Context<Self>) {
+        self.collapsed.remove(&file);
+        self.files_view = FilesView::Diff;
+        self.rebuild_diff_rows(cx);
+        if let Some(row) = files::file_header_row(&self.diff_rows, file) {
+            self.diff_list.scroll_to(gpui::ListOffset {
+                item_ix: row,
+                offset_in_item: px(0.),
+            });
+        }
+        cx.notify();
     }
 
     pub(crate) fn toggle_file(&mut self, ix: usize, cx: &mut Context<Self>) {
