@@ -28,6 +28,9 @@ inline commenting and pending reviews, merging, and the paired desktop
 - Background notifications: a WorkManager periodic check (15 min, network
   connected) posting to two channels, and the runtime permission request.
 - Every screen of the approved mockups, as amended (see *Decisions*).
+- Copying the paired desktop's settings (repositories, pull requests per
+  repository, feed preferences, stash default) onto the phone: offered right
+  after pairing, and from Settings.
 
 ## Non-scope
 
@@ -220,6 +223,46 @@ unconsumed older one.
 - The notification worker, in a cold process, gets the same container and
   core; `NotificationCheck` restores the session (which calls
   `setGitHubToken`) before `checkNotifications`, as the core requires.
+
+### Copying the desktop's settings
+
+- `RostrumBackend.desktopConfig()` returns a `DesktopConfigPreview`: the
+  desktop's repositories in its order, `added` (on the desktop, not here),
+  `removed` (here, dropped by copying), its pull requests per repository,
+  feed preferences and stash default, and `changesAnything`.
+  `copyDesktopConfig()` re-reads the desktop's settings (never applying a
+  stale preview), replaces the phone's, persists them and returns the new
+  `Settings`. Both fail with `NotPaired` when unpaired.
+- `DesktopConfigCopier` (in `ui/desktopconfig/`) is shared by both entry
+  points: `preview()`, and `copy(machine)` = `copyDesktopConfig()` then
+  `refreshFeed()` (a failed refresh does not undo the copy), returning "Copied
+  7 repositories from framework".
+- **After pairing** (`PairViewModel`, link or manual): the preview is read.
+  `changesAnything` → the Pair screen becomes `CopySettingsStep` ("Copy
+  settings from <machine>?", the desktop's repositories with added ones
+  marked "+", a "Removed from this phone" group, and a one-line summary of
+  the feed preferences), with "Copy settings" and "Keep this phone's"; Back
+  means keep. Nothing would change → straight on. The preview fails →
+  straight on, with a snackbar saying why. The "Copied …" and failure
+  messages go through `AppContainer.appMessages`, collected at the root, so
+  they survive the switch to the feed.
+- **First run**: pairing signs the app in with the desktop's token, which
+  would rebuild the navigation graph at the feed before the question could
+  be asked. `PairViewModel` therefore holds `OnboardingHold` when pairing
+  starts from a signed-out session; `RostrumApp` treats the session as
+  signed out while it is held, and the hold is released when the question is
+  answered, pairing fails, or the screen goes away. Pairing from Settings
+  (already signed in) never holds.
+- **From Settings**: under a connected desktop, "Copy settings from
+  <machine>" opens `CopySettingsSheet`, driven by
+  `DesktopConfigSheetViewModel` (`Closed` → `Loading` → `Ready(preview,
+  copy)` or `Failed(error)`). Ready and changing something: the replace
+  warning ("This replaces this phone's repositories, …"), "N repositories will
+  be removed from this phone." when any are, the preview, and "Replace
+  settings" / "Cancel". Nothing would change: "This phone already has
+  <machine>'s settings." A failed copy stays open with the error. After a
+  copy the sheet closes, shows "Copied …", and Settings reloads its list.
+  Settings also reloads whenever it resumes, e.g. back from pairing.
 
 ### Secrets at rest
 
@@ -423,6 +466,7 @@ What the core does not provide, and what the app does instead:
 | `data/ffi/CoreHandle.kt` | Opens the process's one `RostrumCore` (off the main thread), log sink, `onOpened` |
 | `data/ffi/FfiErrors.kt` | `RostrumException.toBackendError()`, `RemoteErrorCode` mapping, `ffiCall` |
 | `data/ffi/FfiLogSink.kt` | Core `tracing` records → logcat key=value lines |
+| `data/ffi/FfiDesktopConfig.kt` | `desktopConfig` / `copyDesktopConfig` over the core (pending the core update that adds them) |
 | `data/ffi/CommonMappings.kt`, `FeedMappings.kt`, `DetailMappings.kt`, `DiffMappings.kt`, `RemoteMappings.kt` | Generated records ↔ model |
 | `data/fake/FakeRostrumBackend.kt` | In-memory backend for tests and previews; `failNext(FakeCall, error)` |
 | `data/fake/FakeDesktop.kt` | The fake's desktop: pairing (the core's link format), remote, local jobs, sync all, handoffs |
@@ -446,6 +490,12 @@ What the core does not provide, and what the app does instead:
 | `ui/navigation/Destinations.kt` | `Destination`, `PrTab`, `TopLevel` |
 | `ui/navigation/RostrumNavHost.kt` | The graph; `openPullRequest`, `navigateTopLevel` |
 | `ui/navigation/AppLinks.kt` | `AppLink`, `AppLinks.parse`, `AppLinkInbox` |
+| `ui/navigation/OnboardingHold.kt` | Keeps the first-run screens while pairing asks about copying settings |
+| `ui/desktopconfig/DesktopConfigCopier.kt` | Preview, and copy + feed refresh, shared by pairing and Settings |
+| `ui/desktopconfig/DesktopConfigText.kt` | Titles, replace/removal copy, the preferences summary, repository rows |
+| `ui/desktopconfig/DesktopConfigPreviewView.kt` | The desktop's repositories ("+" for added), the removed group, the summary line |
+| `ui/onboarding/CopySettingsStep.kt` | The post-pairing question |
+| `ui/settings/DesktopConfigSheetViewModel.kt`, `CopySettingsSheet.kt` | Settings › "Copy settings from <machine>" |
 | `ui/navigation/BottomNavBar.kt` | Feed · Desktop · Settings with the badge |
 | `ui/common/UiState.kt` | `UiState`, `ActionState` |
 | `ui/common/ViewModels.kt` | `LocalAppContainer`, `rostrumViewModel` |
@@ -478,6 +528,10 @@ unless they start with `res/`. Tests mirror them under `src/test/`;
   all.
 - **The graph is keyed on sign-in**, so a signed-out user can never reach a
   signed-in screen through the back stack.
+- **Copying never applies a stale preview**: `copyDesktopConfig` re-reads
+  the desktop; the preview only decides whether and what to ask.
+- **The first-run graph waits for the copy question**, and the hold is always
+  released (answer, failure, or the Pair screen going away).
 - **A link is acted on once**: rotation does not replay it, and the inbox
   forgets it once the navigation host takes it.
 - **Merge and branch updates pass the rendered head** (`headSha`) so a push

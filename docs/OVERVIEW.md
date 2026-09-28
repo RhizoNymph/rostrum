@@ -60,7 +60,8 @@ Overview:
       The Android client. Jetpack Compose screens for the feed, a pull
       request (conversation, files, checks, branch), the single-file diff with
       inline comments and pending reviews, merging, settings, the paired
-      desktop, sign-in and pairing. ViewModels depend on one Kotlin interface,
+      desktop (including copying its settings onto the phone), sign-in and
+      pairing. ViewModels depend on one Kotlin interface,
       `RostrumBackend`, shaped after `RostrumCore`; secrets are sealed with an
       Android Keystore key; WorkManager runs the notification check.
 
