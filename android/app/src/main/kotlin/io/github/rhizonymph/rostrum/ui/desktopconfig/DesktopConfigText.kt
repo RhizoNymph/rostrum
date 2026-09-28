@@ -1,6 +1,7 @@
 package io.github.rhizonymph.rostrum.ui.desktopconfig
 
 import io.github.rhizonymph.rostrum.data.model.DesktopConfigPreview
+import io.github.rhizonymph.rostrum.data.model.Settings
 
 /** One repository of the desktop's list, and whether copying adds it here. */
 data class DesktopRepoRow(val repo: String, val added: Boolean)
@@ -36,6 +37,43 @@ object DesktopConfigText {
             if (preview.autostash) "stash on" else "stash off",
         ).joinToString(" · ")
     }
+
+    /**
+     * What copying would change here, one line each: repositories added and
+     * removed, a reorder (which reorders the feed, so the core counts it), and
+     * the preferences that differ. Without [phone]'s settings, a change the
+     * preview cannot explain is still admitted.
+     */
+    fun changeLines(preview: DesktopConfigPreview, phone: Settings?): List<String> = buildList {
+        if (preview.added.isNotEmpty()) add("Adds ${repositories(preview.added.size)}")
+        if (preview.removed.isNotEmpty()) add("Removes ${repositories(preview.removed.size)}")
+        val sameSet = preview.added.isEmpty() && preview.removed.isEmpty()
+        if (phone == null) {
+            if (preview.changesAnything && sameSet) {
+                add("Reorders your repositories or changes feed settings to match ${preview.machine}")
+            }
+            return@buildList
+        }
+        if (sameSet && phone.repos.map { it.lowercase() } != preview.repos.map { it.lowercase() }) {
+            add("Reorders your repositories to match ${preview.machine}")
+        }
+        val feed = phone.feed
+        val feedDiffers = feed.hideDrafts != preview.hideDrafts ||
+            feed.hideEmptyRepos != preview.hideEmptyRepos ||
+            feed.includeInvolved != preview.includeInvolved ||
+            feed.authors.map { it.lowercase() }.toSet() != preview.authors.map { it.lowercase() }.toSet()
+        val parts = buildList {
+            if (phone.prsPerRepo != preview.prsPerRepo) {
+                add("pull requests per repository (${phone.prsPerRepo} → ${preview.prsPerRepo})")
+            }
+            if (feedDiffers) add("feed filters")
+            if (phone.autostash != preview.autostash) add("the stash default")
+        }
+        if (parts.isNotEmpty()) add("Changes " + naturalJoin(parts))
+    }
+
+    private fun naturalJoin(parts: List<String>): String =
+        if (parts.size == 1) parts.single() else parts.dropLast(1).joinToString(", ") + " and " + parts.last()
 
     /** The desktop's repositories in its order, marking the ones this phone lacks. */
     fun repoRows(preview: DesktopConfigPreview): List<DesktopRepoRow> {

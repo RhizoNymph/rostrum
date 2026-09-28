@@ -4,6 +4,8 @@ import io.github.rhizonymph.rostrum.data.BackendError
 import io.github.rhizonymph.rostrum.data.Outcome
 import io.github.rhizonymph.rostrum.data.fake.FakeCall
 import io.github.rhizonymph.rostrum.data.model.DesktopConfigPreview
+import io.github.rhizonymph.rostrum.data.model.FeedPreferences
+import io.github.rhizonymph.rostrum.data.model.Settings
 import io.github.rhizonymph.rostrum.testing.orFail
 import io.github.rhizonymph.rostrum.testing.testBackend
 import kotlinx.coroutines.test.runTest
@@ -58,6 +60,56 @@ class DesktopConfigTest {
             )
         }
 
+        private val phone = Settings(
+            repos = listOf("a/one", "b/two", "c/three"),
+            refreshIntervalSecs = 60,
+            prsPerRepo = 25,
+            notifyNewPullRequests = false,
+            notifyReviewRequests = false,
+            autostash = true,
+            feed = FeedPreferences(hideDrafts = true, hideEmptyRepos = false, authors = listOf("ada-lin", "rhizonymph"), includeInvolved = true),
+        )
+
+        @Test
+        fun `changes list additions and removals`() {
+            assertEquals(
+                listOf("Adds 1 repository", "Removes 2 repositories"),
+                DesktopConfigText.changeLines(preview, phone.copy(repos = listOf("a/one", "b/two", "x/gone", "y/gone"))),
+            )
+        }
+
+        @Test
+        fun `a reorder alone is said as one`() {
+            val sameSet = preview.copy(added = emptyList(), removed = emptyList())
+            assertEquals(
+                listOf("Reorders your repositories to match framework"),
+                DesktopConfigText.changeLines(sameSet, phone.copy(repos = listOf("c/three", "a/one", "b/two"))),
+            )
+        }
+
+        @Test
+        fun `feed settings and the stash default are named when they differ`() {
+            val sameRepos = preview.copy(added = emptyList(), removed = emptyList())
+            assertEquals(
+                listOf("Changes pull requests per repository (10 → 25), feed filters and the stash default"),
+                DesktopConfigText.changeLines(
+                    sameRepos,
+                    phone.copy(prsPerRepo = 10, autostash = false, feed = phone.feed.copy(hideDrafts = false)),
+                ),
+            )
+            assertEquals(emptyList<String>(), DesktopConfigText.changeLines(sameRepos, phone))
+        }
+
+        @Test
+        fun `without this phone's settings, an unexplained change is still admitted`() {
+            val sameSet = preview.copy(added = emptyList(), removed = emptyList())
+            assertEquals(
+                listOf("Reorders your repositories or changes feed settings to match framework"),
+                DesktopConfigText.changeLines(sameSet, null),
+            )
+            assertEquals(emptyList<String>(), DesktopConfigText.changeLines(sameSet.copy(changesAnything = false), null))
+        }
+
         @Test
         fun `repository rows mark what copying adds`() {
             val rows = DesktopConfigText.repoRows(preview)
@@ -94,6 +146,16 @@ class DesktopConfigTest {
             val before = backend.feedRefreshes
             assertEquals(Outcome.Err(BackendError.DesktopUnreachable("refused")), DesktopConfigCopier(backend).copy("nymph-desk"))
             assertEquals(before, backend.feedRefreshes)
+        }
+
+        @Test
+        fun `the preview carries what copying would change on this phone`() = runTest {
+            val offer = DesktopConfigCopier(testBackend()).preview().orFail()
+            assertEquals("nymph-desk", offer.preview.machine)
+            assertEquals(
+                listOf("Adds 1 repository", "Removes 2 repositories", "Changes pull requests per repository (30 → 25), feed filters and the stash default"),
+                offer.changes,
+            )
         }
 
         @Test

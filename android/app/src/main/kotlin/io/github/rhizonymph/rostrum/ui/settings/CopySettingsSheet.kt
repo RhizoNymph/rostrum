@@ -78,7 +78,7 @@ private fun ReadyContent(state: CopySheetState.Ready, actions: CopySheetActions)
     }
     Text(DesktopConfigText.replaceBody(preview.machine), style = RostrumText.body, color = colors.textSecondary)
     state.removalWarning?.let { Text(it, style = RostrumText.label, color = colors.dangerText) }
-    DesktopConfigPreviewView(preview)
+    DesktopConfigPreviewView(preview, changes = state.changes)
     (state.copy as? ActionState.Failed)?.let { FieldError("Couldn't copy: ${it.error.describe()}") }
     Row(
         Modifier.fillMaxWidth(),

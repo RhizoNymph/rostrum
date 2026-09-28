@@ -5,6 +5,10 @@ import io.github.rhizonymph.rostrum.data.RostrumBackend
 import io.github.rhizonymph.rostrum.data.RostrumLog
 import io.github.rhizonymph.rostrum.data.logErr
 import io.github.rhizonymph.rostrum.data.model.DesktopConfigPreview
+import io.github.rhizonymph.rostrum.data.valueOrNull
+
+/** A preview with what copying would change on this phone, in words. */
+data class DesktopConfigOffer(val preview: DesktopConfigPreview, val changes: List<String>)
 
 /**
  * "Copy settings from the desktop", as both pairing and Settings run it: a
@@ -12,8 +16,14 @@ import io.github.rhizonymph.rostrum.data.model.DesktopConfigPreview
  * desktop's settings, so an old preview is never what gets applied.
  */
 class DesktopConfigCopier(private val backend: RostrumBackend) {
-    suspend fun preview(): Outcome<DesktopConfigPreview> =
-        backend.desktopConfig().logErr(TAG, "desktop_config_preview_failed")
+    suspend fun preview(): Outcome<DesktopConfigOffer> =
+        when (val preview = backend.desktopConfig().logErr(TAG, "desktop_config_preview_failed")) {
+            is Outcome.Err -> preview
+            is Outcome.Ok -> {
+                val phone = backend.settings().valueOrNull()
+                Outcome.Ok(DesktopConfigOffer(preview.value, DesktopConfigText.changeLines(preview.value, phone)))
+            }
+        }
 
     /**
      * Copy and refresh the feed. Returns the snackbar line. A failed refresh

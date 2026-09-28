@@ -71,7 +71,12 @@ data class ManualForm(
 }
 
 /** After pairing: the offer to copy the desktop's settings, and the copy in flight. */
-data class CopyOffer(val preview: DesktopConfigPreview, val action: ActionState = ActionState.Idle)
+data class CopyOffer(
+    val preview: DesktopConfigPreview,
+    /** What copying would change here, one line each. */
+    val changes: List<String> = emptyList(),
+    val action: ActionState = ActionState.Idle,
+)
 
 data class PairUiState(
     /** `null` when the screen was opened without a link. */
@@ -253,8 +258,8 @@ class PairViewModel(
     private suspend fun offerCopy(machine: String) {
         when (val preview = copier.preview()) {
             is Outcome.Ok ->
-                if (preview.value.changesAnything) {
-                    _state.update { it.copy(copy = CopyOffer(preview.value)) }
+                if (preview.value.preview.changesAnything) {
+                    _state.update { it.copy(copy = CopyOffer(preview.value.preview, preview.value.changes)) }
                 } else {
                     finish()
                 }

@@ -58,7 +58,7 @@ fun CopySettingsStep(offer: CopyOffer, actions: PairActions, modifier: Modifier 
                 style = RostrumText.body,
                 color = colors.textSecondary,
             )
-            DesktopConfigPreviewView(offer.preview)
+            DesktopConfigPreviewView(offer.preview, changes = offer.changes)
         }
         Column(
             Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),

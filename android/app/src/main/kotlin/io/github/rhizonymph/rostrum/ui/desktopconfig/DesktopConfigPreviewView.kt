@@ -32,9 +32,20 @@ import io.github.rhizonymph.rostrum.ui.theme.RostrumTheme
  * preferences that come with them.
  */
 @Composable
-fun DesktopConfigPreviewView(preview: DesktopConfigPreview, modifier: Modifier = Modifier) {
+fun DesktopConfigPreviewView(
+    preview: DesktopConfigPreview,
+    modifier: Modifier = Modifier,
+    changes: List<String> = emptyList(),
+) {
     val colors = RostrumTheme.colors
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (changes.isNotEmpty()) {
+            Column(Modifier.padding(horizontal = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                changes.forEach { line ->
+                    Text("• $line", style = RostrumText.meta, color = colors.textSecondary)
+                }
+            }
+        }
         SectionHeader("Repositories on ${preview.machine}", trailing = preview.repos.size.toString())
         RostrumCard(Modifier.fillMaxWidth()) {
             val rows = DesktopConfigText.repoRows(preview)

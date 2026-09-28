@@ -28,7 +28,12 @@ sealed interface CopySheetState {
 
     data class Failed(val error: BackendError) : CopySheetState
 
-    data class Ready(val preview: DesktopConfigPreview, val copy: ActionState = ActionState.Idle) : CopySheetState {
+    data class Ready(
+        val preview: DesktopConfigPreview,
+        /** What copying would change here, one line each. */
+        val changes: List<String> = emptyList(),
+        val copy: ActionState = ActionState.Idle,
+    ) : CopySheetState {
         /** "2 repositories will be removed from this phone.", when any are. */
         val removalWarning: String? get() = DesktopConfigText.removalWarning(preview.removed.size)
     }
@@ -78,7 +83,7 @@ class DesktopConfigSheetViewModel(backend: RostrumBackend) : ViewModel(), CopySh
         job?.cancel()
         job = viewModelScope.launch {
             _state.value = when (val preview = copier.preview()) {
-                is Outcome.Ok -> CopySheetState.Ready(preview.value)
+                is Outcome.Ok -> CopySheetState.Ready(preview.value.preview, preview.value.changes)
                 is Outcome.Err -> CopySheetState.Failed(preview.error)
             }
         }
