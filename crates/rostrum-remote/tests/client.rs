@@ -85,6 +85,10 @@ fn respond(path: &str, head: &str) -> (&'static str, String) {
             "401 Unauthorized",
             r#"{"code":"unauthorized","message":"no token"}"#.to_string(),
         ),
+        "/api/v1/config" => (
+            "200 OK",
+            r#"{"repos":[{"owner":"RhizoNymph","name":"rostrum"}],"prs_per_repo":30,"hide_drafts":false,"hide_empty_repos":true,"authors":["RhizoNymph"],"include_involved":true,"autostash":false}"#.to_string(),
+        ),
         "/api/v1/pair" => (
             "410 Gone",
             r#"{"code":"pairing_code_expired","message":"that code has expired"}"#.to_string(),
@@ -191,4 +195,19 @@ async fn api_errors_arrive_with_their_code() {
     };
     assert_eq!(api.code, rostrum_remote::ApiErrorCode::PairingCodeExpired);
     assert_eq!(api.message, "that code has expired");
+}
+
+#[tokio::test]
+async fn the_desktop_config_arrives_typed() {
+    let (port, fingerprint) = serve().await;
+    let endpoint = Endpoint::new(vec![host("127.0.0.1")], port, fingerprint).expect("endpoint");
+    let client = RemoteClient::new(endpoint, None).expect("client");
+    let config = client.config().await.expect("config");
+    assert_eq!(
+        config.repos,
+        vec![rostrum_core::RepoId::new("RhizoNymph", "rostrum")]
+    );
+    assert_eq!(config.prs_per_repo, 30);
+    assert_eq!(config.authors[0].as_str(), "rhizonymph");
+    assert!(config.include_involved);
 }
