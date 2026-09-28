@@ -13,12 +13,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
@@ -36,6 +41,7 @@ import androidx.compose.ui.unit.sp
 import io.github.rhizonymph.rostrum.data.model.MdBlock
 import io.github.rhizonymph.rostrum.data.model.MdBlockKind
 import io.github.rhizonymph.rostrum.data.model.MdSpan
+import io.github.rhizonymph.rostrum.ui.components.RostrumIcons
 import io.github.rhizonymph.rostrum.ui.theme.RostrumColors
 import io.github.rhizonymph.rostrum.ui.theme.RostrumFonts
 import io.github.rhizonymph.rostrum.ui.theme.RostrumText
@@ -120,13 +126,13 @@ private fun Block(block: MdBlock, style: TextStyle, color: Color, colors: Rostru
             }
         }
         is MdBlockKind.ListItem -> Row(Modifier.padding(start = indent.dp)) {
-            val marker = when {
-                kind.checked == true -> "☑"
-                kind.checked == false -> "☐"
-                kind.ordered -> "${kind.number}."
-                else -> "•"
+            val checked = kind.checked
+            if (checked != null) {
+                TaskBox(checked, colors, Modifier.padding(top = 3.dp, end = 8.dp))
+            } else {
+                val marker = if (kind.ordered) "${kind.number}." else "•"
+                Text(marker, style = style, color = colors.textMuted, modifier = Modifier.widthIn(min = 18.dp))
             }
-            Text(marker, style = style, color = colors.textMuted, modifier = Modifier.widthIn(min = 18.dp))
             Text(spansToAnnotated(block.spans, colors), style = style, color = color)
         }
         MdBlockKind.Rule -> Box(Modifier.fillMaxWidth().height(1.dp).background(colors.border))
@@ -136,6 +142,21 @@ private fun Block(block: MdBlock, style: TextStyle, color: Color, colors: Rostru
             color = color,
         )
         is MdBlockKind.TableRow -> Unit
+    }
+}
+
+/** A task-list checkbox, drawn (not a glyph, which some fonts render as emoji). */
+@Composable
+private fun TaskBox(checked: Boolean, colors: RostrumColors, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(4.dp)
+    Box(
+        modifier = modifier
+            .size(14.dp)
+            .then(if (checked) Modifier.background(colors.accent, shape) else Modifier.border(1.5.dp, colors.textSubtle, shape))
+            .semantics { stateDescription = if (checked) "done" else "not done" },
+        contentAlignment = Alignment.Center,
+    ) {
+        if (checked) Icon(RostrumIcons.CheckBold, contentDescription = null, tint = colors.onAccent, modifier = Modifier.size(10.dp))
     }
 }
 
