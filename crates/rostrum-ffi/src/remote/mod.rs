@@ -40,9 +40,18 @@ use crate::{
 /// client, in memory only.
 pub(crate) struct RemoteSession {
     client: Arc<RemoteClient>,
+    /// The device token `client` presents, kept so a re-pairing with the
+    /// same desktop can name it and have the desktop drop the old record.
+    token: DeviceToken,
 }
 
 impl RemoteSession {
+    /// This session's device token, if it belongs to the desktop presenting
+    /// `fingerprint` — the token a new pairing with that desktop replaces.
+    fn token_for(&self, fingerprint: CertFingerprint) -> Option<DeviceToken> {
+        (self.client.endpoint().fingerprint() == fingerprint).then(|| self.token.clone())
+    }
+
     fn status(&self) -> RemoteStatus {
         let endpoint = self.client.endpoint();
         RemoteStatus::Paired {
@@ -111,16 +120,33 @@ impl RostrumCore {
                 supported: API_VERSION,
             });
         }
-        let response = pairing.pair(&PairRequest { code, device_name }).await?;
+        let fingerprint = endpoint.fingerprint();
+        let replaces = self
+            .actor
+            .call(move |state| {
+                state
+                    .remote
+                    .as_ref()
+                    .and_then(|remote| remote.token_for(fingerprint))
+            })
+            .await?;
+        let response = pairing
+            .pair(&PairRequest {
+                code,
+                device_name,
+                replaces,
+            })
+            .await?;
         let serialised = serde_json::to_string(&endpoint).map_err(|error| {
             RostrumError::internal(format!("could not serialise the endpoint: {error}"))
         })?;
-        let client = Arc::new(RemoteClient::new(endpoint, Some(response.token.clone()))?);
+        let token = response.token.clone();
+        let client = Arc::new(RemoteClient::new(endpoint, Some(token.clone()))?);
         let github = response.github.as_ref().map(github_token);
         let handed_over = github.as_ref().map(|token| token.token.clone());
         self.actor
             .try_call(move |state| {
-                state.remote = Some(RemoteSession { client });
+                state.remote = Some(RemoteSession { client, token });
                 // A handed-over token is used only when none is set: a token
                 // the user pasted deliberately is not replaced behind them.
                 if state.session.client().is_none()
@@ -238,10 +264,10 @@ impl RostrumCore {
         let endpoint: Endpoint = serde_json::from_str(&endpoint)
             .map_err(|error| RostrumError::invalid(format!("not a saved endpoint: {error}")))?;
         let token = DeviceToken::parse(device_token.trim()).map_err(invalid)?;
-        let client = Arc::new(RemoteClient::new(endpoint, Some(token))?);
+        let client = Arc::new(RemoteClient::new(endpoint, Some(token.clone()))?);
         self.actor
             .call(move |state| {
-                state.remote = Some(RemoteSession { client });
+                state.remote = Some(RemoteSession { client, token });
                 state.remote_status()
             })
             .await
