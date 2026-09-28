@@ -187,6 +187,7 @@ async fn api_errors_arrive_with_their_code() {
         .pair(&PairRequest {
             code: PairingCode::parse("K7QX-M2PD").expect("code"),
             device_name: "test phone".into(),
+            replaces: None,
         })
         .await
         .expect_err("expired");
