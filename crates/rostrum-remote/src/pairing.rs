@@ -210,6 +210,11 @@ pub struct PairRequest {
     pub code: PairingCode,
     /// Shown on the desktop page next to the revoke button, e.g. "Pixel 8".
     pub device_name: String,
+    /// The token this phone held for this desktop before, if any; the
+    /// desktop drops that device when the pairing succeeds. Absent from
+    /// older phones' requests, which read as `None`.
+    #[serde(default)]
+    pub replaces: Option<DeviceToken>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -358,6 +363,35 @@ mod tests {
             CertFingerprint::of_der(b"c").to_base64url()
         );
         assert!(serde_json::from_str::<Endpoint>(&json).is_err());
+    }
+
+    #[test]
+    fn a_pair_request_without_replaces_reads_as_none() {
+        let request: PairRequest =
+            serde_json::from_str(r#"{"code": "K7QX-M2PD", "device_name": "Pixel"}"#)
+                .expect("parses");
+        assert_eq!(request.replaces, None);
+        assert_eq!(request.device_name, "Pixel");
+    }
+
+    #[test]
+    fn a_pair_request_carries_the_token_it_replaces() {
+        let old = DeviceToken::from_bytes([4; 32]);
+        let request = PairRequest {
+            code: PairingCode::parse("K7QX-M2PD").expect("code"),
+            device_name: "Pixel".into(),
+            replaces: Some(old.clone()),
+        };
+        let json = serde_json::to_value(&request).expect("serialises");
+        assert_eq!(json["replaces"], old.expose());
+        let back: PairRequest = serde_json::from_value(json).expect("parses");
+        assert_eq!(back, request);
+        assert!(
+            !format!("{request:?}").contains(old.expose()),
+            "the old token is redacted in Debug"
+        );
+        let bad = serde_json::json!({"code": "K7QXM2PD", "device_name": "x", "replaces": "nope"});
+        assert!(serde_json::from_value::<PairRequest>(bad).is_err());
     }
 
     #[test]

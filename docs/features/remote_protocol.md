@@ -45,6 +45,13 @@ single-use, short-lived and throttled by the server; parsing folds `O`→`0` and
 `Authorization: Bearer` on every later request. The server stores only the
 token's SHA-256 (`TokenHash`) and compares in constant time.
 
+A phone that pairs again with a desktop it was paired with before sends the
+old token as `PairRequest::replaces` (`#[serde(default)]`, so an older phone's
+request without it still parses). The desktop drops the device holding that
+token once the new pairing succeeds, so a re-pair replaces the old entry rather
+than listing the phone twice; a `replaces` that matches nothing is ignored.
+The old token is a credential like any other and is redacted in `Debug`.
+
 When a code is typed by hand there is no link to carry a fingerprint. The
 client's `probe` connects without pinning, records the certificate it saw, and
 returns it; the phone shows `CertFingerprint::short()` (`4F2A · 91C0 · 7E3B`)
