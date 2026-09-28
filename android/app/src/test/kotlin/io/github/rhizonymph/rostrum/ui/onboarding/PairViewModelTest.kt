@@ -16,6 +16,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -53,6 +54,9 @@ class PairViewModelTest {
         advanceUntilIdle()
         vm.pairWithLink()
         advanceUntilIdle()
+        // The fake desktop's settings differ from the phone's, so it asks first.
+        assertNotNull(vm.state.value.copy)
+        vm.keepPhoneSettings()
         assertTrue(vm.state.value.paired)
         assertInstanceOf(DesktopLink.Paired::class.java, ready(session).desktop)
         assertInstanceOf(GitHubAuth.SignedIn::class.java, ready(session).github)
@@ -70,7 +74,7 @@ class PairViewModelTest {
         assertFalse(vm.state.value.paired)
         vm.pairWithLink()
         advanceUntilIdle()
-        assertTrue(vm.state.value.paired)
+        assertNotNull(vm.state.value.copy)
     }
 
     @Test
@@ -104,6 +108,7 @@ class PairViewModelTest {
         assertEquals("4F2A · 91C0 · 7E3B", probed.probe.fingerprintShort)
         vm.pairManual()
         advanceUntilIdle()
+        vm.keepPhoneSettings()
         assertTrue(vm.state.value.paired)
         assertInstanceOf(DesktopLink.Paired::class.java, ready(session).desktop)
     }

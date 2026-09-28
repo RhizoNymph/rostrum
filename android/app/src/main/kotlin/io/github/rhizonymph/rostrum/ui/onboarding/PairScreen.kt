@@ -38,6 +38,11 @@ fun PairScreen(
     modifier: Modifier = Modifier,
 ) {
     val colors = RostrumTheme.colors
+    val offer = state.copy
+    if (offer != null) {
+        CopySettingsStep(offer, actions, modifier)
+        return
+    }
     Column(modifier.fillMaxSize().background(colors.bg).imePadding()) {
         BackTopBar(onBack = onBack) {
             Text("Pair with desktop", style = RostrumText.sheetTitle, color = colors.text, modifier = Modifier.semantics { heading() })

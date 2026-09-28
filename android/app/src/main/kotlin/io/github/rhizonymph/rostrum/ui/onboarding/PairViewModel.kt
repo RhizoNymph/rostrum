@@ -9,7 +9,14 @@ import io.github.rhizonymph.rostrum.data.RostrumLog
 import io.github.rhizonymph.rostrum.data.model.DesktopProbe
 import io.github.rhizonymph.rostrum.data.model.PairingPreview
 import io.github.rhizonymph.rostrum.data.session.SessionRepository
+import io.github.rhizonymph.rostrum.data.describe
+import io.github.rhizonymph.rostrum.data.model.DesktopConfigPreview
+import io.github.rhizonymph.rostrum.data.session.isSignedIn
 import io.github.rhizonymph.rostrum.ui.common.ActionState
+import io.github.rhizonymph.rostrum.ui.common.Messages
+import io.github.rhizonymph.rostrum.ui.common.running
+import io.github.rhizonymph.rostrum.ui.desktopconfig.DesktopConfigCopier
+import io.github.rhizonymph.rostrum.ui.navigation.OnboardingHold
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -63,12 +70,17 @@ data class ManualForm(
         get() = probe?.compatible == true && isCompletePairingCode(code) && step !is ManualStep.Pairing
 }
 
+/** After pairing: the offer to copy the desktop's settings, and the copy in flight. */
+data class CopyOffer(val preview: DesktopConfigPreview, val action: ActionState = ActionState.Idle)
+
 data class PairUiState(
     /** `null` when the screen was opened without a link. */
     val link: LinkState?,
     val manualOpen: Boolean,
     val manual: ManualForm = ManualForm(),
-    /** Pairing finished; the route leaves the screen. */
+    /** Paired, and the desktop's settings differ: ask before going on. */
+    val copy: CopyOffer? = null,
+    /** Pairing (and the copy question) finished; the route leaves the screen. */
     val paired: Boolean = false,
 )
 
@@ -80,6 +92,8 @@ interface PairActions {
     fun onCodeChange(code: String)
     fun probe()
     fun pairManual()
+    fun copySettings()
+    fun keepPhoneSettings()
 }
 
 object NoPairActions : PairActions {
@@ -90,6 +104,8 @@ object NoPairActions : PairActions {
     override fun onCodeChange(code: String) = Unit
     override fun probe() = Unit
     override fun pairManual() = Unit
+    override fun copySettings() = Unit
+    override fun keepPhoneSettings() = Unit
 }
 
 /**
@@ -102,7 +118,10 @@ class PairViewModel(
     private val backend: RostrumBackend,
     private val session: SessionRepository,
     private val link: String?,
+    private val hold: OnboardingHold = OnboardingHold(),
+    private val appMessages: Messages = Messages(),
 ) : ViewModel(), PairActions {
+    private val copier = DesktopConfigCopier(backend)
     private val _state = MutableStateFlow(
         PairUiState(link = if (link == null) null else LinkState.Reading, manualOpen = false),
     )
@@ -128,15 +147,17 @@ class PairViewModel(
         val preview = _state.value.link as? LinkState.Preview ?: return
         if (preview.pairing == ActionState.Running) return
         setLink(preview.copy(pairing = ActionState.Running))
+        holdIfFirstRun()
         viewModelScope.launch {
             when (val result = session.pairWithLink(uri)) {
                 is Outcome.Ok -> {
                     RostrumLog.i(TAG, "paired_by_link", "machine" to result.value.machine.name)
                     setLink(preview.copy(pairing = ActionState.Idle))
-                    _state.update { it.copy(paired = true) }
+                    offerCopy(result.value.machine.name)
                 }
                 is Outcome.Err -> {
                     RostrumLog.w(TAG, "pair_by_link_failed", "error" to result.error::class.simpleName)
+                    hold.release()
                     setLink(preview.copy(pairing = ActionState.Failed(result.error)))
                 }
             }
@@ -202,19 +223,76 @@ class PairViewModel(
         val probe = form.probe ?: return
         if (!form.canPair) return
         updateManual { it.copy(step = ManualStep.Pairing(probe)) }
+        holdIfFirstRun()
         viewModelScope.launch {
             when (val result = session.pairManual(probe.host, probe.port, probe.fingerprint, form.code)) {
                 is Outcome.Ok -> {
                     RostrumLog.i(TAG, "paired_by_hand", "machine" to result.value.machine.name)
                     updateManual { it.copy(step = ManualStep.Probed(probe)) }
-                    _state.update { it.copy(paired = true) }
+                    offerCopy(result.value.machine.name)
                 }
                 is Outcome.Err -> {
                     RostrumLog.w(TAG, "pair_by_hand_failed", "error" to result.error::class.simpleName)
+                    hold.release()
                     updateManual { it.copy(step = ManualStep.PairFailed(probe, result.error)) }
                 }
             }
         }
+    }
+
+    /**
+     * On first run, pairing signs the app in, which would swap in the
+     * signed-in screens at once; hold them until the copy question is
+     * answered. From Settings (already signed in) nothing needs holding.
+     */
+    private fun holdIfFirstRun() {
+        if (!session.state.value.isSignedIn) hold.hold()
+    }
+
+    /** Ask about copying the desktop's settings, unless it would change nothing or can't be read. */
+    private suspend fun offerCopy(machine: String) {
+        when (val preview = copier.preview()) {
+            is Outcome.Ok ->
+                if (preview.value.changesAnything) {
+                    _state.update { it.copy(copy = CopyOffer(preview.value)) }
+                } else {
+                    finish()
+                }
+            is Outcome.Err -> {
+                appMessages.send("Paired with $machine. Couldn't read its settings: ${preview.error.describe()}")
+                finish()
+            }
+        }
+    }
+
+    override fun copySettings() {
+        val offer = _state.value.copy ?: return
+        if (offer.action.running) return
+        _state.update { it.copy(copy = offer.copy(action = ActionState.Running)) }
+        viewModelScope.launch {
+            when (val copied = copier.copy(offer.preview.machine)) {
+                is Outcome.Ok -> {
+                    appMessages.send(copied.value)
+                    finish()
+                }
+                is Outcome.Err -> _state.update { it.copy(copy = offer.copy(action = ActionState.Failed(copied.error))) }
+            }
+        }
+    }
+
+    override fun keepPhoneSettings() {
+        if (_state.value.copy?.action?.running == true) return
+        RostrumLog.i(TAG, "desktop_config_kept_phone")
+        finish()
+    }
+
+    private fun finish() {
+        hold.release()
+        _state.update { it.copy(copy = null, paired = true) }
+    }
+
+    override fun onCleared() {
+        hold.release()
     }
 
     private companion object {

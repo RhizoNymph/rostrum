@@ -87,6 +87,9 @@ class SettingsViewModel(
         reload()
     }
 
+    /** Reload without the loading state, e.g. after the desktop's settings were copied. */
+    fun refreshContent() = reload()
+
     private fun reload() {
         loadJob?.cancel()
         loadJob = viewModelScope.launch { load() }

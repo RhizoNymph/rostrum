@@ -47,6 +47,7 @@ fun SettingsScreen(
     onOpenDesktop: () -> Unit,
     onPairDesktop: () -> Unit,
     modifier: Modifier = Modifier,
+    onCopySettings: () -> Unit = {},
 ) {
     val colors = RostrumTheme.colors
     var confirmSignOut by rememberSaveable { mutableStateOf(false) }
@@ -84,7 +85,7 @@ fun SettingsScreen(
                         onAdd = actions::addRepo,
                         onRemove = actions::removeRepo,
                     )
-                    DesktopSection(data.desktop, onOpenDesktop = onOpenDesktop, onPairDesktop = onPairDesktop)
+                    DesktopSection(data.desktop, onOpenDesktop = onOpenDesktop, onPairDesktop = onPairDesktop, onCopySettings = onCopySettings)
                     SyncSection(
                         refreshIntervalSecs = data.refreshIntervalSecs,
                         notifyNewPullRequests = data.notifyNewPullRequests,

@@ -15,7 +15,9 @@ import io.github.rhizonymph.rostrum.data.valueOrNull
 import io.github.rhizonymph.rostrum.notifications.NotificationPoster
 import io.github.rhizonymph.rostrum.notifications.NotificationScheduler
 import io.github.rhizonymph.rostrum.notifications.WorkManagerBackgroundWork
+import io.github.rhizonymph.rostrum.ui.common.Messages
 import io.github.rhizonymph.rostrum.ui.navigation.AppLinkInbox
+import io.github.rhizonymph.rostrum.ui.navigation.OnboardingHold
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -53,6 +55,12 @@ class AppContainer(private val app: Application) {
 
     val session = SessionRepository(backend, secrets, deviceName)
     val links = AppLinkInbox()
+
+    /** Holds the first-run screens while pairing asks about copying settings. */
+    val onboardingHold = OnboardingHold()
+
+    /** Snackbar messages that must outlive the screen that sent them (pairing → feed). */
+    val appMessages = Messages()
     val notificationPoster = NotificationPoster(app)
     val notificationScheduler = NotificationScheduler(WorkManagerBackgroundWork(app))
 

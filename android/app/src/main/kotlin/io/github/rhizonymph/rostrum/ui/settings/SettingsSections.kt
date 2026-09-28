@@ -212,6 +212,7 @@ fun DesktopSection(
     onOpenDesktop: () -> Unit,
     onPairDesktop: () -> Unit,
     modifier: Modifier = Modifier,
+    onCopySettings: () -> Unit = {},
 ) {
     val colors = RostrumTheme.colors
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -233,6 +234,19 @@ fun DesktopSection(
                             StatusDot(dot)
                             Text(status, style = RostrumText.caption, color = colors.textMuted)
                         }
+                    }
+                }
+            }
+            if (desktop is DesktopSummary.Connected) {
+                CardDivider()
+                ChevronRow(onClick = onCopySettings) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Copy settings from ${desktop.machine.name}", style = RostrumText.rowTitle, color = colors.text)
+                        Text(
+                            "Repositories, feed filters and stash default",
+                            style = RostrumText.caption,
+                            color = colors.textMuted,
+                        )
                     }
                 }
             }

@@ -1,5 +1,6 @@
 package io.github.rhizonymph.rostrum.ui.onboarding
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -21,12 +22,14 @@ fun PairRoute(
     modifier: Modifier = Modifier,
 ) {
     val viewModel = rostrumViewModel(key = "pair:${link.orEmpty()}") { container ->
-        PairViewModel(container.backend, container.session, link)
+        PairViewModel(container.backend, container.session, link, container.onboardingHold, container.appMessages)
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val paired by rememberUpdatedState(onPaired)
     LaunchedEffect(state.paired) {
         if (state.paired) paired()
     }
+    // Back on the copy question means "keep this phone's settings".
+    BackHandler(enabled = state.copy != null) { viewModel.keepPhoneSettings() }
     PairScreen(state = state, actions = viewModel, onBack = onBack, modifier = modifier)
 }

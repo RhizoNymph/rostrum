@@ -30,6 +30,7 @@ import io.github.rhizonymph.rostrum.data.session.GitHubAuth
 import io.github.rhizonymph.rostrum.data.session.SessionState
 import io.github.rhizonymph.rostrum.di.AppContainer
 import io.github.rhizonymph.rostrum.notifications.RequestNotificationPermissionOnce
+import io.github.rhizonymph.rostrum.ui.common.CollectMessages
 import io.github.rhizonymph.rostrum.ui.common.LocalAppContainer
 import io.github.rhizonymph.rostrum.ui.common.LocalSnackbarHostState
 import io.github.rhizonymph.rostrum.ui.common.rostrumViewModel
@@ -58,10 +59,14 @@ fun RostrumApp(container: AppContainer) {
         LocalSnackbarHostState provides snackbar,
     ) {
         val session by container.session.state.collectAsStateWithLifecycle()
+        val onboardingHeld by container.onboardingHold.held.collectAsStateWithLifecycle()
+        CollectMessages(container.appMessages.flow)
         when (val state = session) {
             SessionState.Restoring -> Splash()
             is SessionState.Ready -> {
-                val signedIn = state.github is GitHubAuth.SignedIn
+                // A first-run pairing that is still asking about copying settings
+                // keeps the signed-out graph (and its Pair screen) on screen.
+                val signedIn = state.github is GitHubAuth.SignedIn && !onboardingHeld
                 key(signedIn) {
                     MainScaffold(rememberNavController(), signedIn, container.links, snackbar)
                 }
