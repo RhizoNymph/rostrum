@@ -109,6 +109,13 @@ impl RostrumCore {
         Ok(Arc::new(Self { actor, db }))
     }
 
+    /// Close the SQLite pool, flushing it, before the profile directory under
+    /// it is deleted. The core is unusable for storage afterwards; the
+    /// registry drops it at the same time.
+    pub(crate) async fn close_storage(&self) {
+        self.db.close().await;
+    }
+
     /// Map a GitHub failure, noting a rejected token in the session first so
     /// `github_status` reports it.
     pub(crate) async fn github_failed(&self, error: GitHubError) -> RostrumError {

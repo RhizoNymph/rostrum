@@ -9,8 +9,12 @@ each.
 
 ## Scope
 
-- One UniFFI object, `RostrumCore`, opened over an app-private data
-  directory, owning the settings file, the SQLite cache and drafts, the
+- Profiles: a `ProfileRegistry` holding one profile per paired desktop (or
+  per bare GitHub token), each with its own `RostrumCore` — its own
+  repositories, feed filters, cache, drafts, remote and GitHub account — and
+  which profile is active.
+- One UniFFI object per profile, `RostrumCore`, opened over that profile's
+  data directory, owning the settings file, the SQLite cache and drafts, the
   GitHub session and the paired desktop.
 - The GitHub session: a token handed in by Kotlin (pasted, or from the
   desktop), its verification, and the viewer it belongs to.
@@ -62,6 +66,7 @@ Kotlin names are camelCase; every call that touches state or I/O is
 
 | Area | Methods |
 |---|---|
+| profiles | `ProfileRegistry.open(rootDir)` (not suspend), `profiles()`, `activeProfile()`, `setActiveProfile(id)`, `renameProfile(id, label)`, `setProfileLogin(id, login?)` (not suspend); `core(id) → RostrumCore`, `createTokenProfile(label)`, `pairDesktopWithLink(uri, deviceName) → ProfilePairing`, `pairDesktopManual(host, port, fingerprint, code, deviceName) → ProfilePairing`, `removeProfile(id)`; `parsePairingLink(uri)` (not suspend) and `probeDesktop(host, port)` for the Pair screen before any profile exists — the same code as the core's |
 | lifecycle | `RostrumCore.open(dataDir)`, `warnings()` |
 | session | `setGithubToken(token?) → GitHubStatus`, `githubStatus()`, `viewer() → UserRef` |
 | settings | `settings()`, `addRepo(input) → "owner/name"`, `removeRepo(repo) → Boolean`, `setRefreshInterval(s)`, `setPrsPerRepo(n)`, `setNotifications(newPullRequests, reviewRequests)`, `setAutostash(b)` — setters return `Settings` |
@@ -285,6 +290,67 @@ request (a review request wins). A repository's first observation — and the
 first check ever — is a baseline and reports nothing. `markNotificationsSeen`
 folds without reporting, for when the user has looked at the feed.
 
+### Profiles
+
+Each profile is a complete core data directory; the registry is the list of
+them.
+
+```
+<root>/profiles.json          registry: profiles, active id (no secrets)
+<root>/profiles/<id>/         one core's data dir: config.json, cache.db
+```
+
+- **Records.** `ProfileInfo { id, label, kind, githubLogin?, createdAtMs,
+  lastUsedMs }`. The id is 16 random hex characters (`getrandom`); Kotlin
+  keys the profile's Keystore secrets by it. `kind` is `Desktop { machine,
+  fingerprintShort }` or `TokenOnly`. The file stores the desktop's *full*
+  certificate fingerprint (public — every pairing link carries it), which is
+  what identifies a desktop across re-pairings.
+- **Persistence.** Every edit is made on a copy, written to
+  `profiles.json.tmp` and renamed over the file, and only then adopted in
+  memory, so memory and disk never disagree and a crash leaves the old or
+  the new registry, never half. A missing file is an empty registry; a
+  malformed one is a `Storage` error rather than a fresh start, which would
+  orphan the directories beside it. An active id naming no profile is
+  dropped on load. `profiles()` is most recently used first (ties: newest
+  created, then id).
+- **Cores.** `core(id)` opens a profile's `RostrumCore` on first use and
+  returns the same `Arc` after. The open-cores map is behind an async mutex
+  held across opening and removal, and existence is re-checked under it, so
+  one directory never has two cores and a profile removed meanwhile is not
+  reopened. Kotlin never calls `RostrumCore.open` on a profile directory
+  itself (`open` stays exported for single-core use and tests).
+- **Pairing.** `pairDesktopWithLink` / `pairDesktopManual` look for a
+  profile with the endpoint's fingerprint. If there is one, they pair into
+  its core (`created = false`; the machine name is refreshed, the user's
+  label kept). Otherwise they open a core in a fresh directory, pair it, and
+  register the profile only after the pairing succeeded (label = machine
+  name); on any failure the core's storage is closed and the directory
+  deleted, so a failed pairing leaves nothing behind. Pairings run one at a
+  time, so the same desktop paired twice at once cannot make two profiles.
+  Pairing never changes the active profile. The GitHub token handover in
+  `PairingResult` works as for a single core: it is applied to that
+  profile's core when it has none, and Kotlin stores it under the profile id.
+- **Before any profile.** The registry's `parsePairingLink` and
+  `probeDesktop` call the same functions as the core's
+  (`remote::pairing_preview`, `remote::probe_desktop_at`), so the Pair screen
+  can read a link and probe a desktop on first run; neither creates a profile
+  or touches disk.
+- **Removal.** `removeProfile` unpairs on the desktop when the profile's core
+  is open with a remote (any failure — unreachable, revoked — is logged and
+  ignored), closes the core's SQLite pool, deletes the directory, removes the
+  record, and clears `active` if it pointed there. Kotlin deletes the
+  profile's secrets and drops any `RostrumCore` it still holds.
+- **Cleanup.** Opening the registry deletes directories under `profiles/`
+  that are shaped like an id but registered to no profile — what a crash
+  between creating a directory and registering it would leave.
+- **The active profile and notifications.** The feed shows the active
+  profile's core. Background notifications cover every profile: the
+  WorkManager job walks `profiles()`, hands each core its token, and calls
+  `checkNotifications` on each; each profile keeps its own seen set.
+- **Legacy data** from the single-core layout is not migrated; Kotlin wipes
+  it.
+
 ### Secrets
 
 The GitHub token and the device token arrive from Kotlin, live in memory
@@ -337,7 +403,10 @@ the data directory for every secret that passed through.
 | `src/remote/refs.rs` | `PrRef` building for jobs and sync-all | `pr_ref`, `sync_refs` |
 | `src/remote/config.rs` | Copying the desktop's config: preview diff, apply, exports | `DesktopConfigPreview`, `preview`, `apply` |
 | `src/notifications.rs` | Notification check and event policy | `NotificationEvent`, `NotificationKind`, `events` |
+| `src/profiles/mod.rs` | The registry object: cores per profile, pairing into profiles, removal | `ProfileRegistry`, `ProfileInfo`, `ProfileKind`, `ProfilePairing` |
+| `src/profiles/store.rs` | `profiles.json`: records, atomic save/load, ordering, ids | `RegistryFile`, `ProfileRecord`, `new_id` |
 | `src/logging.rs` | tracing → Kotlin | `LogSink`, `LogRecord`, `install_log_sink` |
+| `tests/profiles.rs` | Registry persistence, ordering, switching, isolation, removal, and pairing into profiles against a TLS stand-in | — |
 | `tests/remote_pairing.rs` | Pairing, every desktop call, and copying the desktop's config against a TLS stand-in | — |
 | `tests/github_flows.rs` | Refresh, probes, notifications, mutations against a GitHub stand-in | — |
 | `tests/core_offline.rs` | Cache-only flows and restarts | — |
@@ -377,6 +446,11 @@ against the library `cargo test` builds and checks the surface.
 
 ## Invariants
 
+- **One core per profile directory.** Cores come from `ProfileRegistry::core`,
+  which opens each once and never reopens a removed profile.
+- **A profile exists only after its pairing succeeded**, and a failed or
+  interrupted creation leaves no directory behind.
+- **`profiles.json` holds no secret**, and is always a complete file.
 - **Copying the desktop's config touches only what it names.** Repositories,
   pull requests per repository, the four feed preferences and autostash; the
   refresh interval, notification switches, search query and pending drafts
