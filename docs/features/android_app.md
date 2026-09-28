@@ -15,8 +15,12 @@ inline commenting and pending reviews, merging, and the paired desktop
 - `RostrumBackend`: the Kotlin interface every ViewModel depends on, shaped
   after `RostrumCore` in `rostrum-ffi`, with the domain types it speaks
   (`data/model/`), its typed error (`BackendError`) and result (`Outcome`).
-- `FakeRostrumBackend`: an in-memory backend with the mockups' sample data.
-  Phase 1 wires it into the production graph so the app runs end to end.
+- `FfiRostrumBackend`: the production backend, over the generated
+  `uniffi.rostrum_ffi.RostrumCore` (one core per process), with record and
+  error mappings in `data/ffi/`.
+- `FakeRostrumBackend`: an in-memory backend with the mockups' sample data,
+  for unit tests and `@Preview`s only; nothing in the production graph uses
+  it.
 - Secrets at rest: an Android Keystore AES-GCM key sealing each secret into
   an app-private file; `SessionRepository` restores them into the backend at
   start-up and persists what sign-in and pairing return.
@@ -27,21 +31,25 @@ inline commenting and pending reviews, merging, and the paired desktop
 
 ## Non-scope
 
-- **The adapter over the generated bindings.** Phase 2 implements
-  `RostrumBackend` over `uniffi.rostrum_ffi.RostrumCore` and removes the fake
-  from the production graph. See *Mapping to rostrum-ffi*.
+- **GitHub Enterprise.** The core talks to github.com only; sign-in says so,
+  and a desktop token for another host is refused.
+- **Anything the core does not provide is not shown**: desktop-derived feed
+  chips, code excerpts on conversation threads, pushed-commit events,
+  worktree counts, conflicted-file lists, handoff descriptions, thread
+  resolution, the lines between hunks, required-approval counts, and a
+  per-file "viewed" state that survives the screen.
 - In-app camera or QR scanning (pairing arrives by deep link, or by hand).
 - GitHub's device-code sign-in (pairing hands over the desktop's token; a
   personal access token is the fallback).
 - Avatars from the network: avatars are initials on a per-login colour.
-- Resolving review threads (the core has no API for it).
 - Light theme: the app is dark only.
 
 ## Decisions (these override the mockups)
 
 - **Sign in** offers "Pair with your desktop" first (pairing also hands over
   the desktop's GitHub token), then "Use a personal access token instead"
-  with token and host fields (host defaults to `github.com`).
+  with a token field only: github.com, and a line saying GitHub Enterprise
+  isn't supported yet.
 - **Pair** has no camera. A pairing link arrives by deep link, from "Open in
   Rostrum" on the desktop's page (`http://<desktop>:8484/`) or its QR code
   scanned by the phone's camera app. The screen shows the parsed preview
@@ -55,6 +63,9 @@ inline commenting and pending reviews, merging, and the paired desktop
   Files opens on the overview; a file opens a single-file diff with
   previous/next.
 - Bottom navigation: Feed, Desktop, Settings.
+- **Comment now** (a single inline comment) is enabled only when no other
+  drafts are pending, because the core posts inline comments only as a review
+  and would send them too; otherwise it is disabled with a one-line reason.
 
 ## Architecture
 
@@ -69,7 +80,7 @@ RostrumApp(container) ── session.state ──▶ MainScaffold ── Rostrum
 feature …Route composables ── rostrumViewModel { c -> XViewModel(c.backend, …) }
                                    │ StateFlow<UiState / screen state>
                                    ▼
-                         RostrumBackend (FakeRostrumBackend in phase 1)
+          RostrumBackend = FfiRostrumBackend ── CoreHandle ── RostrumCore (librostrum_ffi.so)
 ```
 
 - `RostrumApplication.onCreate` builds the `AppContainer` and calls
@@ -125,8 +136,14 @@ unconsumed older one.
   need a catch; `BackendError` mirrors the core's `RostrumError` variant for
   variant, and `describe()` gives the sentence the UI shows.
   `requiresSignIn` / `requiresPairing` classify errors for recovery actions.
-- `feedUpdates: Flow<FeedSnapshot>` is the core's `FeedObserver`. Snapshots
-  carry a `revision`; consumers keep the highest.
+- `feedUpdates: Flow<FeedSnapshot>` is the core's `FeedObserver`, bridged
+  into a `MutableSharedFlow` (replay 1, drop-oldest): the observer is
+  registered right after the core opens and emits each snapshot the core
+  delivers on its own threads. Snapshots carry a `revision`; consumers keep
+  the highest.
+- `renderMarkdown(source, repo)` is the core's top-level function (the
+  composer's Preview); `parsePairingLink` is suspend because it needs the
+  core open.
 - Pull requests are addressed by `PrRef(repo, number)` (number ≥ 1).
 - Secrets are never persisted by the backend. `setGitHubToken` and
   `setRemote` hand them in at start-up; `PairingResult` and
@@ -134,8 +151,9 @@ unconsumed older one.
 
 ### Start-up
 
-1. `session.restore()` reads `GitHubToken` and `GitHubHost`; a present token
-   goes to `backend.setGitHubToken(token, host)` → `SignedIn(host)`. An
+1. `session.restore()` reads `GitHubToken`; a present token goes to
+   `backend.setGitHubToken(token)` → `SignedIn`. The first backend call opens
+   the core (see *The core*). An
    unreadable token (Keystore key lost, corrupt file) is deleted and the user
    is signed out with a notice.
 2. It reads `DesktopEndpoint` and `DeviceToken`; both present →
@@ -145,16 +163,17 @@ unconsumed older one.
 
 ### Sign-in and pairing
 
-- Token: `signInWithToken(token, host)` trims both, hands the token in, and
-  verifies it with `viewer()`. Rejected → the backend's token is cleared and
-  nothing is stored. Accepted → token and host are sealed, and the session
-  flips to `SignedIn` (the root rebuilds the graph at the feed).
+- Token: `signInWithToken(token)` trims it, hands it in, and verifies it with
+  `viewer()`. Rejected → the backend's token is cleared and nothing is
+  stored. Accepted → the token is sealed, and the session flips to `SignedIn`
+  (the root rebuilds the graph at the feed).
 - Pairing (`pairWithLink(uri)` or `pairManual(host, port, fingerprint,
   code)`): the backend pairs and becomes the session's remote; the repository
   seals the endpoint and device token (if either write fails the remote is
   cleared and the error is `Storage`). If the desktop handed over a GitHub
-  token and the phone is signed out, that token is adopted and persisted,
-  which signs the phone in.
+  token for github.com and the phone is signed out, that token is adopted and
+  persisted, which signs the phone in. A token for another host is refused:
+  the pairing stands, and the phone stays signed out with a notice.
 - `unpair()` asks the desktop first; a desktop that already forgot this
   phone (`NotPaired`/`DeviceRevoked`) counts as success. Other failures keep
   the pairing; `forgetDesktop()` drops it locally regardless.
@@ -180,6 +199,27 @@ unconsumed older one.
 - The permission is requested once per install, the first time the signed-in
   feed is on screen (`RequestNotificationPermissionOnce`); Settings asks
   again when a toggle is turned on without it.
+
+### The core
+
+- `CoreHandle` opens the process's one `RostrumCore` on the first backend
+  call, on `Dispatchers.IO` (loading JNA and `librostrum_ffi.so` happens
+  there), over `files/core` (the core's `config.json` and `cache.db`). It
+  installs the log sink first (`installLogSink(FfiLogSink, INFO)`: core
+  records go to logcat under `RostrumCore` as key=value lines), then runs
+  `onOpened` (the feed observer). A failure to open, including a
+  `LinkageError` from a missing library, is returned as an `Outcome.Err` and
+  retried by the next call.
+- Every method is one core call inside `ffiCall`, which maps
+  `RostrumException` (sealed; the `when` in `FfiErrors.kt` is exhaustive) to
+  `BackendError`, and UniFFI's `InternalException` (a Rust panic) to
+  `BackendError.Internal`. Nothing else is caught; cancellation propagates.
+- Numbers narrow from UniFFI's unsigned types; negative Kotlin inputs
+  (`fileIndex`, ports outside 1..65535) are refused as `InvalidInput` before
+  reaching the core.
+- The notification worker, in a cold process, gets the same container and
+  core; `NotificationCheck` restores the session (which calls
+  `setGitHubToken`) before `checkNotifications`, as the core requires.
 
 ### Secrets at rest
 
@@ -280,10 +320,11 @@ composables, a pure mapping file with its own tests, and previews.
   draws threads and drafts; `DiffScreen` adds the header, sub-bar, hint strip
   and pending-review bar.
 - `LineCommentSheet` + `CommentComposer`: anchor chip, Write/Preview (Preview
-  uses `renderMarkdown`), "Add to review" (count badge) and "Comment now"
-  (`addDraft` then `submitReview(Comment, "", includeDrafts = true)`, which
-  also sends other pending drafts, as the sheet says). Edit mode saves or
-  deletes.
+  uses the core's `renderMarkdown(source, repo)`; a failure shows inline),
+  "Add to review" (count badge) and "Comment now" (`addDraft` then
+  `submitReview(Comment, "", includeDrafts = true)`), enabled only when no
+  other drafts are pending, with a one-line reason otherwise. Edit mode saves
+  or deletes.
 - `SubmitReviewViewModel(pr, backend)` and `SubmitReviewSheet`: pending list
   (editing in the same sheet), summary, verdict radios; `ReviewRules` turns
   Approve and Request changes off while drafts are stale or the pull request
@@ -297,23 +338,26 @@ composables, a pure mapping file with its own tests, and previews.
 ### Settings, desktop and onboarding (`ui/settings/`, `ui/desktop/`, `ui/onboarding/`)
 
 - `SettingsViewModel(backend, session, clock, onNotificationSettingsChanged)`:
-  account (viewer, host, sign out with confirmation, "Use <machine>'s GitHub
+  account (viewer, "github.com", sign out with confirmation, "Use <machine>'s GitHub
   token" when paired), repositories (add with inline `InvalidRepo`/
   `DuplicateRepo` errors then `refreshRepo`; remove; sublines from the
   desktop's clones and the feed's hidden repos), desktop row, refresh
   interval choice, notification toggles (and the permission prompt when one
   turns on). Files: `SettingsModels`, `SettingsSections`, `SettingsScreen`.
-- `DesktopViewModel(backend, session, clock)`: machine card, handoff sessions
-  (copy attach command, open the pull request's Branch tab, abort with
-  confirmation), sync all (polls `syncAllStatus` every second while running;
+- `DesktopViewModel(backend, session, clock)`: machine card ("Connected ·
+  N clones"), handoff sessions (session name, worktree, pull request and head
+  ref when known; copy attach command, open the pull request's Branch tab,
+  abort with confirmation), sync all (polls `syncAllStatus` every second while running;
   buttons and the stash switch are disabled meanwhile), last run (problem
   entries listed, updated ones behind an expandable row), options menu
   (refresh, get token, unpair with a "Forget on this phone" fallback). Files:
   `DesktopModels`, `HandoffSection`, `SyncAllSection`, `LastRunSection`,
   `DesktopScreen`.
-- `SignInViewModel(session)`: pairing first; the token form (token, host)
-  behind an expandable row; shows the involuntary sign-out notice.
-- `PairViewModel(backend, session, link)`: a link is previewed (machine,
+- `SignInViewModel(session)`: pairing first; the token form (a github.com
+  token; Enterprise isn't supported) behind an expandable row; shows the
+  involuntary sign-out notice.
+- `PairViewModel(backend, session, link)`: a link is read by the core
+  (`Reading`, then) and previewed (machine,
   addresses, fingerprint) and paired with one tap; an invalid link falls back
   to the manual form: host, port (8485), code → `probeDesktop` → compare the
   fingerprint → `pairManual`. `PairingInput` validates and normalises the
@@ -324,6 +368,11 @@ composables, a pure mapping file with its own tests, and previews.
 
 - No "Resolve" on threads, no "Expand N lines" between hunks, and "Viewed" is
   local only: the core has no API for any of them.
+- Not shown because the core does not provide them: the feed's desktop chips
+  ("handed off", "↑2 unpushed"), code excerpts on conversation threads,
+  commit SHAs on push events, the worktree count, the Branch tab's conflicted
+  files, and handoff descriptions ("Rebase onto main stopped · 3 conflicted
+  files"; the abort button just reads "Abort").
 - The Branch tab's Reviews tile reads "Review required" and the merge sheet's
   "Approved" (not "0 of 1 approvals" / "Approved by you"): the header has no
   approval counts or approver.
@@ -339,25 +388,24 @@ composables, a pure mapping file with its own tests, and previews.
 
 ## Mapping to rostrum-ffi
 
-The model mirrors `rostrum-ffi`'s records one to one with Kotlin-friendly
-numbers (`u32` → `Int`, `u64` → `Long`, `u16` → `Int`, `SystemTime` →
-`Instant`, ARGB `u32` → `Int`). These parts are not in the FFI (as of its
-work in progress) and need either a core addition or a fallback in the
-adapter:
+`data/ffi/*Mappings.kt` map every generated record and enum to the model one
+to one (`u32` → `Int`, `u64` → `Long`, `u16`/`u8` → `Int`, `SystemTime` →
+`Instant`, ARGB `u32` → `Int` keeping its bits), and the inputs back
+(`FeedPreferences`, `CommentAnchor`, `Side`, `MergeMethod`,
+`BranchUpdateMethod`, `ReviewEvent`, `LocalOp`, `SyncAllOp`). Mappings are
+extension functions (`toModel()`, `toFfi()`), unit-tested on the JVM from
+constructed generated records (constructing them does not load the library).
 
-| Kotlin | Needed from the core | Adapter fallback |
-|---|---|---|
-| `RostrumBackend.setGitHubToken(token, host)` | a host for GitHub Enterprise | ignore the host (github.com only) |
-| `RostrumBackend.renderMarkdown(source)` | export `rostrum-md` rendering | one plain paragraph |
-| `PrSummary.localChips` | desktop-derived chips (`handed off`, `↑2 unpushed`) | empty |
-| `ReviewThreadView.excerpt` | the diff lines a thread is anchored to | empty (no code excerpt) |
-| `TimelineEvent.Pushed(commits)` | a pushed-commits event | map from `Other` |
-| `MachineInfo.worktrees` | worktree count | 0, hide the count |
-| `LocalBranch.conflictedFiles` | conflicted paths while stopped | empty list |
-| `HandoffSession.description`, `abortLabel` | render-ready text | derive from `InProgress` |
-| — | a single inline comment without a pending review ("Comment now") | draft then submit |
-| — | resolve/unresolve a thread; lines between hunks; per-file viewed state | not offered |
-| — | required/current approval counts and approvers on the header | generic wording |
+What the core does not provide, and what the app does instead:
+
+| Missing from the core | In the app |
+|---|---|
+| GitHub Enterprise hosts | github.com only; sign-in says so |
+| Posting one inline comment outside a review | "Comment now" = `addDraft` + `submitReview(Comment)`, offered only with no other drafts pending |
+| Desktop-derived feed chips, thread code excerpts, pushed-commit events | not shown |
+| Worktree counts, conflicted-file lists, handoff descriptions | not shown; a handoff shows its session, pull request, worktree and attach command |
+| Resolving threads, lines between hunks, persistent "viewed" | not offered ("Viewed" is local to the screen) |
+| Required/current approval counts, the approver | generic wording ("Review required", "Approved") |
 
 ## Files
 
@@ -371,14 +419,19 @@ adapter:
 | `data/Outcome.kt` | `Outcome` (`Ok`/`Err`) and `map`, `andThen`, `onOk`, `onErr`, `valueOrNull`, `errorOrNull` |
 | `data/RostrumLog.kt` | `RostrumLog` key=value logging, `Outcome.logErr` |
 | `data/model/*.kt` | Domain records: `Common`, `Session`, `Feed`, `Markdown`, `Detail`, `Diff`, `Review`, `Remote` |
-| `data/fake/FakeRostrumBackend.kt` | In-memory backend; `failNext(FakeCall, error)` for tests |
-| `data/fake/FakeDesktop.kt` | The fake's desktop: pairing, remote, local jobs, sync all, handoffs |
+| `data/ffi/FfiRostrumBackend.kt` | The production backend: one core call per method, observer bridged to `feedUpdates` |
+| `data/ffi/CoreHandle.kt` | Opens the process's one `RostrumCore` (off the main thread), log sink, `onOpened` |
+| `data/ffi/FfiErrors.kt` | `RostrumException.toBackendError()`, `RemoteErrorCode` mapping, `ffiCall` |
+| `data/ffi/FfiLogSink.kt` | Core `tracing` records → logcat key=value lines |
+| `data/ffi/CommonMappings.kt`, `FeedMappings.kt`, `DetailMappings.kt`, `DiffMappings.kt`, `RemoteMappings.kt` | Generated records ↔ model |
+| `data/fake/FakeRostrumBackend.kt` | In-memory backend for tests and previews; `failNext(FakeCall, error)` |
+| `data/fake/FakeDesktop.kt` | The fake's desktop: pairing (the core's link format), remote, local jobs, sync all, handoffs |
 | `data/fake/FakeCall.kt` | One entry per fallible backend call |
 | `data/fake/FakeFeedAssembler.kt` | Feed filtering, sections, roster (as the core does it) |
 | `data/fake/FakeDiffs.kt` | Hunks → rows with anchors, threads, drafts; overview layout |
 | `data/fake/FakePull.kt` | Sample pull request → `PrSummary`, `PullHeader`, verdict |
 | `data/fake/Sample*.kt`, `FakeHighlighter.kt`, `FakeMarkdown.kt` | The mockups' data, syntax colours, markdown |
-| `data/secrets/SecretStore.kt` | `SecretKey`, `SecretStore`, `SecretRead`, `SecretWrite`, `SecretStoreError` |
+| `data/secrets/SecretStore.kt` | `SecretKey` (GitHub token, device token, desktop endpoint), `SecretStore`, `SecretRead`, `SecretWrite`, `SecretStoreError` |
 | `data/secrets/SecretCipher.kt` | `SecretCipher`, `SealedBox`, `CipherOutcome`, `SecretEnvelope` format |
 | `data/secrets/AndroidKeystoreCipher.kt` | AES-256-GCM under a Keystore key |
 | `data/secrets/EncryptedFileSecretStore.kt` | One sealed file per secret, atomic replace |
@@ -417,7 +470,10 @@ unless they start with `res/`. Tests mirror them under `src/test/`;
   backend keeps them in memory only.
 - **No exceptions cross the backend boundary.** Failures are `Outcome.Err`
   with a `BackendError`; the only catches are the Keystore cipher's and the
-  file store's explicit exception types.
+  file store's explicit exception types, and in `data/ffi/` the generated
+  `RostrumException`, UniFFI's `InternalException` and `LinkageError`.
+- **One core per process**, shared by the UI and the notification worker;
+  secrets reach it only through `setGitHubToken` and `setRemote`.
 - **Features do not import each other**; only `RostrumNavHost` knows them
   all.
 - **The graph is keyed on sign-in**, so a signed-out user can never reach a
@@ -438,8 +494,31 @@ JVM unit tests (JUnit 5, `kotlinx-coroutines-test`) cover the data layer
 pairing/unpair, the fake backend's behaviour, markdown, feed assembly),
 formatting, links, notification content/scheduling/check, and every
 ViewModel. ViewModels run on `FakeRostrumBackend` with `failNext` for error
-paths and a fixed clock. To observe `Messages.flow` in a test, collect it with
+paths and a fixed clock. `FfiMappingsTest` covers every error variant and
+the records of each area. To observe `Messages.flow` in a test, collect it with
 `backgroundScope.launch(UnconfinedTestDispatcher(testScheduler))`; a collector
 on the default test dispatcher misses messages sent by the last task. `android.util.Log` returns defaults in unit tests
 (`isReturnDefaultValues`). The Keystore cipher itself needs a device and is
 not unit-tested.
+
+### Host smoke test
+
+`./gradlew :app:hostSmokeTest` builds `librostrum_ffi.so` for the build
+machine (`cargoHostBuild`: `cargo build --locked --lib -p rostrum-ffi`), puts
+`target/debug` on `jna.library.path`, and runs the JUnit tests tagged
+`host-smoke` from the unit test classpath (plus JNA's desktop jar, which
+carries the host's `libjnidispatch`). `HostSmokeTest` opens one real core on
+a temp directory and drives it through `FfiRostrumBackend`: status and
+warnings, settings, `addRepo` validation errors, the cached feed, the
+observer reaching `feedUpdates`, `parsePairingLink` on a sample link,
+`renderMarkdown`, error mapping (`NotSignedIn`, `NotPaired`), and that a
+token never reaches the data directory. No network. The normal unit run
+excludes the tag, and the tests skip themselves when not started by this
+task.
+
+`./gradlew :app:liveDesktopCheck` (tag `live-desktop`, run by hand, never in
+CI) pairs with the `rostrumd` on this machine using a link from
+`POST http://127.0.0.1:8484/pairing-codes` saved in the file named by
+`ROSTRUM_LIVE_PAIR_URI_FILE`, calls `machineInfo`, `handoffs` and
+`refreshGitHubTokenFromDesktop` (checking only that a token came back), and
+unpairs; `ROSTRUM_LIVE_RESULT_FILE` receives a secret-free summary.

@@ -15,8 +15,8 @@ APK for `rostrumd` to serve to phones.
   generating the Kotlin bindings with the crate's own `uniffi-bindgen`, and
   packaging both, plus JNA's `libjnidispatch.so`, into the APK.
 - The `rostrum-ffi` crate's build contract: crate type, the `uniffi-bindgen`
-  binary, `uniffi.toml`, and the `android-release` cargo profile. Its exports
-  are a placeholder (`ffi_version`) that proves the path links end to end.
+  binary, `uniffi.toml`, and the `android-release` cargo profile. The API it
+  exports is `android_core` (`docs/features/android_core.md`).
 - Release signing: a keystore outside the repository, credentials in the
   gitignored `android/.env` or the environment, and a debug-key fallback.
 - `android/scripts/build-apk.sh` and `android/scripts/publish-apk.sh`, and the
@@ -29,8 +29,8 @@ APK for `rostrumd` to serve to phones.
 - **Screens, navigation, secrets, pairing and notifications.** Those are the
   app itself, documented in `docs/features/android_app.md`. This feature only
   declares the `rostrum://pair` intent filter they rely on.
-- **The real FFI surface.** The exports of `rostrum-ffi` are replaced later;
-  this feature fixes only the crate/bin/package names the build relies on.
+- **The FFI surface.** `rostrum-ffi`'s API is `android_core`; this feature
+  fixes only the crate/bin/package names the build relies on.
 - **Serving the APK.** `rostrumd` serves `~/.local/share/rostrum/server/apk/`.
   This feature only fills that directory.
 - 32-bit ABIs (`armeabi-v7a`, `x86`), App Bundles, Play Store upload, CI.
@@ -127,15 +127,18 @@ that is missing.
    sha256 and size of that copy → JSON to a temp file → rename the APK, then
    the JSON.
 
-At runtime the call path into Rust is `RustCore.probe()` →
-`uniffi.rostrum_ffi.ffiVersion()`. On first use, the generated `UniffiLib`
-object calls `Native.register(..., "rostrum_ffi")`. JNA loads
+At runtime the first call into Rust is `CoreHandle` (in `android_app`)
+opening `RostrumCore` on `Dispatchers.IO`. On first use, the generated
+`UniffiLib` object calls `Native.register(..., "rostrum_ffi")`. JNA loads
 `libjnidispatch.so` and `librostrum_ffi.so` from the APK and the bindings
-check the API checksums. The Rust function returns a `RustBuffer`, which the
-bindings lift into a Kotlin `String`. A `LinkageError` anywhere in that
-chain becomes `CoreLink.Unavailable`. While the app runs on the fake backend
-(phase 1 of `android_app`), nothing calls the probe; the adapter over
-`RostrumCore` replaces it.
+check the API checksums. A `LinkageError` anywhere in that chain becomes a
+`BackendError.Internal` from every backend call, so a broken library shows as
+an error screen rather than a crash.
+
+For the JVM host smoke test (`:app:hostSmokeTest`), `cargoHostBuild` builds
+the same crate for the build machine into `target/debug`, and the test JVM
+loads it through JNA's desktop jar (`testImplementation`), which carries the
+host's `libjnidispatch`.
 
 ## The Rust side: `rostrum-ffi`
 
@@ -219,8 +222,7 @@ describes an APK that is not there yet.
 - `RostrumText` (`ui/theme/TextStyles.kt`) names the mockups' recurring text
   styles (screen title, row title, section label, chip, mono sizes, diff
   lines).
-- Packages: see `docs/features/android_app.md`; `.ui.theme` belongs here and
-  `.data.RustCore` is the FFI probe.
+- Packages: see `docs/features/android_app.md`; `.ui.theme` belongs here.
 
 ## Common tasks
 
@@ -230,6 +232,7 @@ android/scripts/publish-apk.sh            # hand it to rostrumd
 cd android && ./gradlew :app:assembleDebug -Prostrum.cargoProfile=dev   # fast debug build
 cd android && ./gradlew buildSrc:test     # ReleaseSigning / .env parser tests
 cd android && ./gradlew :app:testDebugUnitTest -Prostrum.cargoProfile=dev   # app JVM unit tests (JUnit 5)
+cd android && ./gradlew :app:hostSmokeTest -Prostrum.cargoProfile=dev      # real core on the JVM (host .so)
 ~/.cargo/bin/cargo test -p rostrum-ffi    # Rust side
 ```
 
@@ -287,7 +290,7 @@ cd android && ./gradlew :app:testDebugUnitTest -Prostrum.cargoProfile=dev   # ap
 | File | Role |
 |---|---|
 | `crates/rostrum-ffi/Cargo.toml` | Crate type, the `uniffi-bindgen` bin, per-target `cli` feature |
-| `crates/rostrum-ffi/src/lib.rs` | `setup_scaffolding!`, placeholder `ffi_version()` |
+| `crates/rostrum-ffi/src/lib.rs` | `setup_scaffolding!` and the module map (the API: `android_core.md`) |
 | `crates/rostrum-ffi/src/bin/uniffi-bindgen.rs` | `uniffi_bindgen_main()` on the host, stub on Android |
 | `crates/rostrum-ffi/uniffi.toml` | Kotlin binding config (`android = true`) |
 | `Cargo.toml` (root) | `uniffi = "=0.32.1"`, `rostrum-ffi` workspace dep, `[profile.android-release]` |
@@ -309,7 +312,6 @@ cd android && ./gradlew :app:testDebugUnitTest -Prostrum.cargoProfile=dev   # ap
 | `android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/theme/Type.kt` | `RostrumFonts`, `RostrumTypography`, `RostrumMonoTypography` |
 | `android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/theme/Theme.kt` | `RostrumTheme` composable and accessors, `toMaterialColorScheme()` |
 | `android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/theme/TextStyles.kt` | `RostrumText`: the mockups' text styles |
-| `android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/RustCore.kt` | `CoreLink`, `RustCore.probe()` |
 | `android/app/src/main/res/` | Window theme, strings, adaptive icon, fonts |
 | `android/app/src/main/assets/licenses/` | OFL texts for both font families |
 | `android/.env.example` | Signing settings template (`android/.env` is gitignored) |

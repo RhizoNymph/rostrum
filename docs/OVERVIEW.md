@@ -122,8 +122,11 @@ Overview:
     sealed again. The feed arrives as `FeedSnapshot`s, from calls and from the
     backend's update flow, newest revision winning. `rostrum://pair` links and
     notification taps enter through `MainActivity` into a link inbox that the
-    navigation host drains. Phase 1 runs on `FakeRostrumBackend`; phase 2
-    swaps in an adapter over the generated `RostrumCore`.
+    navigation host drains. The backend is `FfiRostrumBackend`: one
+    `RostrumCore` per process, each method one core call with its records
+    and `RostrumException`s mapped to the app's model; the core's feed
+    observer feeds the update flow. `FakeRostrumBackend` serves unit tests
+    and previews only.
 
 Features Index:
   ui_foundation:
@@ -190,9 +193,9 @@ Features Index:
     depends_on: []
     doc: docs/features/android_build.md
   android_app:
-    description: Compose UI, RostrumBackend and its fake, Keystore secrets, session, deep links, notifications.
-    entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/RostrumApplication.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/RostrumBackend.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/navigation/RostrumNavHost.kt]
-    depends_on: [android_build]
+    description: Compose UI, RostrumBackend over the Rust core (FfiRostrumBackend), Keystore secrets, session, deep links, notifications.
+    entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/RostrumApplication.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/RostrumBackend.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/ffi/FfiRostrumBackend.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/navigation/RostrumNavHost.kt]
+    depends_on: [android_build, android_core]
     doc: docs/features/android_app.md
 ```
 
