@@ -7,6 +7,7 @@ import rostrum.buildlogic.ndkDirectory
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 // --- Rust (see docs/features/android_build.md) ------------------------------
@@ -108,6 +109,15 @@ android {
     buildFeatures {
         compose = true
     }
+
+    testOptions {
+        unitTests {
+            // android.util.Log and friends return defaults instead of throwing,
+            // so ViewModels and the data layer run on the plain JVM.
+            isReturnDefaultValues = true
+            all { it.useJUnitPlatform() }
+        }
+    }
 }
 
 java {
@@ -127,6 +137,11 @@ dependencies {
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.kotlinx.serialization.core)
 
     // Required by the generated UniFFI bindings (async exports, native calls).
     implementation(libs.kotlinx.coroutines.android)
@@ -134,4 +149,9 @@ dependencies {
         // The AAR, not the JAR: it carries jni/<abi>/libjnidispatch.so.
         artifact { type = "aar" }
     }
+
+    testImplementation(platform(libs.junit.bom))
+    testImplementation(libs.junit.jupiter)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testRuntimeOnly(libs.junit.platform.launcher)
 }

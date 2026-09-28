@@ -19,11 +19,14 @@ lifecycle = "2.10.0"           # minCompileSdk=35; 2.11.0's compose artifacts ne
 navigation = "2.9.5"           # minCompileSdk=35; 2.10.x needs 37
 work = "2.11.2"                # minCompileSdk=35
 kotlinxCoroutines = "1.11.0"   # UniFFI's Kotlin bindings use it for async exports
+# Typed Navigation Compose routes are @Serializable; navigation 2.9.5 itself
+# depends on 1.7.3, and the compiler plugin ships with Kotlin.
+kotlinxSerialization = "1.9.0"
 # UniFFI's generated Kotlin calls into the .so through JNA and needs >= 5.12.
 # The `@aar` artifact carries `libjnidispatch.so` for each Android ABI.
 jna = "5.19.1"                 # 2026-06-12
 
-junit5 = "5.14.4"              # buildSrc unit tests
+junit5 = "5.14.4"              # buildSrc and app JVM unit tests
 
 [libraries]
 compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
@@ -42,6 +45,8 @@ androidx-navigation-compose = { group = "androidx.navigation", name = "navigatio
 androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
 
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "kotlinxCoroutines" }
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "kotlinxCoroutines" }
+kotlinx-serialization-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-core", version.ref = "kotlinxSerialization" }
 
 jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
 
@@ -52,3 +57,4 @@ junit-platform-launcher = { group = "org.junit.platform", name = "junit-platform
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
