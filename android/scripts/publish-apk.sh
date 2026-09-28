@@ -40,7 +40,10 @@ if grep -q 'certificate DN: CN=Android Debug' <<<"$certs"; then
 fi
 
 # --- Metadata -----------------------------------------------------------------
-package_line="$("$AAPT2" dump badging "$APK" | sed -n '/^package: /{p;q}')"
+# Capture the whole dump first: piping it into a `sed` that quits early would
+# SIGPIPE aapt2 and, under pipefail, abort the script.
+badging="$("$AAPT2" dump badging "$APK")" || die "aapt2 cannot read $APK"
+package_line="$(sed -n '/^package: /{p;q}' <<<"$badging")"
 version_code="$(sed -n "s/.* versionCode='\([^']*\)'.*/\1/p" <<<"$package_line")"
 version_name="$(sed -n "s/.* versionName='\([^']*\)'.*/\1/p" <<<"$package_line")"
 [[ "$version_code" =~ ^[0-9]+$ ]] || die "unexpected versionCode '$version_code' from aapt2"
