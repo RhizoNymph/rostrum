@@ -299,11 +299,13 @@ class FfiRostrumBackend(dataDir: File) : RostrumBackend {
 
     override suspend fun unpair(): Outcome<Unit> = core("unpair") { it.unpair() }
 
-    // --- desktop settings (see FfiDesktopConfig.kt) --------------------------
+    // --- desktop settings ----------------------------------------------------
 
-    override suspend fun desktopConfig(): Outcome<DesktopConfigPreview> = desktopConfigUnavailable()
+    override suspend fun desktopConfig(): Outcome<DesktopConfigPreview> =
+        core("desktopConfig") { it.desktopConfig().toModel() }
 
-    override suspend fun copyDesktopConfig(): Outcome<Settings> = desktopConfigUnavailable()
+    override suspend fun copyDesktopConfig(): Outcome<Settings> =
+        core("copyDesktopConfig") { it.copyDesktopConfig().toModel() }
 
     // --- notifications -------------------------------------------------------
 

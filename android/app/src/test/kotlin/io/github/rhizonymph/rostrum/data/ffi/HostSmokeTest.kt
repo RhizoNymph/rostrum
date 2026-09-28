@@ -128,6 +128,8 @@ class HostSmokeTest {
     fun `core errors arrive as typed BackendErrors`(): Unit = runBlocking {
         assertEquals(BackendError.NotSignedIn, backend.refreshFeed().error())
         assertEquals(BackendError.NotPaired, backend.machineInfo().error())
+        assertEquals(BackendError.NotPaired, backend.desktopConfig().error())
+        assertEquals(BackendError.NotPaired, backend.copyDesktopConfig().error())
         assertInstanceOf(BackendError::class.java, backend.pullHeader(PrRef("a/b", 1)).error())
         assertInstanceOf(BackendError.InvalidInput::class.java, backend.fileDiff(PrRef("a/b", 1), -1).error())
     }

@@ -7,6 +7,7 @@ import io.github.rhizonymph.rostrum.data.model.CheckState
 import io.github.rhizonymph.rostrum.data.model.Chip
 import io.github.rhizonymph.rostrum.data.model.ColorRole
 import io.github.rhizonymph.rostrum.data.model.CommentAnchor
+import io.github.rhizonymph.rostrum.data.model.DesktopConfigPreview
 import io.github.rhizonymph.rostrum.data.model.DiffRow
 import io.github.rhizonymph.rostrum.data.model.FeedPreferences
 import io.github.rhizonymph.rostrum.data.model.FileDiffBody
@@ -43,6 +44,7 @@ import uniffi.rostrum_ffi.Chip as FChip
 import uniffi.rostrum_ffi.CodeSegment as FCodeSegment
 import uniffi.rostrum_ffi.ColorRole as FColorRole
 import uniffi.rostrum_ffi.CommentAnchor as FCommentAnchor
+import uniffi.rostrum_ffi.DesktopConfigPreview as FDesktopConfigPreview
 import uniffi.rostrum_ffi.DiffAvailability as FDiffAvailability
 import uniffi.rostrum_ffi.DiffLineView as FDiffLineView
 import uniffi.rostrum_ffi.DiffRow as FDiffRow
@@ -369,6 +371,39 @@ class FfiMappingsTest {
             assertEquals(LocalOp.RebaseBase, run.op)
             assertEquals(true, run.running)
             assertEquals(SyncEntryState.Running, run.entries.single().state)
+        }
+
+        @Test
+        fun `the desktop config preview maps field for field`() {
+            val preview = FDesktopConfigPreview(
+                machine = "framework",
+                repos = listOf("a/one", "b/two"),
+                added = listOf("b/two"),
+                removed = listOf("x/gone"),
+                prsPerRepo = 25u,
+                hideDrafts = true,
+                hideEmptyRepos = false,
+                authors = listOf("ada-lin"),
+                includeInvolved = true,
+                autostash = true,
+                changesAnything = true,
+            ).toModel()
+            assertEquals(
+                DesktopConfigPreview(
+                    machine = "framework",
+                    repos = listOf("a/one", "b/two"),
+                    added = listOf("b/two"),
+                    removed = listOf("x/gone"),
+                    prsPerRepo = 25,
+                    hideDrafts = true,
+                    hideEmptyRepos = false,
+                    authors = listOf("ada-lin"),
+                    includeInvolved = true,
+                    autostash = true,
+                    changesAnything = true,
+                ),
+                preview,
+            )
         }
 
         @Test
