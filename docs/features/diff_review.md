@@ -89,9 +89,15 @@ offsets, incrementing the old counter on `Context`/`Removed` and the new counter
 on `Context`/`Added`. This walk is the single source of truth for anchoring and
 lives in one function with dense test coverage.
 
-For word-level highlighting inside a modified pair (a `Removed` immediately
-followed by an `Added`), `imara-diff` with `Algorithm::Histogram` produces
-intra-line ranges — the same engine and algorithm Zed uses.
+For word-level highlighting, `rostrum_diff::hunk_word_changes` pairs each run
+of `Removed` lines with the run of `Added` lines directly after it (first with
+first, as GitHub does) and finds each pair's changed words with a
+longest-common-subsequence over tokens (words, whitespace runs, single
+punctuation). It is hand-rolled rather than `imara-diff`: lines are short, the
+token table is bounded (a pair too long to compare is left unemphasised), and
+emphasis is suppressed when a pair shares less than half its text, where it
+would highlight nearly everything. Ranges are UTF-8 byte ranges on `char`
+boundaries. The Android core renders them; the desktop does not yet.
 
 ## Syntax highlighting
 
@@ -143,7 +149,7 @@ Inline comments follow GitHub's pending-review model:
 
 Pending comments are tagged with the `head_sha` they were drafted against, taken
 from `headRefOid` on the pull request query. If the author pushes before the
-review is submitted, `drafts_are_stale` detects the mismatch: the action bar
+review is submitted, `rostrum_core::drafts_are_stale` detects the mismatch: the action bar
 shows a warning, and Approve and Request changes are disabled until the drafts
 are discarded. Submitting stale anchors would attach comments to lines that have
 moved, which is worse than making the user re-read the diff.
@@ -184,7 +190,8 @@ copy code from a diff" is not optional in a review tool.
 | `crates/rostrum-diff/src/parse.rs` | Patch → `DiffFile`/`Hunk`/`DiffLine`, line-number walk |
 | `crates/rostrum-diff/src/model.rs` | `DiffFile`, `DiffLine`, `LineKind`, `CommentAnchor` |
 | `crates/rostrum-diff/src/highlight.rs` | tree-sitter config registry, events → runs |
-| `crates/rostrum-diff/src/word_diff.rs` | `imara-diff` intra-line ranges |
+| `crates/rostrum-diff/src/word_diff.rs` | Word-level changes: pairing removed/added runs, token LCS |
+| `crates/rostrum-core/src/review.rs` | `DraftAnchor` (range ordering, `covers`) and `drafts_are_stale`, shared with the Android core |
 | `crates/rostrum/src/detail/files.rs` | `DiffRow` flattening, `ListState`, row renderers |
 | `crates/rostrum/src/detail/review.rs` | Pending review state, submission |
 | `crates/rostrum-ui/src/selection.rs` | Byte-range selection, hit-testing, clipboard |

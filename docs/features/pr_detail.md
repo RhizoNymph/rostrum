@@ -290,4 +290,4 @@ scheduled in phase 2.
 | `crates/rostrum/src/detail/composer.rs` | Text input, drafts, submission |
 | `crates/rostrum/src/detail/actions.rs` | Merge/close/review, confirmations |
 | `crates/rostrum/src/detail/checks.rs` | Check run list |
-| `crates/rostrum-core/src/timeline.rs` | `TimelineItem`, merge/sort logic |
+| `crates/rostrum-core/src/timeline.rs` | `TimelineItem`, merge/sort logic, `Conversation::state`, `ReviewThread::{reply_target, is_anchored_at}` |

@@ -87,6 +87,15 @@ Overview:
     cannot express either one fully, so both go out as GraphQL mutations keyed by
     the pull request's node id.
 
+    On Android the same gpui-free crates run behind `rostrum-ffi`. Compose
+    calls suspend functions on one UniFFI object, `RostrumCore`, whose state
+    lives in an actor task; network I/O happens outside the actor and results
+    are applied back through it, SQLite writes are queued in state order on a
+    writer task, and feed changes reach Kotlin through a `FeedObserver` in
+    revision order. Tokens arrive from Kotlin (the Keystore) and never touch
+    disk on the Rust side. The paired desktop is reached through
+    `rostrum-remote`'s pinned client.
+
 Features Index:
   ui_foundation:
     description: Theme, components, text rendering, selection, markdown.
@@ -263,8 +272,12 @@ Each phase leaves a usable application.
 
 ## Status
 
-All five phases are complete and verified against the live API. 598 tests pass;
-clippy is clean across the workspace.
+All five phases are complete and verified against the live API. 867 tests pass
+(123 of them in `rostrum-ffi`); clippy is clean across the workspace.
+
+The Android app's core, `rostrum-ffi`, exposes the same feed, detail, diff,
+review, desktop and notification behaviour to Kotlin through UniFFI; see
+`docs/features/android_core.md`.
 
 End-to-end verification (`cargo run -p rostrum --example review`) against real
 pull requests confirms the parser's added/removed line counts match GitHub's own
@@ -276,8 +289,9 @@ Deliberately not built:
 - **Cross-block text selection.** Selection works within a rendered markdown
   block and, in the diff, over whole lines. Dragging from one paragraph into the
   next does not extend the selection.
-- **Squash and rebase merges.** `MergeMethod` models all three and the API layer
-  sends whichever it is given, but the UI only offers a plain merge.
+- **Squash and rebase merges on the desktop.** `MergeMethod` models all three
+  and the API layer sends whichever it is given, but the desktop UI only offers
+  a plain merge. The Android core offers all three.
 - **Resolving review threads.** Threads render with their resolved state; there
   is no button to resolve one.
 - **Editing or deleting your own comments.**
