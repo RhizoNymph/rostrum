@@ -6,7 +6,7 @@
 //! desktop's config does not already list as a clone.
 
 use chrono::{DateTime, Utc};
-use rostrum_core::{PrNumber, RepoId};
+use rostrum_core::{LoginKey, PrNumber, RepoId};
 use serde::{Deserialize, Serialize};
 
 /// `GET /api/v1/machine`: the desktop, as far as the phone needs to know it.
@@ -30,6 +30,27 @@ pub struct CloneInfo {
     pub repo: RepoId,
     /// The configured path, tilde-expanded, for display.
     pub path: String,
+}
+
+/// `GET /api/v1/config`: the part of the desktop's `config.json` a phone may
+/// copy — what to watch and how the feed is narrowed.
+///
+/// Deliberately not the whole file: clone paths and the conflict-handler
+/// command describe this machine (and the command may carry secrets), and the
+/// refresh interval and notification switch are the desktop's own habits, not
+/// the phone's.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DesktopConfig {
+    /// Watched repositories, in the desktop's order. Malformed entries in the
+    /// desktop's file are left out rather than passed on.
+    pub repos: Vec<RepoId>,
+    pub prs_per_repo: u32,
+    pub hide_drafts: bool,
+    pub hide_empty_repos: bool,
+    /// The author filter; empty means every author.
+    pub authors: Vec<LoginKey>,
+    pub include_involved: bool,
+    pub autostash: bool,
 }
 
 /// A pull request's identity.
@@ -617,6 +638,26 @@ mod tests {
             json,
             serde_json::json!({"code": "pairing_code_expired", "message": "late"})
         );
+    }
+
+    #[test]
+    fn a_desktop_config_round_trips_with_normalised_logins() {
+        let json = serde_json::json!({
+            "repos": [{"owner": "RhizoNymph", "name": "rostrum"}],
+            "prs_per_repo": 25,
+            "hide_drafts": true,
+            "hide_empty_repos": true,
+            "authors": ["Ada-Lin"],
+            "include_involved": false,
+            "autostash": false,
+        });
+        let config: DesktopConfig = serde_json::from_value(json).expect("parses");
+        assert_eq!(config.repos, vec![RepoId::new("RhizoNymph", "rostrum")]);
+        assert_eq!(config.authors[0].as_str(), "ada-lin");
+        let back: DesktopConfig =
+            serde_json::from_value(serde_json::to_value(&config).expect("serialises"))
+                .expect("parses");
+        assert_eq!(back, config);
     }
 
     #[test]

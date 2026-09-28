@@ -8,8 +8,9 @@ pairing, the authenticated API, and the phone's pinned HTTPS client. One crate,
 
 - Pairing codes, the `rostrum://pair` link that carries one, and the exchange
   of a code for a device token (and, optionally, the desktop's GitHub token).
-- Wire types for every authenticated request: machine info, local status, local
-  jobs, abort, sync-all, handoff sessions, errors.
+- Wire types for every authenticated request: machine info, the copyable part
+  of the desktop's config, local status, local jobs, abort, sync-all, handoff
+  sessions, errors.
 - The route table.
 - The phone's HTTPS client (feature `client`): certificate pinning, host
   fallback, probing an unknown host, error mapping.
@@ -73,6 +74,7 @@ always `Unauthorized` (the device was revoked), whatever the body says.
 | `/api/v1/hello` | GET | none | → `Hello` |
 | `/api/v1/pair` | POST | code | `PairRequest` → `PairResponse` |
 | `/api/v1/machine` | GET | token | → `MachineInfo` |
+| `/api/v1/config` | GET | token | → `DesktopConfig` |
 | `/api/v1/github-token` | GET | token | → `GitHubHandover` |
 | `/api/v1/local/status` | POST | token | `LocalStatusRequest` → `LocalStatus` |
 | `/api/v1/local/job` | POST | token | `JobRequest` → `JobOutcome` |
@@ -98,6 +100,17 @@ the response status.
 | `crates/rostrum-remote/src/api.rs` | Authenticated request/response types, `SyncRun::summary`, `ApiError` |
 | `crates/rostrum-remote/src/client.rs` | `RemoteClient`, `probe`, `PinnedVerifier`, `ClientError` |
 | `crates/rostrum-remote/tests/client.rs` | The client against a real TLS listener: pinning, fallback, probe, errors |
+
+## Copying the desktop's config
+
+`DesktopConfig` is the part of the desktop's `config.json` a phone may adopt:
+watched repositories, PRs per repository, and the feed preferences (hide
+drafts, hide empty repositories, author filter, include involved) plus
+`autostash`. Clone paths and the conflict-handler command are never sent —
+they describe the desktop's disk, and a handler command can embed secrets —
+and the refresh interval and notification switch stay per device. Malformed
+repository entries are dropped server-side; logins arrive normalised as
+`LoginKey`s.
 
 ## Invariants
 

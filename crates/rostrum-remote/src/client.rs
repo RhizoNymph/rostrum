@@ -30,8 +30,8 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     api::{
-        AbortRequest, ApiError, ApiErrorCode, HandoffSession, JobOutcome, JobRequest, LocalStatus,
-        LocalStatusRequest, MachineInfo, SyncAllRequest, SyncRun,
+        AbortRequest, ApiError, ApiErrorCode, DesktopConfig, HandoffSession, JobOutcome,
+        JobRequest, LocalStatus, LocalStatusRequest, MachineInfo, SyncAllRequest, SyncRun,
     },
     fingerprint::CertFingerprint,
     host::Host,
@@ -122,6 +122,12 @@ impl RemoteClient {
 
     pub async fn machine(&self) -> Result<MachineInfo, ClientError> {
         self.call(Method::GET, routes::MACHINE, None::<&()>, QUICK)
+            .await
+    }
+
+    /// The desktop's repositories and feed preferences, for copying.
+    pub async fn config(&self) -> Result<DesktopConfig, ClientError> {
+        self.call(Method::GET, routes::CONFIG, None::<&()>, QUICK)
             .await
     }
 
