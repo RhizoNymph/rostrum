@@ -71,6 +71,7 @@ Kotlin names are camelCase; every call that touches state or I/O is
 | remote | `parsePairingLink(uri)` (not suspend), `pairWithLink(uri, deviceName)`, `probeDesktop(host, port)`, `pairManual(host, port, fingerprint, code, deviceName)`, `setRemote(endpoint, deviceToken)`, `clearRemote()`, `remoteStatus()`, `machineInfo()`, `localStatus(repo, n)`, `runLocalJob(repo, n, op, autostash)`, `abortLocal(repo, n)`, `startSyncAll(op, autostash)`, `syncAllStatus()`, `handoffs()`, `refreshGithubTokenFromDesktop()`, `unpair()` |
 | notifications | `checkNotifications() → List<NotificationEvent>`, `markNotificationsSeen()` |
 | logging | top-level `installLogSink(LogSink, LogLevel)` |
+| markdown | top-level `renderMarkdown(source, repo) → List<MdBlock>`: the composer's Preview, rendered exactly as the timeline will show it |
 
 Key records and enums, by screen:
 
@@ -281,7 +282,7 @@ the data directory for every secret that passed through.
 | `src/detail/header.rs` | Header derivation | `header` |
 | `src/detail/timeline.rs` | Timeline, threads, checks | `timeline`, `thread_view`, `check_view` |
 | `src/detail/actions.rs` | PR-level mutations | — |
-| `src/markdown.rs` | Markdown tree → flat blocks | `MdBlock`, `MdBlockKind`, `MdSpan`, `render` |
+| `src/markdown.rs` | Markdown tree → flat blocks | `MdBlock`, `MdBlockKind`, `MdSpan`, `render`, `render_markdown` |
 | `src/diff/types.rs` | Files-tab records | `FilesOverview`, `FileDiff`, `DiffRow`, `CommentAnchor`, … |
 | `src/diff/load.rs` | Files per head; cached conversations | `LoadedFiles` |
 | `src/diff/highlight.rs` | Two-stream syntax highlighting | `file_highlights` |
