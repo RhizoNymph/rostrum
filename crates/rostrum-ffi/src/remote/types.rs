@@ -36,7 +36,7 @@ pub struct DesktopProbe {
 /// A completed pairing. Persist `endpoint` anywhere and `device_token` (and
 /// `github.token`) in the Keystore; hand them back with `set_remote` and
 /// `set_github_token` on the next launch.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, PartialEq, Eq, uniffi::Record)]
 pub struct PairingResult {
     pub machine: MachineInfo,
     /// The desktop's addresses, port and certificate fingerprint, serialised.
@@ -47,6 +47,19 @@ pub struct PairingResult {
     pub device_token: String,
     /// The desktop's GitHub token, when it chose to hand one over. A secret.
     pub github: Option<DesktopGitHubToken>,
+}
+
+/// Redacted: a stray `{:?}` must not put the device token in a log.
+impl std::fmt::Debug for PairingResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PairingResult")
+            .field("machine", &self.machine)
+            .field("endpoint", &self.endpoint)
+            .field("device_id", &self.device_id)
+            .field("device_token", &"redacted")
+            .field("github", &self.github)
+            .finish()
+    }
 }
 
 /// A GitHub token handed over by the desktop.
@@ -264,4 +277,35 @@ pub struct HandoffSession {
     pub worktree: Option<String>,
     pub started_at: Option<SystemTime>,
     pub attach_command: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn secrets_are_redacted_in_debug_output() {
+        let result = PairingResult {
+            machine: MachineInfo {
+                name: "desk".into(),
+                version: "1".into(),
+                api_version: 1,
+                clones: vec![],
+                handler_configured: false,
+                autostash: false,
+            },
+            endpoint: "{}".into(),
+            device_id: "device".into(),
+            device_token: "device-secret".into(),
+            github: Some(DesktopGitHubToken {
+                token: "ghp_secret".into(),
+                source: "gh".into(),
+                host: "github.com".into(),
+            }),
+        };
+        let printed = format!("{result:?}");
+        assert!(!printed.contains("device-secret"), "{printed}");
+        assert!(!printed.contains("ghp_secret"), "{printed}");
+        assert!(printed.contains("device"));
+    }
 }
