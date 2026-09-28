@@ -58,10 +58,21 @@ class ProfileManagerTest {
         @Test
         fun `wipes the legacy state before opening the registry`() = runTest {
             var callsAtWipe: List<String>? = null
-            val manager = manager { callsAtWipe = registry.calls.toList() }
+            val manager = manager {
+                callsAtWipe = registry.calls.toList()
+                true
+            }
             manager.start()
             assertEquals(emptyList<String>(), callsAtWipe)
             assertInstanceOf(ProfilesState.Ready::class.java, manager.state.value)
+            assertTrue(manager.upgradedFromSingleProfile.value)
+        }
+
+        @Test
+        fun `a start with nothing legacy to wipe is not an upgrade`() = runTest {
+            val manager = manager()
+            manager.start()
+            assertFalse(manager.upgradedFromSingleProfile.value)
         }
 
         @Test

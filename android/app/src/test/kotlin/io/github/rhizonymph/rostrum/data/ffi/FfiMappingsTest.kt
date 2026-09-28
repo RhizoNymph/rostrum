@@ -36,6 +36,13 @@ import org.junit.jupiter.api.Test
 import uniffi.rostrum_ffi.InternalException
 import uniffi.rostrum_ffi.RostrumException
 import java.time.Instant
+import io.github.rhizonymph.rostrum.data.model.ProfileKind
+import io.github.rhizonymph.rostrum.testing.orFail
+import uniffi.rostrum_ffi.MachineInfo as FMachineInfo
+import uniffi.rostrum_ffi.PairingResult as FPairingResult
+import uniffi.rostrum_ffi.ProfileInfo as FProfileInfo
+import uniffi.rostrum_ffi.ProfileKind as FProfileKind
+import uniffi.rostrum_ffi.ProfilePairing as FProfilePairing
 import uniffi.rostrum_ffi.BaseDivergence as FBaseDivergence
 import uniffi.rostrum_ffi.ChangedFile as FChangedFile
 import uniffi.rostrum_ffi.CheckRunView as FCheckRunView
@@ -133,6 +140,7 @@ class FfiMappingsTest {
                 RostrumException.InvalidRepo("x", "not owner/name") to BackendError.InvalidRepo("x", "not owner/name"),
                 RostrumException.DuplicateRepo("a/b") to BackendError.DuplicateRepo("a/b"),
                 RostrumException.InvalidInput("why") to BackendError.InvalidInput("why"),
+                RostrumException.ProfileNotFound("0123456789abcdef") to BackendError.ProfileNotFound("0123456789abcdef"),
                 RostrumException.Storage("disk") to BackendError.Storage("disk"),
                 RostrumException.Internal("bug") to BackendError.Internal("bug"),
             )
@@ -414,6 +422,55 @@ class FfiMappingsTest {
             val session = FHandoffSession("s", "a/b", 3u, "h", "~/w", at, "tmux attach -t =s").toModel()
             assertEquals(3, session.pr!!.number)
             assertInstanceOf(io.github.rhizonymph.rostrum.data.model.HandoffSession::class.java, session)
+        }
+    }
+
+    @Nested
+    inner class Profiles {
+        private val info = FProfileInfo(
+            id = "0123456789abcdef",
+            label = "framework",
+            kind = FProfileKind.Desktop("framework", "4F2A · 91C0 · 7E3B"),
+            githubLogin = "RhizoNymph",
+            createdAtMs = 1_000,
+            lastUsedMs = 2_000,
+        )
+
+        @Test
+        fun `a profile maps with its kind and times`() {
+            val profile = info.toModel().orFail()
+            assertEquals("0123456789abcdef", profile.id.value)
+            assertEquals("framework", profile.label)
+            assertEquals(ProfileKind.Desktop("framework", "4F2A · 91C0 · 7E3B"), profile.kind)
+            assertEquals("RhizoNymph", profile.githubLogin)
+            assertEquals(Instant.ofEpochMilli(1_000), profile.createdAt)
+            assertEquals(Instant.ofEpochMilli(2_000), profile.lastUsed)
+            assertEquals(ProfileKind.TokenOnly, FProfileKind.TokenOnly.toModel())
+        }
+
+        @Test
+        fun `an id that could escape its directory is refused`() {
+            assertEquals(null, info.copy(id = "../core").toModelOrNull())
+            assertInstanceOf(Outcome.Err::class.java, info.copy(id = "a/b").toModel())
+        }
+
+        @Test
+        fun `a pairing keeps its profile, whether it was created, and the secrets`() {
+            val pairing = FProfilePairing(
+                profile = info,
+                created = false,
+                pairing = FPairingResult(
+                    machine = FMachineInfo("framework", "0.1.0", 1u, emptyList(), false, true),
+                    endpoint = "{}",
+                    deviceId = "dev-1",
+                    deviceToken = "rdt_x",
+                    github = null,
+                ),
+            ).toModel().orFail()
+            assertEquals(false, pairing.created)
+            assertEquals("framework", pairing.profile.label)
+            assertEquals("rdt_x", pairing.pairing.deviceToken)
+            assertEquals("framework", pairing.pairing.machine.name)
         }
     }
 

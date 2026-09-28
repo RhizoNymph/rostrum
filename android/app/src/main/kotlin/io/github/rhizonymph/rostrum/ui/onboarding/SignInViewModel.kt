@@ -57,6 +57,13 @@ class SignInViewModel(
     val state: StateFlow<SignInUiState> = _state.asStateFlow()
 
     init {
+        if (profile == null) {
+            viewModelScope.launch {
+                profiles.upgradedFromSingleProfile.collect { upgraded ->
+                    _state.update { it.copy(notice = if (upgraded) UPGRADE_NOTICE else null) }
+                }
+            }
+        }
         if (profile != null) {
             viewModelScope.launch {
                 profile.session.state.collect { sessionState ->
@@ -109,7 +116,12 @@ class SignInViewModel(
             }
         }
 
-    private companion object {
-        const val TAG = "RostrumSignIn"
+    companion object {
+        private const val TAG = "RostrumSignIn"
+
+        /** Shown on first run after the upgrade that wiped the single-profile sign-in. */
+        const val UPGRADE_NOTICE =
+            "Rostrum now keeps a separate profile for each desktop, so this update signed you out. " +
+                "Pair with your desktop again to continue: tap Pair with your desktop below."
     }
 }

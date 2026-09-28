@@ -29,6 +29,7 @@ internal fun RostrumException.toBackendError(): BackendError = when (this) {
     is RostrumException.InvalidRepo -> BackendError.InvalidRepo(input, reason)
     is RostrumException.DuplicateRepo -> BackendError.DuplicateRepo(repo)
     is RostrumException.InvalidInput -> BackendError.InvalidInput(reason)
+    is RostrumException.ProfileNotFound -> BackendError.ProfileNotFound(id)
     is RostrumException.Storage -> BackendError.Storage(reason)
     is RostrumException.Internal -> BackendError.Internal(reason)
 }

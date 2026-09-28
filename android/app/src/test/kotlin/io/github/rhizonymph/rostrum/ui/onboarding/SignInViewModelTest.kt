@@ -65,6 +65,15 @@ class SignInViewModelTest {
     }
 
     @Test
+    fun `after the upgrade wiped the old sign-in, first run says to pair again`() = runTest(main.dispatcher) {
+        val profiles = testProfileManager(registry, vault, legacy = { true }).also { it.start() }
+        val vm = SignInViewModel(profiles, profile = null)
+        advanceUntilIdle()
+        assertEquals(SignInViewModel.UPGRADE_NOTICE, vm.state.value.notice)
+        assertTrue(vm.state.value.notice!!.contains("Pair with your desktop"))
+    }
+
+    @Test
     fun `on first run a good token makes a profile and switches to it`() = runTest(main.dispatcher) {
         val (profiles, vm) = firstRun()
         vm.onTokenChange(TEST_TOKEN)

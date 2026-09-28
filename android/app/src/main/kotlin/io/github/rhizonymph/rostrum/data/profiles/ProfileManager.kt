@@ -57,6 +57,14 @@ class ProfileManager(
 
     private class Entry(val handle: ProfileHandle, val watcher: Job)
 
+    private val _upgradedFromSingleProfile = MutableStateFlow(false)
+
+    /**
+     * This start wiped a single-profile build's sign-in and pairing, so the
+     * first-run screen explains why it is back and how to pair again.
+     */
+    val upgradedFromSingleProfile: StateFlow<Boolean> = _upgradedFromSingleProfile.asStateFlow()
+
     private val entries = ConcurrentHashMap<ProfileId, Entry>()
     private val startLock = Mutex()
 
@@ -74,7 +82,7 @@ class ProfileManager(
         startLock.withLock {
             if (_state.value is ProfilesState.Ready) return
             _state.value = ProfilesState.Starting
-            legacy.wipe()
+            if (legacy.wipe()) _upgradedFromSingleProfile.value = true
             val ready = ops.withLock { openRegistry() }
             if (ready == null) return
             val order = listOfNotNull(ready.active) + ready.profiles.map { it.id }.filter { it != ready.active }
@@ -272,6 +280,8 @@ class ProfileManager(
     suspend fun remove(id: ProfileId): Outcome<ProfileRemoval> {
         val removed = (_state.value as? ProfilesState.Ready)?.profile(id)
             ?: return Outcome.Err(BackendError.ProfileNotFound(id.value))
+        // The registry unpairs only through an open core with its remote set: restore it first.
+        handle(id).session.restore()
         val removal = ops.withLock {
             val wasActive = (_state.value as? ProfilesState.Ready)?.active == id
             when (val gone = registry.removeProfile(id)) {

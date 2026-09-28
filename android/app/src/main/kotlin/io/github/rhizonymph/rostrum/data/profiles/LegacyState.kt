@@ -9,10 +9,11 @@ import java.io.File
 
 /** Clears what the single-profile builds left behind. Runs before the registry opens. */
 fun interface LegacyCleanup {
-    suspend fun wipe()
+    /** Whether anything was there to wipe (this start is the first after an upgrade). */
+    suspend fun wipe(): Boolean
 
     companion object {
-        val None = LegacyCleanup {}
+        val None = LegacyCleanup { false }
     }
 }
 
@@ -33,11 +34,12 @@ class LegacyStateWipe(
     private val legacySecretsDir: File,
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : LegacyCleanup {
-    override suspend fun wipe() {
+    override suspend fun wipe(): Boolean {
         val report = withContext(io) { wipeNow() }
         if (report.removedAnything) {
             RostrumLog.i(TAG, "legacy_state_wiped", "core" to report.coreRemoved, "secrets" to report.secretsRemoved)
         }
+        return report.removedAnything
     }
 
     fun wipeNow(): LegacyWipeReport {

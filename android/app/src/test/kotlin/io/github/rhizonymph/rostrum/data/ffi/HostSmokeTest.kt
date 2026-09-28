@@ -5,6 +5,8 @@ import io.github.rhizonymph.rostrum.data.Outcome
 import io.github.rhizonymph.rostrum.data.model.GitHubStatus
 import io.github.rhizonymph.rostrum.data.model.MdBlockKind
 import io.github.rhizonymph.rostrum.data.model.PrRef
+import io.github.rhizonymph.rostrum.data.model.ProfileId
+import io.github.rhizonymph.rostrum.data.model.ProfileKind
 import io.github.rhizonymph.rostrum.testing.orFail
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
@@ -23,6 +25,7 @@ import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.TestMethodOrder
+import uniffi.rostrum_ffi.ProfileRegistry
 import java.io.File
 import java.nio.file.Files
 import java.util.Base64
@@ -146,5 +149,52 @@ class HostSmokeTest {
         assertEquals(emptyList<File>(), leaked)
         assertEquals(GitHubStatus.NoToken, backend.setGitHubToken(null).orFail())
         assertFalse(backend.githubStatus() is GitHubStatus.Verified)
+    }
+
+    @Test
+    @Order(10)
+    fun `the profile registry keeps one core per profile and removes it`(): Unit = runBlocking {
+        val root = File(dir, "profiles")
+        // The generated registry directly: one cached core per id. Each call
+        // hands Kotlin a new wrapper, so "the same" shows as shared state.
+        val registry = ProfileRegistry.open(File(dir, "raw-profiles").absolutePath)
+        val raw = registry.createTokenProfile("raw")
+        registry.core(raw.id).addRepo("serde-rs/serde")
+        assertTrue(registry.core(raw.id).settings().repos.contains("serde-rs/serde"))
+        registry.removeProfile(raw.id)
+        assertTrue(registry.profiles().isEmpty())
+
+        // Through the adapter, as the app uses it.
+        val profiles = FfiProfileRegistry(root)
+        assertEquals(emptyList<Any>(), profiles.profiles().orFail())
+        assertEquals(null, profiles.activeProfile().orFail())
+        val work = profiles.createTokenProfile("Work").orFail()
+        assertEquals(ProfileKind.TokenOnly, work.kind)
+        assertEquals(16, work.id.value.length)
+        assertInstanceOf(BackendError.InvalidInput::class.java, profiles.createTokenProfile("  ").error())
+        assertEquals(work.id, profiles.setActiveProfile(work.id).orFail().id)
+        assertEquals(work.id, profiles.activeProfile().orFail())
+        assertEquals("Home", profiles.renameProfile(work.id, "Home").orFail().label)
+        assertEquals("octocat", profiles.setProfileLogin(work.id, "octocat").orFail().githubLogin)
+
+        // Its backend is a real core in the profile's own directory.
+        val backend = profiles.backend(work.id)
+        assertEquals(GitHubStatus.NoToken, backend.githubStatus())
+        backend.addRepo("tokio-rs/tokio").orFail()
+        assertTrue(File(root, "profiles/${work.id.value}").isDirectory)
+
+        val preview = profiles.parsePairingLink(
+            "rostrum://pair?v=1&m=deskb&h=10.0.0.2&p=9485&c=WDJB-MJHT&fp=" +
+                Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32) { 7 }),
+        ).orFail()
+        assertEquals("deskb", preview.machine)
+        assertEquals(1, profiles.profiles().orFail().size, "reading a link makes no profile")
+
+        profiles.removeProfile(work.id).orFail()
+        assertEquals(emptyList<Any>(), profiles.profiles().orFail())
+        assertEquals(null, profiles.activeProfile().orFail())
+        assertFalse(File(root, "profiles/${work.id.value}").exists())
+        val gone = ProfileId.of("0123456789abcdef")!!
+        assertEquals(BackendError.ProfileNotFound("0123456789abcdef"), profiles.setActiveProfile(gone).error())
     }
 }

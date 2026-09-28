@@ -41,14 +41,15 @@ class AppContainer(private val app: Application) {
         .ifBlank { "Android phone" }
 
     /**
-     * Every profile: the core's registry (settings and cache per profile
-     * under `files/profiles`), and each profile's secrets under its id in
-     * `no_backup/secrets/profiles`. The UI and the notification worker share
+     * Every profile: the core's registry (the list in
+     * `files/rostrum/profiles.json`, settings and cache per profile under
+     * `files/rostrum/profiles/<id>`), and each profile's secrets under its id
+     * in `no_backup/secrets/profiles`. The UI and the notification worker share
      * it. The single-profile builds' `files/core` and unkeyed secrets are
      * wiped on start.
      */
     val profiles = ProfileManager(
-        registry = FfiProfileRegistry(File(app.filesDir, "profiles")),
+        registry = FfiProfileRegistry(File(app.filesDir, "rostrum")),
         secrets = EncryptedFileSecretStore(
             directory = File(app.noBackupFilesDir, "secrets/profiles"),
             cipher = AndroidKeystoreCipher(),
