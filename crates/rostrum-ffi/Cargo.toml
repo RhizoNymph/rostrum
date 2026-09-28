@@ -26,10 +26,11 @@ rostrum-remote = { workspace = true, features = ["client"] }
 
 chrono.workspace = true
 futures.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+# `sync`: the actor, writer and notifier are channels. Declared here rather
+# than relied on through another crate's feature selection.
+tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 # `tokio`: exported async functions run inside a Tokio context.
@@ -44,4 +45,7 @@ uniffi = { workspace = true, features = ["cli"] }
 [dev-dependencies]
 rcgen.workspace = true
 rustls.workspace = true
+serde.workspace = true
+# The integration tests serve the desktop and GitHub stand-ins themselves.
+tokio = { workspace = true, features = ["net", "io-util"] }
 tokio-rustls.workspace = true
