@@ -42,6 +42,12 @@ Overview:
       When a local rebase or merge stops on conflicts and a handler is
       configured, leaves the worktree in place and spawns the handler in a
       named tmux session with a pre-gathered context bundle.
+    android_build: >
+      The Android app's toolchain. A Gradle project under `android/`
+      cross-compiles `rostrum-ffi` for each Android ABI with cargo-ndk,
+      generates its Kotlin bindings with UniFFI, packages both into a signed
+      APK, and publishes that APK for `rostrumd` to serve to phones. It also
+      owns the Compose theme foundation (palette, Material mapping, fonts).
 
   data_flow: >
     At startup the app resolves a GitHub token (`gh auth token`, falling back to
@@ -78,6 +84,11 @@ Overview:
     conversion and updating a branch from its base are the exceptions: REST
     cannot express either one fully, so both go out as GraphQL mutations keyed by
     the pull request's node id.
+
+    On Android, the Kotlin app reaches the same Rust crates through
+    `rostrum-ffi`: Kotlin calls the UniFFI-generated bindings, which call into
+    `librostrum_ffi.so` through JNA. The Gradle build produces the library and
+    the bindings together, from one pinned uniffi version.
 
 Features Index:
   ui_foundation:
@@ -125,6 +136,11 @@ Features Index:
     entry_points: [crates/rostrum-handoff/src/lib.rs, crates/rostrum-git/src/context.rs]
     depends_on: [local_git]
     doc: docs/features/conflict_handoff.md
+  android_build:
+    description: Gradle project, cargo-ndk + UniFFI pipeline, signing, and APK publishing for the Android app.
+    entry_points: [android/scripts/build-apk.sh, android/app/build.gradle.kts, crates/rostrum-ffi/src/lib.rs]
+    depends_on: []
+    doc: docs/features/android_build.md
 ```
 
 ## Workspace layout
@@ -144,6 +160,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 | `rostrum-local` | no | One pull request's local state (`local_state`) and one local operation on it (`run_local_job`), shared by every caller |
 | `rostrum-config` | no | `config.json`: watched repositories, clones, feed preferences, conflict handler |
 | `rostrum-md` | no | `pulldown-cmark` → renderable markdown model |
+| `rostrum-ffi` | no | UniFFI surface for the Android app, built as `librostrum_ffi.so` (placeholder: `ffi_version`) |
 | `rostrum-ui` | yes | Theme, components, text/selection, markdown element |
 | `rostrum` | yes | Bootstrap, window, root views, `SyncEngine` |
 
@@ -205,6 +222,31 @@ sudo apt install libxkbcommon-x11-dev
 
 then add `"x11"` back to the `gpui`/`gpui_platform` feature lists in the root
 `Cargo.toml`. GPUI picks whichever backend it finds at runtime.
+
+## Android build prerequisites
+
+The Android app (`android/`, see `docs/features/android_build.md`) needs the
+following on top of the Rust toolchain. `android/scripts/build-apk.sh` checks
+each one and names the fix for any that is missing.
+
+- Rust targets `aarch64-linux-android` and `x86_64-linux-android` for the
+  active toolchain (`rustup target add ...`).
+- `cargo-ndk` 4.1.2 (`cargo install cargo-ndk --version 4.1.2 --locked`).
+- Android SDK with platform `android-36` and build-tools, located by `sdk.dir`
+  in `android/local.properties` (written from `$ANDROID_HOME` or
+  `~/Android/Sdk` if missing).
+- Android NDK r30 (`30.0.16248370`, the `ndk` entry in
+  `android/gradle/libs.versions.toml`) in `<sdk>/ndk/<version>`, or
+  `$ANDROID_NDK_HOME`.
+- A JDK 21 that Gradle can detect (the daemon and the compile toolchain), plus
+  any Java to launch `gradlew`.
+- For signed release builds, `android/.env` pointing at the keystore outside
+  the repository (`~/.config/rostrum/android/release.jks`). Without it, release
+  builds fall back to the debug key.
+
+Use the rustup `cargo` (`~/.cargo/bin/cargo` or `$CARGO`), never the one on
+PATH. On this machine that is a shim that may run builds on a remote host
+without the NDK.
 
 ## Dependency sourcing
 
