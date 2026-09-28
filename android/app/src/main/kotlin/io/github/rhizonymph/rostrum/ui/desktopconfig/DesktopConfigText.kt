@@ -13,14 +13,14 @@ object DesktopConfigText {
     fun sheetTitle(machine: String) = "Copy settings from $machine"
 
     fun replaceBody(machine: String) =
-        "This replaces this phone's repositories, pull requests per repository, feed filters and stash default with $machine's."
+        "This replaces this profile's repositories, pull requests per repository, feed filters and stash default with $machine's."
 
-    fun unchanged(machine: String) = "This phone already has $machine's settings."
+    fun unchanged(machine: String) = "This profile already has $machine's settings."
 
     fun copiedMessage(machine: String, repositories: Int) = "Copied ${repositories(repositories)} from $machine"
 
     fun removalWarning(removed: Int): String? =
-        if (removed <= 0) null else "${repositories(removed)} will be removed from this phone."
+        if (removed <= 0) null else "${repositories(removed)} will be removed from this profile."
 
     /** `25 per repository · drafts hidden · empty repositories shown · ada-lin and involved · stash on`. */
     fun preferencesSummary(preview: DesktopConfigPreview): String {
@@ -75,7 +75,7 @@ object DesktopConfigText {
     private fun naturalJoin(parts: List<String>): String =
         if (parts.size == 1) parts.single() else parts.dropLast(1).joinToString(", ") + " and " + parts.last()
 
-    /** The desktop's repositories in its order, marking the ones this phone lacks. */
+    /** The desktop's repositories in its order, marking the ones this profile lacks. */
     fun repoRows(preview: DesktopConfigPreview): List<DesktopRepoRow> {
         val added = preview.added.mapTo(mutableSetOf()) { it.lowercase() }
         return preview.repos.map { DesktopRepoRow(it, it.lowercase() in added) }

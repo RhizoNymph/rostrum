@@ -56,7 +56,7 @@ class DesktopConfigSheetViewModelTest {
         val ready = h.vm.state.value as CopySheetState.Ready
         assertEquals("nymph-desk", ready.preview.machine)
         assertTrue(ready.preview.changesAnything)
-        assertEquals("2 repositories will be removed from this phone.", ready.removalWarning)
+        assertEquals("2 repositories will be removed from this profile.", ready.removalWarning)
         assertEquals(ActionState.Idle, ready.copy)
     }
 

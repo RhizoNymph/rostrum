@@ -43,8 +43,8 @@ class DesktopConfigTest {
         @Test
         fun `the removal warning appears only when something is removed`() {
             assertNull(DesktopConfigText.removalWarning(0))
-            assertEquals("1 repository will be removed from this phone.", DesktopConfigText.removalWarning(1))
-            assertEquals("2 repositories will be removed from this phone.", DesktopConfigText.removalWarning(2))
+            assertEquals("1 repository will be removed from this profile.", DesktopConfigText.removalWarning(1))
+            assertEquals("2 repositories will be removed from this profile.", DesktopConfigText.removalWarning(2))
         }
 
         @Test

@@ -27,8 +27,8 @@ import io.github.rhizonymph.rostrum.ui.theme.RostrumText
 import io.github.rhizonymph.rostrum.ui.theme.RostrumTheme
 
 /**
- * The desktop's repositories (ones this phone lacks marked "+"), the ones
- * copying would drop from this phone, and a line summing up the feed
+ * The desktop's repositories (ones this profile lacks marked "+"), the ones
+ * copying would drop from this profile, and a line summing up the feed
  * preferences that come with them.
  */
 @Composable
@@ -63,12 +63,12 @@ fun DesktopConfigPreviewView(
                     repo = row.repo,
                     marker = if (row.added) "+" else null,
                     markerColor = colors.successText,
-                    description = if (row.added) "${row.repo}, added to this phone" else row.repo,
+                    description = if (row.added) "${row.repo}, added to this profile" else row.repo,
                 )
             }
         }
         if (preview.removed.isNotEmpty()) {
-            SectionHeader("Removed from this phone", trailing = preview.removed.size.toString(), trailingColor = colors.dangerText)
+            SectionHeader("Removed from this profile", trailing = preview.removed.size.toString(), trailingColor = colors.dangerText)
             RostrumCard(Modifier.fillMaxWidth()) {
                 preview.removed.forEachIndexed { index, repo ->
                     if (index > 0) CardDivider()
@@ -76,7 +76,7 @@ fun DesktopConfigPreviewView(
                         repo = repo,
                         marker = MINUS,
                         markerColor = colors.dangerText,
-                        description = "$repo, removed from this phone",
+                        description = "$repo, removed from this profile",
                         struck = true,
                     )
                 }
