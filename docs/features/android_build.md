@@ -266,6 +266,13 @@ cd android && ./gradlew :app:hostSmokeTest -Prostrum.cargoProfile=dev      # rea
 - **JNA ≥ 5.12, as the AAR.** The generated bindings need it, and only the
   `@aar` artifact carries `libjnidispatch.so` for Android ABIs. It is pinned
   at 5.19.1, and R8 must keep `com.sun.jna.**` and `uniffi.**`.
+- **R8 keeps the navigation route types.** Navigation Compose resolves an enum
+  route argument (`PrTab`) by its fully qualified class name at runtime and
+  reads every route's serializer, so `ui/navigation` keeps its enum names,
+  `@Serializable` classes and generated serializers. Without it, the minified
+  release crashed on every launch while the debug build (not minified) and
+  every JVM test passed. Only running the release APK catches this class of
+  bug, which is what `smoke-release.sh` is for.
 - **The keystore stays outside the repository; secrets are never committed.**
   `android/.env`, `*.jks`, and `*.keystore` are gitignored.
 - **The publish JSON is a contract.** It has exactly five keys, with
@@ -317,3 +324,4 @@ cd android && ./gradlew :app:hostSmokeTest -Prostrum.cargoProfile=dev      # rea
 | `android/.env.example` | Signing settings template (`android/.env` is gitignored) |
 | `android/scripts/build-apk.sh` | Preflight checks, then `:app:assembleRelease` |
 | `android/scripts/publish-apk.sh` | Verify, then atomic publish of APK and JSON for `rostrumd` |
+| `android/scripts/smoke-release.sh` | Install the release APK on an attached emulator/device, launch it, fail on a crash — run before publishing |
