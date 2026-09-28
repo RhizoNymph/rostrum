@@ -73,14 +73,18 @@ impl RostrumCore {
             Some(raw) => raw,
             None => {
                 let client = client.ok_or(RostrumError::NotSignedIn)?;
-                let fetched = self.github(client.files(&key.repo, key.number).await).await?;
+                let fetched = self
+                    .github(client.files(&key.repo, key.number).await)
+                    .await?;
                 let write = Write::Files {
                     repo: key.repo.clone(),
                     number: key.number,
                     head_sha: head.clone(),
                     files: fetched.clone(),
                 };
-                self.actor.call(move |state| state.writer.send(write)).await?;
+                self.actor
+                    .call(move |state| state.writer.send(write))
+                    .await?;
                 fetched
             }
         };
@@ -140,7 +144,10 @@ impl RostrumCore {
     }
 
     /// The threads `known_conversation` holds, or none.
-    pub(crate) async fn known_threads(&self, key: &PullKey) -> Result<Vec<ReviewThread>, RostrumError> {
+    pub(crate) async fn known_threads(
+        &self,
+        key: &PullKey,
+    ) -> Result<Vec<ReviewThread>, RostrumError> {
         Ok(self
             .known_conversation(key)
             .await?

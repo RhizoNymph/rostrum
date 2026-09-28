@@ -59,7 +59,10 @@ async fn settings_validate_persist_and_never_hold_a_secret() {
     let feed = core.cached_feed().await.expect("feed");
     let settings = core.settings().await.expect("settings");
     assert_eq!(
-        feed.repos.iter().map(|section| section.repo.clone()).collect::<Vec<_>>(),
+        feed.repos
+            .iter()
+            .map(|section| section.repo.clone())
+            .collect::<Vec<_>>(),
         settings.repos,
         "the feed follows settings order"
     );
@@ -68,7 +71,9 @@ async fn settings_validate_persist_and_never_hold_a_secret() {
     assert_eq!(settings.refresh_interval_secs, 10);
     let settings = core.set_prs_per_repo(1000).await.expect("per repo");
     assert_eq!(settings.prs_per_repo, 100);
-    core.set_notifications(true, true).await.expect("notifications");
+    core.set_notifications(true, true)
+        .await
+        .expect("notifications");
     core.set_autostash(true).await.expect("autostash");
     core.set_filter(FeedPreferences {
         hide_drafts: true,
@@ -103,8 +108,18 @@ async fn settings_validate_persist_and_never_hold_a_secret() {
     // Nor the token: Kotlin hands it in again.
     assert_eq!(reopened.github_status().await, GitHubStatus::NoToken);
 
-    assert!(reopened.remove_repo("rust-lang/rust".into()).await.expect("remove"));
-    assert!(!reopened.remove_repo("rust-lang/rust".into()).await.expect("remove"));
+    assert!(
+        reopened
+            .remove_repo("rust-lang/rust".into())
+            .await
+            .expect("remove")
+    );
+    assert!(
+        !reopened
+            .remove_repo("rust-lang/rust".into())
+            .await
+            .expect("remove")
+    );
     assert!(reopened.warnings().await.is_empty());
     drop(reopened);
 
@@ -152,7 +167,10 @@ async fn the_feed_paints_from_the_cache_and_filters() {
     assert!(capped.authors.iter().any(|author| author.selected));
     assert_eq!(capped.authors.len() as u32 + capped.hidden, 3);
 
-    let feed = core.toggle_collapsed("octo/repo".into()).await.expect("collapse");
+    let feed = core
+        .toggle_collapsed("octo/repo".into())
+        .await
+        .expect("collapse");
     assert_eq!(feed.repos[0].body, RepoBody::Collapsed);
     assert!(matches!(
         core.toggle_collapsed("no/such".into()).await,
@@ -264,7 +282,13 @@ async fn drafts_anchor_persist_and_go_stale_when_the_head_moves() {
     let end = anchor_of(rows, LineKind::Context, 12);
 
     let review = core
-        .add_draft("octo/repo".into(), 1, added.clone(), None, "Why two?".into())
+        .add_draft(
+            "octo/repo".into(),
+            1,
+            added.clone(),
+            None,
+            "Why two?".into(),
+        )
         .await
         .expect("single draft");
     assert_eq!(review.drafts.len(), 1);
@@ -329,7 +353,8 @@ async fn drafts_anchor_persist_and_go_stale_when_the_head_moves() {
         .await
         .expect("edit");
     assert!(matches!(
-        core.edit_draft("octo/repo".into(), 1, 999, "x".into()).await,
+        core.edit_draft("octo/repo".into(), 1, 999, "x".into())
+            .await,
         Err(RostrumError::InvalidInput { .. })
     ));
     drop(core);
@@ -392,7 +417,13 @@ async fn drafts_anchor_persist_and_go_stale_when_the_head_moves() {
         .expect("token");
     assert!(matches!(
         moved
-            .submit_review("octo/repo".into(), 1, ReviewEvent::Comment, "x".into(), true)
+            .submit_review(
+                "octo/repo".into(),
+                1,
+                ReviewEvent::Comment,
+                "x".into(),
+                true
+            )
             .await,
         Err(RostrumError::DraftsStale { .. })
     ));

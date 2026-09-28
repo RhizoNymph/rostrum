@@ -33,10 +33,9 @@ impl RostrumCore {
         let loaded = self.load_files(&key).await?;
         let threads = self.known_threads(&key).await?;
         let drafts = self.draft_list(&key).await?;
-        let built = tokio::task::spawn_blocking(move || {
-            overview::overview(&loaded, &threads, &drafts)
-        })
-        .await?;
+        let built =
+            tokio::task::spawn_blocking(move || overview::overview(&loaded, &threads, &drafts))
+                .await?;
         Ok(built)
     }
 

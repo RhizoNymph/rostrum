@@ -1,11 +1,7 @@
 //! The Files tab: an overview of where the change falls, and one file's diff
 //! at a time as render-ready rows.
 
-use crate::{
-    detail::ReviewThreadView,
-    review::ReviewDraft,
-    types::Side,
-};
+use crate::{detail::ReviewThreadView, review::ReviewDraft, types::Side};
 
 /// The Files tab's landing view.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -148,12 +144,21 @@ pub enum FileDiffBody {
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum DiffRow {
     /// A hunk's `@@ -a,b +c,d @@ context` line.
-    Hunk { index: u32, header: String },
-    Line { line: DiffLineView },
+    Hunk {
+        index: u32,
+        header: String,
+    },
+    Line {
+        line: DiffLineView,
+    },
     /// An existing thread, placed right after the line it is anchored to.
-    Thread { thread: ReviewThreadView },
+    Thread {
+        thread: ReviewThreadView,
+    },
     /// One of your pending drafts, placed right after its (last) line.
-    Draft { draft: ReviewDraft },
+    Draft {
+        draft: ReviewDraft,
+    },
 }
 
 /// What a line does to the file.

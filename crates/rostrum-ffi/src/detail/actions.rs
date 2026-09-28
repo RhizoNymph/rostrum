@@ -188,15 +188,24 @@ impl RostrumCore {
     pub async fn reopen_pull_request(&self, repo: String, number: u32) -> Result<(), RostrumError> {
         let key = PullKey::parse(&repo, number)?;
         let (client, _) = self.target(&key).await?;
-        self.github(client.set_state(&key.repo, key.number, IssueState::Open).await)
-            .await?;
+        self.github(
+            client
+                .set_state(&key.repo, key.number, IssueState::Open)
+                .await,
+        )
+        .await?;
         self.after_mutation(&key).await;
         Ok(())
     }
 
     /// Move into (`draft = true`) or out of draft. Pass the header's
     /// `draft_action.to_draft`. No confirmation needed: it is reversible.
-    pub async fn set_draft(&self, repo: String, number: u32, draft: bool) -> Result<(), RostrumError> {
+    pub async fn set_draft(
+        &self,
+        repo: String,
+        number: u32,
+        draft: bool,
+    ) -> Result<(), RostrumError> {
         let key = PullKey::parse(&repo, number)?;
         let (client, pr) = self.target(&key).await?;
         let target = if draft {

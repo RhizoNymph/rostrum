@@ -96,7 +96,9 @@ impl RostrumCore {
     ) -> Result<PairingResult, RostrumError> {
         let device_name = device_name.trim().to_string();
         if device_name.is_empty() {
-            return Err(RostrumError::invalid("name this device so the desktop can list it"));
+            return Err(RostrumError::invalid(
+                "name this device so the desktop can list it",
+            ));
         }
         let pairing = RemoteClient::new(endpoint.clone(), None)?;
         let hello = pairing.hello().await?;
@@ -106,14 +108,10 @@ impl RostrumCore {
                 supported: API_VERSION,
             });
         }
-        let response = pairing
-            .pair(&PairRequest {
-                code,
-                device_name,
-            })
-            .await?;
-        let serialised = serde_json::to_string(&endpoint)
-            .map_err(|error| RostrumError::internal(format!("could not serialise the endpoint: {error}")))?;
+        let response = pairing.pair(&PairRequest { code, device_name }).await?;
+        let serialised = serde_json::to_string(&endpoint).map_err(|error| {
+            RostrumError::internal(format!("could not serialise the endpoint: {error}"))
+        })?;
         let client = Arc::new(RemoteClient::new(endpoint, Some(response.token.clone()))?);
         let github = response.github.as_ref().map(github_token);
         let handed_over = github.as_ref().map(|token| token.token.clone());
@@ -188,7 +186,11 @@ impl RostrumCore {
 
     /// Ask a desktop typed in by address who it is and which certificate it
     /// presents, trusting nothing yet.
-    pub async fn probe_desktop(&self, host: String, port: u16) -> Result<DesktopProbe, RostrumError> {
+    pub async fn probe_desktop(
+        &self,
+        host: String,
+        port: u16,
+    ) -> Result<DesktopProbe, RostrumError> {
         let host: Host = host.trim().parse().map_err(invalid)?;
         if port == 0 {
             return Err(RostrumError::invalid("port 0 is not a port"));
@@ -259,7 +261,11 @@ impl RostrumCore {
 
     /// The desktop clone's view of a pull request's branch. The desktop
     /// fetches first, so this can take a few seconds.
-    pub async fn local_status(&self, repo: String, number: u32) -> Result<LocalStatus, RostrumError> {
+    pub async fn local_status(
+        &self,
+        repo: String,
+        number: u32,
+    ) -> Result<LocalStatus, RostrumError> {
         let key = PullKey::parse(&repo, number)?;
         let (client, pr, _) = self.local_target(&key).await?;
         let status = client

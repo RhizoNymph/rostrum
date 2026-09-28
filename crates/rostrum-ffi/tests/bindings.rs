@@ -50,7 +50,10 @@ fn kotlin_bindings_generate_from_the_built_library() {
         // `uniffi.toml`'s `android = true` was applied.
         "AndroidSystemCleaner",
     ] {
-        assert!(kotlin.contains(expected), "generated Kotlin lacks {expected:?}");
+        assert!(
+            kotlin.contains(expected),
+            "generated Kotlin lacks {expected:?}"
+        );
     }
     // `close` is reserved for releasing the object; no method may shadow it.
     assert!(!kotlin.contains("suspend fun `close`("));

@@ -141,7 +141,11 @@ impl DraftBook {
             repo: key.repo.clone(),
             number: key.number,
             head_sha: self.head_sha.clone().unwrap_or_default(),
-            drafts: self.drafts.iter().map(|draft| draft.comment.clone()).collect(),
+            drafts: self
+                .drafts
+                .iter()
+                .map(|draft| draft.comment.clone())
+                .collect(),
         }
     }
 
@@ -175,7 +179,12 @@ pub(crate) fn review_draft(draft: &Draft) -> ReviewDraft {
             start_line: comment.start_line,
         },
         body: comment.body.clone(),
-        location: location(&comment.path, comment.start_line, comment.line, comment.side),
+        location: location(
+            &comment.path,
+            comment.start_line,
+            comment.line,
+            comment.side,
+        ),
     }
 }
 
@@ -262,8 +271,14 @@ mod tests {
         assert_eq!(view.drafts.len(), 1);
         assert_eq!(view.drafts[0].id, 9);
         assert_eq!(view.drafts[0].body, "two, reworded");
-        assert!(matches!(book.edit(7, "gone"), Err(RostrumError::InvalidInput { .. })));
-        assert!(matches!(book.remove(7), Err(RostrumError::InvalidInput { .. })));
+        assert!(matches!(
+            book.edit(7, "gone"),
+            Err(RostrumError::InvalidInput { .. })
+        ));
+        assert!(matches!(
+            book.remove(7),
+            Err(RostrumError::InvalidInput { .. })
+        ));
     }
 
     #[test]
@@ -274,7 +289,10 @@ mod tests {
             Err(RostrumError::InvalidInput { .. })
         ));
         book.add(1, &anchor(1), "ok", "h").expect("add");
-        assert!(matches!(book.edit(1, ""), Err(RostrumError::InvalidInput { .. })));
+        assert!(matches!(
+            book.edit(1, ""),
+            Err(RostrumError::InvalidInput { .. })
+        ));
     }
 
     #[test]
@@ -328,7 +346,10 @@ mod tests {
         let mut book = DraftBook::default();
         book.add(1, &anchor(1), "one", "h").expect("add");
         book.clear();
-        let Write::Drafts { drafts, head_sha, .. } = book.write(&key()) else {
+        let Write::Drafts {
+            drafts, head_sha, ..
+        } = book.write(&key())
+        else {
             panic!("a drafts write");
         };
         assert!(drafts.is_empty());

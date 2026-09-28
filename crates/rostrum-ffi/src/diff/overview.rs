@@ -4,8 +4,8 @@ use std::collections::HashSet;
 
 use rostrum_core::ReviewThread;
 use rostrum_diff::{
-    DiffFile, FileStatus as CoreStatus, PatchAvailability, change_map, max_churn,
-    overview_stats, ranked_files, tile_heat,
+    DiffFile, FileStatus as CoreStatus, PatchAvailability, change_map, max_churn, overview_stats,
+    ranked_files, tile_heat,
 };
 
 use crate::{
@@ -144,9 +144,10 @@ pub(crate) fn availability(file: &DiffFile) -> DiffAvailability {
             DiffAvailability::TooLarge
         }
         PatchAvailability::Omitted => match file.status {
-            CoreStatus::Renamed | CoreStatus::Copied | CoreStatus::Changed | CoreStatus::Unchanged => {
-                DiffAvailability::NoTextChanges
-            }
+            CoreStatus::Renamed
+            | CoreStatus::Copied
+            | CoreStatus::Changed
+            | CoreStatus::Unchanged => DiffAvailability::NoTextChanges,
             CoreStatus::Added | CoreStatus::Removed | CoreStatus::Modified => {
                 DiffAvailability::Binary
             }
@@ -173,7 +174,13 @@ mod tests {
 
     use super::*;
 
-    fn file(path: &str, status: &str, additions: u32, deletions: u32, patch: Option<&str>) -> DiffFile {
+    fn file(
+        path: &str,
+        status: &str,
+        additions: u32,
+        deletions: u32,
+        patch: Option<&str>,
+    ) -> DiffFile {
         DiffFile::from_patch(path.into(), None, status, additions, deletions, patch)
     }
 
@@ -181,8 +188,20 @@ mod tests {
         LoadedFiles {
             head_sha: "head".into(),
             files: vec![
-                file("src/a.rs", "modified", 3, 1, Some("@@ -1,2 +1,4 @@\n x\n-y\n+y2\n+z\n+w\n")),
-                file("docs/b.md", "added", 10, 0, Some("@@ -0,0 +1,1 @@\n+hello\n")),
+                file(
+                    "src/a.rs",
+                    "modified",
+                    3,
+                    1,
+                    Some("@@ -1,2 +1,4 @@\n x\n-y\n+y2\n+z\n+w\n"),
+                ),
+                file(
+                    "docs/b.md",
+                    "added",
+                    10,
+                    0,
+                    Some("@@ -0,0 +1,1 @@\n+hello\n"),
+                ),
                 file("logo.png", "added", 0, 0, None),
                 file("big.json", "modified", 900, 20, None),
                 file("moved.rs", "renamed", 0, 0, None),
@@ -234,7 +253,10 @@ mod tests {
         assert_eq!(overview.stats.files, 5);
         assert_eq!(overview.stats.additions, 913);
         assert_eq!(overview.ranked[0].path, "big.json");
-        assert!((overview.ranked[0].additions_share + overview.ranked[0].deletions_share - 1.0).abs() < 1e-6);
+        assert!(
+            (overview.ranked[0].additions_share + overview.ranked[0].deletions_share - 1.0).abs()
+                < 1e-6
+        );
         assert_eq!(overview.files.len(), 5);
         assert_eq!(overview.files[3].index, 3);
         let shares: f32 = overview.change_map.iter().map(|column| column.share).sum();

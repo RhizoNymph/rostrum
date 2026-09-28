@@ -117,7 +117,10 @@ mod tests {
     }
 
     fn joined(segments: &[CodeSegment]) -> String {
-        segments.iter().map(|segment| segment.text.as_str()).collect()
+        segments
+            .iter()
+            .map(|segment| segment.text.as_str())
+            .collect()
     }
 
     #[test]
@@ -174,7 +177,10 @@ mod tests {
         // Emphasis starting mid-char is ignored; one on a boundary applies.
         let out = segments(text, &[span(len, PLAIN)], &[3..4, 7..len], PLAIN);
         assert_eq!(joined(&out), text);
-        assert!(out.iter().any(|segment| segment.emphasized && segment.text == "café"));
+        assert!(
+            out.iter()
+                .any(|segment| segment.emphasized && segment.text == "café")
+        );
     }
 
     #[test]

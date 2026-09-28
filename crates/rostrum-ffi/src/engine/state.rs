@@ -124,7 +124,10 @@ impl CoreState {
 
     /// Change the settings and write them, keeping memory and disk in step:
     /// if the write fails, the change is not applied.
-    pub(crate) fn edit_config(&mut self, edit: impl FnOnce(&mut Config)) -> Result<(), RostrumError> {
+    pub(crate) fn edit_config(
+        &mut self,
+        edit: impl FnOnce(&mut Config),
+    ) -> Result<(), RostrumError> {
         let mut next = self.config.clone();
         edit(&mut next);
         next.save_to(&self.config_path)?;

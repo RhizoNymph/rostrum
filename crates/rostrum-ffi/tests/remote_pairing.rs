@@ -276,7 +276,9 @@ async fn pairing_by_link_then_every_desktop_call() {
     assert_eq!(core.sync_all_status().await.expect("sync status"), None);
     assert!(core.handoffs().await.expect("handoffs").is_empty());
 
-    core.abort_local("octo/repo".into(), 7).await.expect("abort");
+    core.abort_local("octo/repo".into(), 7)
+        .await
+        .expect("abort");
 
     let fresh = core
         .refresh_github_token_from_desktop()
@@ -328,8 +330,8 @@ async fn a_saved_pairing_reconnects_and_failures_are_typed() {
     assert_eq!(core.machine_info().await, Err(RostrumError::DeviceRevoked));
 
     // The desktop answering with a different certificate than was paired.
-    let other = serde_json::to_string(&endpoint(port, CertFingerprint::of_der(b"another")))
-        .expect("json");
+    let other =
+        serde_json::to_string(&endpoint(port, CertFingerprint::of_der(b"another"))).expect("json");
     core.set_remote(other, issued_token().expose().to_string())
         .await
         .expect("set remote");
@@ -341,8 +343,11 @@ async fn a_saved_pairing_reconnects_and_failures_are_typed() {
     );
 
     assert!(matches!(
-        core.set_remote("not an endpoint".into(), issued_token().expose().to_string())
-            .await,
+        core.set_remote(
+            "not an endpoint".into(),
+            issued_token().expose().to_string()
+        )
+        .await,
         Err(RostrumError::InvalidInput { .. })
     ));
     assert!(matches!(
@@ -449,7 +454,8 @@ async fn an_unreachable_desktop_is_reported() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         listener.local_addr().expect("addr").port()
     };
-    let saved = serde_json::to_string(&endpoint(port, CertFingerprint::of_der(b"x"))).expect("json");
+    let saved =
+        serde_json::to_string(&endpoint(port, CertFingerprint::of_der(b"x"))).expect("json");
     core.set_remote(saved, issued_token().expose().to_string())
         .await
         .expect("set remote");
@@ -486,7 +492,8 @@ async fn local_calls_need_a_desktop_and_a_known_pull_request() {
         Err(RostrumError::InvalidInput { .. })
     ));
     assert!(matches!(
-        core.pair_with_link(link(port, fingerprint), "   ".into()).await,
+        core.pair_with_link(link(port, fingerprint), "   ".into())
+            .await,
         Err(RostrumError::InvalidInput { .. })
     ));
 }

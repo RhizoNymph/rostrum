@@ -123,7 +123,10 @@ impl RostrumCore {
     }
 
     /// [`RostrumCore::github_failed`] for a whole result.
-    pub(crate) async fn github<T>(&self, result: Result<T, GitHubError>) -> Result<T, RostrumError> {
+    pub(crate) async fn github<T>(
+        &self,
+        result: Result<T, GitHubError>,
+    ) -> Result<T, RostrumError> {
         match result {
             Ok(value) => Ok(value),
             Err(error) => Err(self.github_failed(error).await),

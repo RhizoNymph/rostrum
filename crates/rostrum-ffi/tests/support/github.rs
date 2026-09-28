@@ -108,7 +108,11 @@ impl FakeGitHub {
             .into_iter()
             .filter(|request| request.path == "/graphql")
             .filter_map(|request| serde_json::from_str::<Value>(&request.body).ok())
-            .filter(|body| body["query"].as_str().is_some_and(|query| query.contains(needle)))
+            .filter(|body| {
+                body["query"]
+                    .as_str()
+                    .is_some_and(|query| query.contains(needle))
+            })
             .collect()
     }
 
@@ -257,10 +261,9 @@ fn conversation() -> Value {
 fn rest(world: &World, request: &Request) -> (u16, String) {
     let path = request.path.split('?').next().unwrap_or_default();
     match (request.method.as_str(), path) {
-        ("GET", "/repos/octo/repo/pulls/1/files") => (
-            200,
-            serde_json::to_string(&super::files()).expect("files"),
-        ),
+        ("GET", "/repos/octo/repo/pulls/1/files") => {
+            (200, serde_json::to_string(&super::files()).expect("files"))
+        }
         ("GET", "/repos/octo/repo/labels") => (
             200,
             json!([{"name": "bug", "color": "d73a4a"}, {"name": "help wanted", "color": "008672"}])

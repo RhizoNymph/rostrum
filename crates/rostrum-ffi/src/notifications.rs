@@ -46,7 +46,10 @@ pub(crate) fn events(
             ArrivalKind::Opened => {
                 new_pull_requests
                     && !viewer.is_some_and(|viewer| {
-                        arrival.author.as_ref().is_some_and(|author| &author.key() == viewer)
+                        arrival
+                            .author
+                            .as_ref()
+                            .is_some_and(|author| &author.key() == viewer)
                     })
             }
             ArrivalKind::ReviewRequested => review_requests,
@@ -85,11 +88,7 @@ impl RostrumCore {
     /// Read the seen set from SQLite into memory, once. A missing or corrupt
     /// one starts fresh: the next observation is then a baseline.
     async fn ensure_baseline(&self) -> Result<(), RostrumError> {
-        if self
-            .actor
-            .call(|state| state.baseline.is_some())
-            .await?
-        {
+        if self.actor.call(|state| state.baseline.is_some()).await? {
             return Ok(());
         }
         let stored = match self.db.load_baseline().await {
@@ -177,7 +176,10 @@ mod tests {
     }
 
     fn summary(events: &[NotificationEvent]) -> Vec<(u32, NotificationKind)> {
-        events.iter().map(|event| (event.number, event.kind)).collect()
+        events
+            .iter()
+            .map(|event| (event.number, event.kind))
+            .collect()
     }
 
     #[test]
@@ -234,7 +236,10 @@ mod tests {
             true,
             true,
         );
-        assert_eq!(summary(&events), vec![(2, NotificationKind::NewPullRequest)]);
+        assert_eq!(
+            summary(&events),
+            vec![(2, NotificationKind::NewPullRequest)]
+        );
     }
 
     #[test]
@@ -248,7 +253,10 @@ mod tests {
             true,
             true,
         );
-        assert_eq!(summary(&events), vec![(3, NotificationKind::ReviewRequested)]);
+        assert_eq!(
+            summary(&events),
+            vec![(3, NotificationKind::ReviewRequested)]
+        );
 
         // With review requests off, the same pull request is still new.
         let quiet = super::events(

@@ -13,9 +13,7 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use rostrum_config::Config;
-use rostrum_core::{
-    MergeStateStatus, Mergeable, NodeId, PrNumber, PullRequest, RepoId, User,
-};
+use rostrum_core::{MergeStateStatus, Mergeable, NodeId, PrNumber, PullRequest, RepoId, User};
 use rostrum_db::Db;
 use rostrum_github::PullRequestFile;
 use rostrum_remote::CertFingerprint;
@@ -38,7 +36,8 @@ impl Scratch {
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock after epoch")
             .as_nanos();
-        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("rostrum-ffi-{tag}-{unique}"));
+        let dir =
+            Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("rostrum-ffi-{tag}-{unique}"));
         std::fs::create_dir_all(&dir).expect("scratch dir");
         Self { dir }
     }
@@ -163,7 +162,10 @@ impl Log {
     }
 
     pub fn last(&self, path: &str) -> Option<Request> {
-        self.requests().into_iter().rev().find(|request| request.path == path)
+        self.requests()
+            .into_iter()
+            .rev()
+            .find(|request| request.path == path)
     }
 }
 

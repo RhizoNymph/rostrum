@@ -9,16 +9,14 @@ use std::collections::HashMap;
 
 use chrono::Utc;
 use rostrum_core::{
-    FeedFilter, FeedRow, LoadState, PullRequest, RepoId, RepoState, User,
-    carry_forward_divergence, flatten,
+    FeedFilter, FeedRow, LoadState, PullRequest, RepoId, RepoState, User, carry_forward_divergence,
+    flatten,
 };
 use rostrum_github::GitHubError;
 
 use crate::{
     engine::state::PullKey,
-    feed::{
-        FeedPreferences, FeedSnapshot, RepoBody, RepoLoad, RepoSection, summary::summarize,
-    },
+    feed::{FeedPreferences, FeedSnapshot, RepoBody, RepoLoad, RepoSection, summary::summarize},
     types::UserRef,
 };
 
@@ -158,7 +156,10 @@ impl FeedState {
         self.repos.push(RepoState::new(id));
         let position = |repo: &RepoState| {
             let name = repo.id.to_string();
-            order.iter().position(|entry| entry == &name).unwrap_or(usize::MAX)
+            order
+                .iter()
+                .position(|entry| entry == &name)
+                .unwrap_or(usize::MAX)
         };
         self.repos.sort_by_key(position);
     }
@@ -210,7 +211,8 @@ impl FeedState {
                     building = Some(Building::new(repo.0));
                 }
                 FeedRow::PrRow { repo, pr } => {
-                    if let (Some(current), Some(state)) = (building.as_mut(), self.repos.get(repo.0))
+                    if let (Some(current), Some(state)) =
+                        (building.as_mut(), self.repos.get(repo.0))
                         && let Some(pull) = state.prs.get(pr.0)
                     {
                         current
@@ -435,8 +437,14 @@ mod tests {
             prs: numbers.iter().copied().map(pull).collect(),
             viewer: None,
         };
-        assert_eq!(state.apply_fetch(&id, newer, Ok(fetched(&[2]))), Applied::Loaded);
-        assert_eq!(state.apply_fetch(&id, older, Ok(fetched(&[1]))), Applied::Stale);
+        assert_eq!(
+            state.apply_fetch(&id, newer, Ok(fetched(&[2]))),
+            Applied::Loaded
+        );
+        assert_eq!(
+            state.apply_fetch(&id, older, Ok(fetched(&[1]))),
+            Applied::Stale
+        );
         assert_eq!(pulls(&state.snapshot(None, false).repos[0]), vec![2]);
     }
 
@@ -459,7 +467,11 @@ mod tests {
         let mut state = feed(&["a/b"]);
         let mut draft = pull(2);
         draft.is_draft = true;
-        load(&mut state, "a/b", vec![pull_by(1, "alice"), draft, pull_by(3, "bob")]);
+        load(
+            &mut state,
+            "a/b",
+            vec![pull_by(1, "alice"), draft, pull_by(3, "bob")],
+        );
 
         state.filter.hide_drafts = true;
         state.filter.authors = BTreeSet::from([LoginKey::new("Alice")]);
@@ -527,16 +539,17 @@ mod tests {
         let mut state = feed(&["c/d"]);
         state.add_repo(repo_id("a/b"), &["a/b".into(), "c/d".into()]);
         state.add_repo(repo_id("a/b"), &["a/b".into(), "c/d".into()]);
-        assert_eq!(
-            state.repo_ids(),
-            vec![repo_id("a/b"), repo_id("c/d")]
-        );
+        assert_eq!(state.repo_ids(), vec![repo_id("a/b"), repo_id("c/d")]);
     }
 
     #[test]
     fn the_viewer_marks_their_rows() {
         let mut state = feed(&["a/b"]);
-        load(&mut state, "a/b", vec![pull_by(1, "Me"), pull_by(2, "other")]);
+        load(
+            &mut state,
+            "a/b",
+            vec![pull_by(1, "Me"), pull_by(2, "other")],
+        );
         let me = User {
             login: "me".into(),
             avatar_url: None,
