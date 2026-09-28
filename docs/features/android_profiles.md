@@ -185,12 +185,30 @@ they survive the graph being rebuilt.
 
 ### The adapter (`data/ffi/FfiProfileRegistry.kt`)
 
-The only file that touches the generated `uniffi.rostrum_ffi.ProfileRegistry`
-(`ProfileRegistry.open(rootDir)` over `files/profiles`). Each profile's
-backend is `FfiRostrumBackend(id, openCore = { registry.core(id) })`, so the
-`CoreHandle` gets the profile's cached core from the registry. Until the core
-side lands in this branch, every call answers
-`Internal("profiles need a newer core")`.
+The only file that touches the generated `uniffi.rostrum_ffi.ProfileRegistry`.
+It opens the registry on its first call (off the main thread, with the
+native library and log sink loaded as for a core) over `files/rostrum`: the
+list in `profiles.json`, each profile's data in `profiles/<id>`. Opening
+deletes id-shaped folders there that no profile owns. A failed open is
+returned and retried by the next call. The registry's blocking calls run on
+`Dispatchers.IO`; its errors map through `ffiCall` like a core's
+(`ProfileNotFound` included). Each profile's backend is
+`FfiRostrumBackend(id) { registry.core(id) }`, cached per id and dropped on
+removal; the registry caches the core itself. `parsePairingLink` and
+`probeDesktop` are the registry's own (they create no profile and write
+nothing). A profile id of any other shape than the registry makes is refused
+rather than used as a path. Blank labels come back as `InvalidInput`.
+
+`removeProfile` unpairs only through the profile's open core with its
+remote set, so `ProfileManager.remove` restores the profile's session first.
+
+### The upgrade from a single-profile build
+
+`LegacyCleanup.wipe()` returns whether it found anything; the manager
+exposes that as `upgradedFromSingleProfile`, and the first-run sign-in
+screen then says: "Rostrum now keeps a separate profile for each desktop, so
+this update signed you out. Pair with your desktop again to continue: tap
+Pair with your desktop below."
 
 ## Files
 
@@ -201,11 +219,11 @@ side lands in this branch, every call answers
 | `data/profiles/ProfileManager.kt` | `ProfileManager`: `state`, `signedInProfiles`, `start`, `handle`, `switchTo`, `createTokenProfile`, `pairWithLink`, `pairManual`, `rename`, `remove`, `wantsNotifications`, `parsePairingLink`, `probeDesktop` |
 | `data/profiles/ProfilesState.kt` | `ProfilesState`, `ProfileHandle`, `PairedProfile`, `ProfileRemoval` |
 | `data/profiles/LegacyState.kt` | `LegacyCleanup`, `LegacyStateWipe`, `LegacyWipeReport` |
-| `data/ffi/FfiProfileRegistry.kt` | The registry adapter |
+| `data/ffi/FfiProfileRegistry.kt` | The registry adapter; `ProfileInfo`/`ProfileKind`/`ProfilePairing` mappings |
 | `data/ffi/CoreHandle.kt` | `CoreOpener`; a handle over any opener (`inDirectory` for standalone cores) |
 | `data/secrets/SecretStore.kt`, `EncryptedFileSecretStore.kt` | `SecretStore` keyed by profile, `ProfileSecrets`, `forProfile`, `deleteProfile` |
 | `data/session/SessionRepository.kt` | One profile's session; `adoptPairing` |
-| `di/AppContainer.kt` | Builds the manager (registry under `files/profiles`, secrets under `no_backup/secrets/profiles`, the legacy wipe); schedule resync |
+| `di/AppContainer.kt` | Builds the manager (registry under `files/rostrum`, secrets under `no_backup/secrets/profiles`, the legacy wipe); schedule resync |
 | `ui/app/RostrumApp.kt` | The graph keyed by `GraphKey`, `FollowNotificationProfile`, the switcher sheet in `MainScaffold` |
 | `ui/app/GraphViewModelStores.kt` | `GraphKey`, `GraphViewModelStores` |
 | `ui/common/ViewModels.kt` | `LocalProfileHandle`, `profileViewModel` |
@@ -221,7 +239,10 @@ side lands in this branch, every call answers
 | `notifications/NotificationContent.kt`, `NotificationWorker.kt`, `NotificationScheduler.kt`, `NotificationPoster.kt` | Label-prefixed specs, `tapExtras`, the per-profile check, `sync(wanted)` |
 
 Paths are under `android/app/src/main/kotlin/io/github/rhizonymph/rostrum/`.
-Tests: `data/profiles/ProfileManagerTest`, `LegacyStateWipeTest`,
+Tests: `data/ffi/FfiMappingsTest` (profile records, `ProfileNotFound`),
+`data/ffi/HostSmokeTest` (the real registry: one core per id, a token
+profile's backend in its own directory, reading a link makes no profile,
+removal, `ProfileNotFound`), `data/profiles/ProfileManagerTest`, `LegacyStateWipeTest`,
 `data/secrets/SecretStorageTest` (per-profile store),
 `ui/onboarding/PairProfileBranchesTest`, `PairCopyStepTest`,
 `PairViewModelTest`, `SignInViewModelTest`, `ui/profiles/*Test`,

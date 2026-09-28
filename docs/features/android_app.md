@@ -239,7 +239,7 @@ one first (details in `android_profiles.md`). Per profile:
 - Each profile's `FfiRostrumBackend` has a `CoreHandle` that gets the
   profile's `RostrumCore` from the registry (`registry.core(id)`, cached
   there) on the backend's first call, on `Dispatchers.IO` (loading JNA and
-  `librostrum_ffi.so` happens there), under `files/profiles/<id>` (the core's
+  `librostrum_ffi.so` happens there), under `files/rostrum/profiles/<id>` (the core's
   `config.json` and `cache.db`). The host tests open a standalone core over a
   directory instead (`CoreHandle.inDirectory`). It
   installs the log sink first (`installLogSink(FfiLogSink, INFO)`: core
@@ -274,7 +274,7 @@ one first (details in `android_profiles.md`). Per profile:
   "Copied 7 repositories from framework".
 - The core counts a reorder alone as a change (it reorders the feed), so
   `changesAnything` can be true with nothing added or removed.
-  `DesktopConfigText.changeLines(preview, phone)` compares with this phone's
+  `DesktopConfigText.changeLines(preview, phone)` compares with this profile's
   `Settings` and says "Adds 6 repositories", "Removes 2 repositories",
   "Reorders your repositories to match framework", or "Changes pull requests
   per repository (10 → 25), feed filters and the stash default"; without the
@@ -286,7 +286,7 @@ one first (details in `android_profiles.md`). Per profile:
   first run or after "Switch to <machine>"): the preview of that profile is
   read. `changesAnything` → the Pair screen becomes `CopySettingsStep` ("Copy
   settings from <machine>?", the desktop's repositories with added ones
-  marked "+", a "Removed from this phone" group, and a one-line summary of
+  marked "+", a "Removed from this profile" group, and a one-line summary of
   the feed preferences), with "Copy settings" and "Not now"; Back means not
   now. Re-pairing a known desktop never asks. Nothing would change → straight on. The preview fails →
   straight on, with a snackbar saying why. The "Copied …" and failure
@@ -300,9 +300,9 @@ one first (details in `android_profiles.md`). Per profile:
   <machine>" opens `CopySettingsSheet`, driven by
   `DesktopConfigSheetViewModel` (`Closed` → `Loading` → `Ready(preview,
   copy)` or `Failed(error)`). Ready and changing something: the replace
-  warning ("This replaces this phone's repositories, …"), "N repositories will
-  be removed from this phone." when any are, the preview, and "Replace
-  settings" / "Cancel". Nothing would change: "This phone already has
+  warning ("This replaces this profile's repositories, …"), "N repositories will
+  be removed from this profile." when any are, the preview, and "Replace
+  settings" / "Cancel". Nothing would change: "This profile already has
   <machine>'s settings." A failed copy stays open with the error. After a
   copy the sheet closes, shows "Copied …", and Settings reloads its list.
   Settings also reloads whenever it resumes, e.g. back from pairing.
@@ -634,8 +634,9 @@ a temp directory and drives it through `FfiRostrumBackend`: status and
 warnings, settings, `addRepo` validation errors, the cached feed, the
 observer reaching `feedUpdates`, `parsePairingLink` on a sample link,
 `renderMarkdown`, error mapping (`NotSignedIn`, `NotPaired`, including
-`desktopConfig` and `copyDesktopConfig` unpaired), and that a
-token never reaches the data directory. No network. The normal unit run
+`desktopConfig` and `copyDesktopConfig` unpaired), that a
+token never reaches the data directory, and the profile registry through
+`FfiProfileRegistry` (see `android_profiles.md`). No network. The normal unit run
 excludes the tag, and the tests skip themselves when not started by this
 task.
 
