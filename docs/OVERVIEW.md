@@ -101,8 +101,11 @@ Overview:
     cannot express either one fully, so both go out as GraphQL mutations keyed by
     the pull request's node id.
 
-    On Android the same gpui-free crates run behind `rostrum-ffi`. Compose
-    calls suspend functions on one UniFFI object, `RostrumCore`, whose state
+    On Android the same gpui-free crates run behind `rostrum-ffi`. A
+    `ProfileRegistry` keeps one profile per paired desktop (or GitHub token),
+    each its own data directory and its own `RostrumCore`; the feed shows the
+    active profile and the notification job walks them all. Compose calls
+    suspend functions on the active profile's `RostrumCore`, whose state
     lives in an actor task; network I/O happens outside the actor and results
     are applied back through it, SQLite writes are queued in state order on a
     writer task, and feed changes reach Kotlin through a `FeedObserver` in
@@ -182,11 +185,12 @@ Features Index:
     doc: docs/features/remote_protocol.md
   android_core:
     description: >
-      The Android app's Rust core behind UniFFI — one RostrumCore object serving
+      The Android app's Rust core behind UniFFI — a ProfileRegistry with one
+      profile per paired desktop or GitHub token, each a RostrumCore serving
       the feed, detail, diff rows, pending review, desktop pairing and jobs,
       copying the desktop's config, and background notifications, all
       render-ready for Compose.
-    entry_points: [crates/rostrum-ffi/src/lib.rs, crates/rostrum-ffi/src/engine/mod.rs]
+    entry_points: [crates/rostrum-ffi/src/lib.rs, crates/rostrum-ffi/src/profiles/mod.rs, crates/rostrum-ffi/src/engine/mod.rs]
     depends_on: [repo_feed, pr_detail, diff_review, diff_overview, author_filter, github_sync, remote_protocol]
     doc: docs/features/android_core.md
   android_build:
@@ -341,11 +345,12 @@ Each phase leaves a usable application.
 
 ## Status
 
-All five phases are complete and verified against the live API. 882 tests pass
-(136 of them in `rostrum-ffi`); clippy is clean across the workspace.
+All five phases are complete and verified against the live API. 897 tests pass
+(151 of them in `rostrum-ffi`); clippy is clean across the workspace.
 
 The Android app's core, `rostrum-ffi`, exposes the same feed, detail, diff,
-review, desktop and notification behaviour to Kotlin through UniFFI; see
+review, desktop and notification behaviour to Kotlin through UniFFI, one
+profile per paired desktop (or GitHub token), each with its own data; see
 `docs/features/android_core.md`.
 
 End-to-end verification (`cargo run -p rostrum --example review`) against real
