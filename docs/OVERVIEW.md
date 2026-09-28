@@ -99,7 +99,10 @@ Overview:
     re-reads rostrum's `config.json` for the clone, the conflict handler and
     autostash, takes that clone's lease from the job coordinator (409 when it
     is busy), and runs the same `rostrum_local` function the desktop's button
-    runs, in a task that outlives the request. Nothing is ever pushed.
+    runs, in a task that outlives the request. Nothing is ever pushed. A
+    paired phone can also copy the desktop's watched repositories and feed
+    preferences (`GET /api/v1/config`) — never its clones, conflict handler,
+    refresh interval or notifications.
 
 Features Index:
   ui_foundation:

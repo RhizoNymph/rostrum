@@ -5,6 +5,7 @@
 mod common;
 
 use common::{Harness, handover};
+use rostrum_core::{LoginKey, RepoId};
 use rostrum_remote::{
     API_VERSION, ApiErrorCode, CertFingerprint, Endpoint, PairRequest, PairingCode, PairingOffer,
     client::{ClientError, RemoteClient, probe},
@@ -12,7 +13,19 @@ use rostrum_remote::{
 
 #[tokio::test]
 async fn a_phone_pairs_from_the_page_link_and_uses_the_api_until_it_unpairs() {
-    let harness = Harness::start("it-tls-pair", None, None).await;
+    let harness = Harness::start(
+        "it-tls-pair",
+        None,
+        Some(serde_json::json!({
+            "repos": ["RhizoNymph/rostrum", "not a repo", "rust-lang/rust"],
+            "prs_per_repo": 30,
+            "hide_drafts": true,
+            "authors": ["Ada-Lin"],
+            "autostash": true,
+            "clones": {"RhizoNymph/rostrum": "/home/secret/rostrum"}
+        })),
+    )
+    .await;
 
     // The page's code carries a link the phone can parse.
     let offer_json = harness.issue_code().await;
@@ -59,9 +72,23 @@ async fn a_phone_pairs_from_the_page_link_and_uses_the_api_until_it_unpairs() {
     assert!(client.handoffs().await.expect("handoffs").is_empty());
     assert_eq!(client.sync_all().await.expect("sync-all"), None);
     assert_eq!(client.github_token().await.expect("github"), handover());
+    let config = client.config().await.expect("config");
+    assert_eq!(
+        config.repos,
+        vec![
+            RepoId::new("RhizoNymph", "rostrum"),
+            RepoId::new("rust-lang", "rust")
+        ]
+    );
+    assert_eq!(config.prs_per_repo, 30);
+    assert!(config.hide_drafts);
+    assert_eq!(config.authors, vec![LoginKey::new("ada-lin")]);
+    assert!(config.autostash);
 
     client.unpair().await.expect("unpair");
     let err = client.machine().await.expect_err("revoked");
+    assert!(matches!(err, ClientError::Unauthorized), "{err:?}");
+    let err = client.config().await.expect_err("revoked");
     assert!(matches!(err, ClientError::Unauthorized), "{err:?}");
     assert!(
         harness

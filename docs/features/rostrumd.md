@@ -125,6 +125,9 @@ revoked device: all one 401 `unauthorized`. A successful lookup updates
 minute has passed.
 
 - `machine`: `MachineInfo` from the config as it is now.
+- `config`: the part of rostrum's `config.json` a phone may copy, as a
+  `DesktopConfig` built from the file as it is now — see *Copying the
+  desktop's config* below.
 - `github-token`: a fresh handover, or 404 `not_found`.
 - `local/status`: no clone → `NotConfigured`. Otherwise `local_state(clone,
   branch, config.autostash, session)` where `session` is
@@ -146,6 +149,31 @@ minute has passed.
   (pull request, head ref, worktree), newest first. No tmux server — or no
   tmux — is an empty list.
 - `DELETE device`: forgets the caller; its token fails from the next request.
+
+### Copying the desktop's config
+
+`GET /api/v1/config` (bearer-authenticated) lets a phone start from the same
+repositories and feed preferences as the desktop. `rostrum_config::
+desktop_config` builds the answer from an allowlist, field by field, from
+`Config` loaded fresh for the request:
+
+| `DesktopConfig` | From `Config` |
+|---|---|
+| `repos` | `Config::repo_ids()`: valid `owner/name` entries only (a pasted GitHub URL is accepted, as the desktop accepts it), duplicates dropped, in the file's order |
+| `prs_per_repo` | `prs_per_repo` |
+| `hide_drafts` | `hide_drafts` |
+| `hide_empty_repos` | `hide_empty_repos` |
+| `authors` | the `authors` set (logins already lowercased by `LoginKey`), empty ones skipped as `feed_filter` skips them |
+| `include_involved` | `include_involved` |
+| `autostash` | `autostash` |
+
+**Never sent:** `clones` (paths on this machine), `conflict_handler` (a
+command line that describes this machine and may carry secrets),
+`refresh_secs` and `notifications` (the desktop's own habits). Because the
+answer is built from an allowlist rather than by filtering the file, a
+setting added to `Config` later stays on the desktop until someone decides it
+should travel. A missing `config.json` answers with rostrum's defaults, as
+every other route does.
 
 ### Concurrency
 
@@ -235,7 +263,8 @@ unit — e.g. `GITHUB_TOKEN=…` when `gh` is not logged in. `RUST_LOG`
 overrides the log filter.
 
 rostrum's own `~/.config/rostrum/config.json` supplies `clones`,
-`conflict_handler` and `autostash`, re-read on every request that needs them.
+`conflict_handler` and `autostash` to the local routes, and the copyable
+fields to `config`, re-read on every request that needs them.
 
 ### State on disk
 
@@ -335,7 +364,7 @@ saw — printing none of them.
 | `crates/rostrumd/src/state_file.rs` | JSON state files | `StoreError`, `read_json`, `write_json` |
 | `crates/rostrumd/src/boxed.rs` | The boxed-future alias | `BoxFuture` |
 | `crates/rostrumd/src/convert.rs` | Wire types ↔ `rostrum-local` types | `job_outcome`, `local_status`, `in_progress_kind`, `handoff_status`, `local_op`, `autostash`, `pr_meta`, `branch` |
-| `crates/rostrumd/src/rostrum_config.rs` | rostrum's `config.json`, read fresh | `RostrumConfig`, `clones`, `machine_info` |
+| `crates/rostrumd/src/rostrum_config.rs` | rostrum's `config.json`, read fresh; `MachineInfo` and the copyable `DesktopConfig` built from it | `RostrumConfig`, `clones`, `machine_info`, `desktop_config` |
 | `crates/rostrumd/src/github.rs` | GitHub token handover | `HandoverSource`, `GhHandover` |
 | `crates/rostrumd/src/tmux.rs` | Listing handoff sessions | `SessionLister`, `TmuxCli`, `TmuxSession`, `parse_sessions`, `is_no_server`, `handoff_sessions` |
 | `crates/rostrumd/src/logging.rs` | Structured logs to stdout/journal | `init`, `DEFAULT_FILTER` |
@@ -357,7 +386,7 @@ saw — printing none of them.
 | `crates/rostrumd/src/api/mod.rs` | The API router | `router` |
 | `crates/rostrumd/src/api/auth.rs` | Bearer authentication | `AuthedDevice`, `bearer_token` |
 | `crates/rostrumd/src/api/pairing.rs` | `hello`, `pair` | — |
-| `crates/rostrumd/src/api/machine.rs` | `machine`, `github-token`, `handoffs`, `DELETE device` | — |
+| `crates/rostrumd/src/api/machine.rs` | `machine`, `config`, `github-token`, `handoffs`, `DELETE device` | — |
 | `crates/rostrumd/src/api/local.rs` | `local/status`, `local/job`, `local/abort` | — |
 | `crates/rostrumd/src/api/sync.rs` | `sync-all` | — |
 | `crates/rostrumd/src/web/mod.rs` | The page router, hardening headers | `router`, `CONTENT_SECURITY_POLICY`, `CodeOffer` |
@@ -399,6 +428,9 @@ saw — printing none of them.
   writes to a remote.
 - **Read-only config.** rostrum's `config.json` is read per request and never
   written.
+- **Only the copyable config travels.** `config` sends repositories, the PR
+  count, the feed filters and autostash — never clones, the conflict handler,
+  the refresh interval or notifications — and is built from an allowlist.
 - **The APK JSON contract** above; a mismatched size is reported, not served
   as published.
 - **Advertised-host order**: LAN IPv4, tailnet IPv4, tailnet IPv6, MagicDNS
@@ -411,7 +443,7 @@ saw — printing none of them.
 
 ## Testing
 
-`cargo test -p rostrumd` — 167 tests:
+`cargo test -p rostrumd` — 171 tests:
 
 - Unit: code lifecycle (expiry, single use, five strikes, per-address throttle
   and its window, IPv6 `/64`), address classification including mapped IPv6
@@ -421,12 +453,15 @@ saw — printing none of them.
   fake interface list, `tailscale status` parsing, every wire ↔ local
   conversion, tmux output parsing and joining, the coordinator (ordering,
   one-at-a-time, busy, release after the last entry, detached work, handoff
-  records, shutdown), page rendering and escaping, APK description and
-  download headers.
+  records, shutdown), the copyable-config mapping, page rendering and
+  escaping, APK description and download headers.
 - Router (`tower::ServiceExt::oneshot` on scratch directories): every route,
-  bearer auth (missing, garbage, other scheme, unknown, revoked), pairing and
+  bearer auth (missing, garbage, other scheme, unknown, revoked), `config`
+  from a file with malformed and duplicate repositories, mixed-case authors
+  and every never-sent field set, pairing and
   its refusals (410 with a paused clock, 429), the gate from every kind of
   peer, cross-site and rebound requests, both page variants.
 - Integration: the phone's real `RemoteClient` over TLS (pinning, mismatch,
-  probe, pair, use, unpair) and real pull/merge/rebase/abort/sync-all over the
+  probe, pair, use including `config()`, unpair) and real
+  pull/merge/rebase/abort/sync-all over the
   API against a scratch origin, clone and worktree.

@@ -4,12 +4,12 @@
 use std::{sync::Arc, time::Duration};
 
 use axum::http::{Method, StatusCode};
-use rostrum_core::{PrNumber, RepoId};
+use rostrum_core::{LoginKey, PrNumber, RepoId};
 use rostrum_local::LocalResult;
 use rostrum_remote::{
-    API_VERSION, AbortRequest, ApiError, ApiErrorCode, DeviceToken, GitHubHandover, HandoffSession,
-    Hello, JobOutcome, JobRequest, LocalOpKind, LocalStatus, LocalStatusRequest, MachineInfo,
-    PairRequest, PrKey, PrRef, SyncAllRequest, SyncEntryState, SyncRun, routes,
+    API_VERSION, AbortRequest, ApiError, ApiErrorCode, DesktopConfig, DeviceToken, GitHubHandover,
+    HandoffSession, Hello, JobOutcome, JobRequest, LocalOpKind, LocalStatus, LocalStatusRequest,
+    MachineInfo, PairRequest, PrKey, PrRef, SyncAllRequest, SyncEntryState, SyncRun, routes,
 };
 use tokio::sync::Semaphore;
 
@@ -133,6 +133,7 @@ async fn every_authenticated_route_refuses_without_a_token() {
     let api = kit.api();
     for (method, path) in [
         (Method::GET, routes::MACHINE),
+        (Method::GET, routes::CONFIG),
         (Method::GET, routes::GITHUB_TOKEN),
         (Method::POST, routes::LOCAL_STATUS),
         (Method::POST, routes::LOCAL_JOB),
@@ -196,6 +197,88 @@ async fn an_authenticated_request_records_where_the_device_was_seen() {
         devices[0].last_ip,
         "100.64.0.77".parse::<std::net::IpAddr>().expect("ip")
     );
+}
+
+// --- config -----------------------------------------------------------------
+
+#[tokio::test]
+async fn the_config_route_is_401_without_a_token() {
+    let kit = Kit::new("api-config-401");
+    let (status, body) = get(&kit, routes::CONFIG, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(error(&body).code, ApiErrorCode::Unauthorized);
+}
+
+#[tokio::test]
+async fn a_paired_phone_gets_the_copyable_part_of_the_desktop_config() {
+    let kit = Kit::new("api-config");
+    kit.write_rostrum_config(&serde_json::json!({
+        "repos": [
+            "RhizoNymph/rostrum",
+            "not a repo",
+            "https://github.com/zed-industries/zed",
+            "RhizoNymph/rostrum",
+            "a/b/c",
+            "rust-lang/rust"
+        ],
+        "refresh_secs": 15,
+        "prs_per_repo": 40,
+        "notifications": true,
+        "hide_empty_repos": false,
+        "hide_drafts": true,
+        "authors": ["Ada-Lin", "ada-lin", "   ", "RhizoNymph"],
+        "include_involved": true,
+        "autostash": true,
+        "clones": {"RhizoNymph/rostrum": "/home/secret/rostrum"},
+        "conflict_handler": {"command": "API_KEY=hunter2 claude {context}"}
+    }));
+    let paired = kit.pair("Pixel").await;
+    let (status, body) = get(&kit, routes::CONFIG, Some(&paired.token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        json::<DesktopConfig>(&body),
+        DesktopConfig {
+            repos: vec![
+                RepoId::new("RhizoNymph", "rostrum"),
+                RepoId::new("zed-industries", "zed"),
+                RepoId::new("rust-lang", "rust"),
+            ],
+            prs_per_repo: 40,
+            hide_drafts: true,
+            hide_empty_repos: false,
+            authors: vec![LoginKey::new("ada-lin"), LoginKey::new("rhizonymph")],
+            include_involved: true,
+            autostash: true,
+        }
+    );
+    // The machine-specific and personal-habit fields never leave the desktop.
+    let text = String::from_utf8_lossy(&body);
+    for absent in [
+        "clones",
+        "/home/secret",
+        "conflict_handler",
+        "hunter2",
+        "refresh_secs",
+        "notifications",
+    ] {
+        assert!(
+            !text.contains(absent),
+            "`{absent}` must not be sent: {text}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_missing_desktop_config_is_sent_as_the_defaults() {
+    let kit = Kit::new("api-config-default");
+    let paired = kit.pair("Pixel").await;
+    let (status, body) = get(&kit, routes::CONFIG, Some(&paired.token)).await;
+    assert_eq!(status, StatusCode::OK);
+    let config: DesktopConfig = json(&body);
+    let defaults = rostrum_config::Config::default();
+    assert_eq!(config.repos.len(), defaults.repos.len());
+    assert_eq!(config.prs_per_repo, defaults.prs_per_repo);
+    assert!(config.authors.is_empty());
 }
 
 // --- pairing ----------------------------------------------------------------

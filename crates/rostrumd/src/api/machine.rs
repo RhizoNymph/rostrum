@@ -1,13 +1,20 @@
-//! `machine`, `github-token`, `handoffs` and `DELETE device`.
+//! `machine`, `config`, `github-token`, `handoffs` and `DELETE device`.
 
 use axum::{Json, extract::State};
-use rostrum_remote::{ApiErrorCode, GitHubHandover, HandoffSession, MachineInfo};
+use rostrum_remote::{ApiErrorCode, DesktopConfig, GitHubHandover, HandoffSession, MachineInfo};
 
 use super::auth::AuthedDevice;
-use crate::{daemon::Daemon, http::ApiFailure, tmux};
+use crate::{daemon::Daemon, http::ApiFailure, rostrum_config, tmux};
 
 pub async fn machine(State(daemon): State<Daemon>, _device: AuthedDevice) -> Json<MachineInfo> {
     Json(daemon.machine_info())
+}
+
+/// The copyable part of rostrum's `config.json`, read as it is now.
+pub async fn config(State(daemon): State<Daemon>, _device: AuthedDevice) -> Json<DesktopConfig> {
+    Json(rostrum_config::desktop_config(
+        &daemon.rostrum_config.load(),
+    ))
 }
 
 pub async fn github_token(

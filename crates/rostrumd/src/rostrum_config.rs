@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use rostrum_config::Config;
 use rostrum_core::RepoId;
-use rostrum_remote::{API_VERSION, CloneInfo, MachineInfo};
+use rostrum_remote::{API_VERSION, CloneInfo, DesktopConfig, MachineInfo};
 
 #[derive(Clone, Debug)]
 pub struct RostrumConfig {
@@ -75,8 +75,42 @@ pub fn machine_info(config: &Config, name: &str) -> MachineInfo {
     }
 }
 
+/// The part of the config a phone may copy: what to watch and how the feed is
+/// narrowed.
+///
+/// Built field by field from an allowlist, so a setting added to `Config`
+/// later is not sent until someone decides it should be. Never sent: clone
+/// paths and the conflict-handler command (they describe this machine, and a
+/// command may carry secrets), the refresh interval and notifications (the
+/// desktop's own habits).
+///
+/// `repos` are the valid entries in the file's order, duplicates dropped
+/// (`Config::repo_ids`); `authors` skip empty logins, as `feed_filter` does.
+pub fn desktop_config(config: &Config) -> DesktopConfig {
+    let (repos, warnings) = config.repo_ids();
+    for warning in warnings {
+        tracing::debug!(warning = %warning.0, "left a repository entry out of the copied config");
+    }
+    DesktopConfig {
+        repos,
+        prs_per_repo: config.prs_per_repo,
+        hide_drafts: config.hide_drafts,
+        hide_empty_repos: config.hide_empty_repos,
+        authors: config
+            .authors
+            .iter()
+            .filter(|login| !login.is_empty())
+            .cloned()
+            .collect(),
+        include_involved: config.include_involved,
+        autostash: config.autostash,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use rostrum_core::LoginKey;
+
     use super::*;
     use crate::fsutil::ScratchDir;
 
@@ -114,6 +148,59 @@ mod tests {
                 path: "/src/r".into()
             }]
         );
+    }
+
+    #[test]
+    fn the_desktop_config_keeps_valid_repos_in_order_and_non_empty_logins() {
+        let config: Config = serde_json::from_str(
+            r#"{
+                "repos": ["b/two", "bad", "a/one", "b/two", "https://github.com/c/three.git"],
+                "prs_per_repo": 7,
+                "hide_drafts": true,
+                "hide_empty_repos": false,
+                "authors": ["Zed", "  ", "ada", "ADA"],
+                "include_involved": true,
+                "autostash": true,
+                "refresh_secs": 5,
+                "notifications": true,
+                "clones": {"a/one": "/x"},
+                "conflict_handler": {"command": "h {context}"}
+            }"#,
+        )
+        .expect("parse");
+        let copy = desktop_config(&config);
+        assert_eq!(
+            copy.repos,
+            vec![
+                RepoId::new("b", "two"),
+                RepoId::new("a", "one"),
+                RepoId::new("c", "three")
+            ]
+        );
+        assert_eq!(copy.prs_per_repo, 7);
+        assert!(copy.hide_drafts);
+        assert!(!copy.hide_empty_repos);
+        assert_eq!(
+            copy.authors,
+            vec![LoginKey::new("ada"), LoginKey::new("zed")]
+        );
+        assert!(copy.include_involved);
+        assert!(copy.autostash);
+        let json = serde_json::to_value(&copy).expect("json");
+        let fields: Vec<&str> = json
+            .as_object()
+            .expect("object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        for never in [
+            "clones",
+            "conflict_handler",
+            "refresh_secs",
+            "notifications",
+        ] {
+            assert!(!fields.contains(&never), "{never} must not be sent");
+        }
     }
 
     #[test]
