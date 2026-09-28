@@ -2,3 +2,6 @@
 [bindings.kotlin]
 # Use the Android object cleaner and Android-friendly runtime helpers.
 android = true
+# Records are snapshots the core hands out, never edited in place: `val`
+# fields make them immutable data classes, which Compose treats as stable.
+generate_immutable_records = true

@@ -107,10 +107,6 @@ pub enum RostrumError {
     #[error("local storage failed: {reason}")]
     Storage { reason: String },
 
-    /// Placeholder for API that is declared but not built yet.
-    #[error("{what} is not implemented yet")]
-    Unimplemented { what: String },
-
     /// A bug: a background task died or an invariant broke.
     #[error("internal error: {reason}")]
     Internal { reason: String },
@@ -139,11 +135,6 @@ pub enum RemoteErrorCode {
 }
 
 impl RostrumError {
-    #[allow(dead_code)]
-    pub(crate) fn unimplemented(what: &str) -> Self {
-        Self::Unimplemented { what: what.into() }
-    }
-
     pub(crate) fn invalid(reason: impl Into<String>) -> Self {
         Self::InvalidInput {
             reason: reason.into(),
