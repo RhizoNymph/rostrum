@@ -9,15 +9,15 @@ use std::{
     collections::{BTreeMap, HashMap},
     path::PathBuf,
     sync::Arc,
-    time::Duration,
 };
 
 use chrono::Utc;
 use gpui::{Context, Task};
 use gpui_tokio::Tokio;
 use rostrum_core::{
-    AppState, AuthorEntry, Divergence, FeedFilter, LoadState, LoginKey, MergeStatus, PrNumber,
-    PullRequest, RepoId, RepoState, User, carry_forward_divergence, roster,
+    AppState, AuthorEntry, Divergence, FeedFilter, LoadState, LoginKey, MergeProbeBudget,
+    PrNumber, PullRequest, RepoId, RepoState, User, apply_divergences, carry_forward_divergence,
+    divergence_query, needs_merge_probe, roster,
 };
 use rostrum_db::Db;
 use rostrum_git::{Autostash, BranchName};
@@ -26,14 +26,6 @@ use rostrum_handoff::PrMeta;
 
 use rostrum_config::{Config, ConflictHandler, Warning};
 use rostrum_local::{LocalJob, LocalOp, LocalResult, run_local_job};
-
-/// How long to wait before re-asking for a merge state GitHub is computing,
-/// doubling per attempt.
-const MERGE_PROBE_DELAY: Duration = Duration::from_secs(2);
-/// Probes per repository per poll cycle. Three attempts span 2s, 4s and 8s,
-/// which covers the computation comfortably; beyond that the state is not
-/// pending but withheld, and waiting harder will not reveal it.
-const MAX_MERGE_PROBES: u8 = 3;
 
 #[derive(Clone, Debug)]
 pub enum AuthStatus {
@@ -166,7 +158,7 @@ pub struct Store {
     /// Probes already spent this poll cycle, per repository. Bounds the chase
     /// so a merge state that stays `UNKNOWN` — which is what a token without
     /// push access sees — does not become a permanent request loop.
-    merge_probe_attempts: HashMap<RepoId, u8>,
+    merge_probe_attempts: HashMap<RepoId, MergeProbeBudget>,
     /// In-flight divergence batch per repository, issued after each refresh
     /// lands. Replacing an entry cancels the previous request, so a probe
     /// whose refresh has already been superseded never writes stale counts
@@ -771,11 +763,10 @@ impl Store {
     /// "computing" until the next full poll — for a poll interval measured in
     /// minutes, that is every pull request, every launch.
     fn probe_merge_state(&mut self, id: &RepoId, cx: &mut Context<Self>) {
-        let computing = self.state.repo(id).is_some_and(|repo| {
-            repo.prs
-                .iter()
-                .any(|pr| pr.merge_status() == MergeStatus::Computing)
-        });
+        let computing = self
+            .state
+            .repo(id)
+            .is_some_and(|repo| needs_merge_probe(&repo.prs));
 
         if !computing {
             self.merge_probes.remove(id);
@@ -783,23 +774,20 @@ impl Store {
             return;
         }
 
-        let attempt = self.merge_probe_attempts.entry(id.clone()).or_insert(0);
-        if *attempt >= MAX_MERGE_PROBES {
+        let budget = self.merge_probe_attempts.entry(id.clone()).or_default();
+        // Back off, because the wait is GitHub finishing a background job and
+        // the second attempt is evidence the first was too early.
+        let Some(delay) = budget.next_delay() else {
             // Out of budget until the next poll cycle. This is the steady state
             // for a repository whose merge state the token may not read, so it
             // must be quiet rather than an error.
             tracing::debug!(repo = %id, "merge state still unknown; waiting for the next poll");
             self.merge_probes.remove(id);
             return;
-        }
-        *attempt += 1;
-
-        // Back off, because the wait is GitHub finishing a background job and
-        // the second attempt is evidence the first was too early.
-        let delay = MERGE_PROBE_DELAY * 2u32.pow(u32::from(*attempt - 1));
+        };
         tracing::debug!(
             repo = %id,
-            attempt = *attempt,
+            attempt = budget.spent(),
             delay_ms = delay.as_millis(),
             "merge state computing; scheduling a probe"
         );
@@ -825,12 +813,7 @@ impl Store {
         let Some(repo) = self.state.repo(id) else {
             return;
         };
-        let numbers: Vec<PrNumber> = repo.prs.iter().map(|pr| pr.number).collect();
-        let pairs: Vec<(String, String)> = repo
-            .prs
-            .iter()
-            .map(|pr| (pr.base_ref.clone(), pr.head_ref.clone()))
-            .collect();
+        let (numbers, pairs) = divergence_query(&repo.prs);
         if pairs.is_empty() {
             self.divergence_probes.remove(id);
             return;
@@ -876,15 +859,7 @@ impl Store {
         match outcome {
             Ok(Ok(divergences)) => {
                 if let Some(repo) = self.state.repo_mut(id) {
-                    let answered = numbers
-                        .iter()
-                        .zip(divergences)
-                        .filter_map(|(number, divergence)| divergence.map(|d| (*number, d)));
-                    for (number, divergence) in answered {
-                        if let Some(pr) = repo.prs.iter_mut().find(|pr| pr.number == number) {
-                            pr.base_divergence = Some(divergence);
-                        }
-                    }
+                    apply_divergences(&mut repo.prs, numbers, divergences);
                 }
                 tracing::debug!(repo = %id, count = numbers.len(), "divergence updated");
             }

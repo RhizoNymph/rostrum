@@ -16,7 +16,7 @@
 //! header's start offsets to recover per-line old/new line numbers, because
 //! those numbers are what GitHub anchors review comments by.
 
-use crate::model::{DiffLine, Hunk, LineKind};
+use crate::model::{DiffFile, DiffLine, FileStatus, Hunk, LineKind, PatchAvailability};
 
 /// Why a patch could not be parsed.
 ///
@@ -259,6 +259,44 @@ fn check_counts(hunk: Hunk) -> Hunk {
     hunk
 }
 
+impl DiffFile {
+    /// Build a file from the fields GitHub's files endpoint returns for it.
+    ///
+    /// No patch means GitHub withheld it (binary, or too large):
+    /// [`PatchAvailability::Omitted`]. A patch that does not parse is logged
+    /// and reported as [`PatchAvailability::Truncated`] with no hunks, rather
+    /// than guessed at — a wrong line number misplaces a review comment.
+    pub fn from_patch(
+        path: String,
+        previous_path: Option<String>,
+        status: &str,
+        additions: u32,
+        deletions: u32,
+        patch: Option<&str>,
+    ) -> Self {
+        let (hunks, availability) = match patch {
+            Some(patch) => match parse_patch(patch) {
+                Ok(hunks) => (hunks, PatchAvailability::Present),
+                Err(error) => {
+                    tracing::warn!(path = %path, %error, "could not parse patch");
+                    (Vec::new(), PatchAvailability::Truncated)
+                }
+            },
+            None => (Vec::new(), PatchAvailability::Omitted),
+        };
+
+        Self {
+            path,
+            previous_path,
+            status: FileStatus::from_api(status),
+            additions,
+            deletions,
+            hunks,
+            availability,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,6 +327,44 @@ mod tests {
     }
 
     // -- empty / degenerate input --------------------------------------------
+
+    #[test]
+    fn a_file_with_a_patch_is_parsed_and_present() {
+        let file = DiffFile::from_patch(
+            "src/new.rs".into(),
+            Some("src/old.rs".into()),
+            "renamed",
+            1,
+            1,
+            Some("@@ -1 +1 @@\n-a\n+b"),
+        );
+        assert_eq!(file.availability, PatchAvailability::Present);
+        assert_eq!(file.status, FileStatus::Renamed);
+        assert_eq!(file.previous_path.as_deref(), Some("src/old.rs"));
+        assert_eq!(file.hunks.len(), 1);
+        assert_eq!(file.hunks[0].lines.len(), 2);
+    }
+
+    #[test]
+    fn a_file_without_a_patch_is_omitted() {
+        let file = DiffFile::from_patch("logo.png".into(), None, "added", 0, 0, None);
+        assert_eq!(file.availability, PatchAvailability::Omitted);
+        assert!(file.hunks.is_empty());
+    }
+
+    #[test]
+    fn an_unparseable_patch_is_truncated_with_no_hunks() {
+        let file = DiffFile::from_patch(
+            "a.rs".into(),
+            None,
+            "modified",
+            1,
+            0,
+            Some("not a patch"),
+        );
+        assert_eq!(file.availability, PatchAvailability::Truncated);
+        assert!(file.hunks.is_empty());
+    }
 
     #[test]
     fn empty_patch_is_empty_not_an_error() {

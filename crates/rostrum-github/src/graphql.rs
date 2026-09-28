@@ -60,6 +60,21 @@ query($owner: String!, $name: String!, $first: Int!) {
 }
 "#;
 
+/// Who the token belongs to, alone: the cheapest authenticated query there
+/// is, used to verify a freshly handed-in token before any repository is
+/// fetched.
+pub const VIEWER: &str = r#"
+query {
+  viewer { login avatarUrl }
+}
+"#;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ViewerQueryData {
+    pub viewer: Option<AuthorNode>,
+}
+
 /// Which side of the draft toggle a caller is asking for.
 ///
 /// GitHub has no "set draft to X" mutation. The two directions are separate
@@ -732,6 +747,22 @@ mod tests {
             .into_iter()
             .map(PrNode::into_domain)
             .collect()
+    }
+
+    #[test]
+    fn decodes_the_viewer_query() {
+        let parsed: GraphQlResponse<ViewerQueryData> = serde_json::from_str(
+            r#"{"data":{"viewer":{"login":"RhizoNymph","avatarUrl":"https://a/1"}}}"#,
+        )
+        .expect("decodes");
+        let user = parsed
+            .data
+            .and_then(|data| data.viewer)
+            .and_then(AuthorNode::into_user)
+            .expect("a viewer");
+        assert_eq!(user.login, "RhizoNymph");
+        assert_eq!(user.avatar_url.as_deref(), Some("https://a/1"));
+        assert!(VIEWER.contains("viewer { login avatarUrl }"));
     }
 
     #[test]

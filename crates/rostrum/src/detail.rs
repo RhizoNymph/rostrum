@@ -18,15 +18,15 @@ use gpui::{
 };
 use gpui_tokio::Tokio;
 use rostrum_core::{
-    Conversation, Divergence, Label, PrNumber, PullRequest, RepoId, ReviewDecision, Side,
-    TimelineItem,
+    Conversation, Divergence, Label, PrNumber, PullRequest, RepoId, ReviewDecision, TimelineItem,
+    drafts_are_stale,
 };
 use rostrum_db::Db;
-use rostrum_diff::{DiffFile, FileStatus, Highlighter, PatchAvailability, parse_patch};
+use rostrum_diff::{DiffFile, Highlighter};
 use rostrum_git::{Autostash, BranchName};
 use rostrum_github::{
     BranchUpdateMethod, DraftComment, DraftState, GitHubClient, GitHubError, IssueState,
-    MergeMethod, PullRequestFile, ReviewEvent, SubmitReview,
+    MergeMethod, MergePullRequest, PullRequestFile, ReviewEvent, SubmitReview,
 };
 use rostrum_ui::{
     ActiveTheme, TextInput,
@@ -130,58 +130,9 @@ impl Confirm {
     }
 }
 
-/// Where an inline comment will be attached.
-///
-/// `start_line`/`start_side` are set only for a multi-line selection; GitHub
-/// wants them omitted entirely for a single-line comment.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DraftAnchor {
-    pub path: String,
-    pub line: u32,
-    pub side: Side,
-    pub start_line: Option<u32>,
-    pub start_side: Option<Side>,
-}
-
-impl DraftAnchor {
-    pub fn single(path: impl Into<String>, line: u32, side: Side) -> Self {
-        Self {
-            path: path.into(),
-            line,
-            side,
-            start_line: None,
-            start_side: None,
-        }
-    }
-
-    /// Extend an anchor to cover the range between it and `line`.
-    ///
-    /// GitHub requires `start_line <= line`, so the two are ordered here rather
-    /// than trusting the click order.
-    pub fn extended_to(&self, line: u32, side: Side) -> Self {
-        let (start, end) = if line < self.anchor_start() {
-            (line, self.line)
-        } else {
-            (self.anchor_start(), line)
-        };
-        Self {
-            path: self.path.clone(),
-            line: end,
-            side,
-            start_line: (start != end).then_some(start),
-            start_side: (start != end).then_some(side),
-        }
-    }
-
-    fn anchor_start(&self) -> u32 {
-        self.start_line.unwrap_or(self.line)
-    }
-
-    /// Whether `line` on `side` falls inside this anchor.
-    pub fn covers(&self, path: &str, line: u32, side: Side) -> bool {
-        self.path == path && self.side == side && (self.anchor_start()..=self.line).contains(&line)
-    }
-}
+/// Where an inline comment will be attached. Lives in `rostrum-core` so the
+/// Android core orders ranges and matches lines exactly as this view does.
+pub use rostrum_core::DraftAnchor;
 
 pub struct PrDetail {
     pub(crate) store: Entity<Store>,
@@ -441,11 +392,6 @@ impl PrDetail {
         }));
     }
 
-    /// Cache key for a pull request's diff.
-    fn files_cache_key(&self) -> String {
-        format!("files:{}{}", self.repo, self.number)
-    }
-
     fn load_files(&mut self, cx: &mut Context<Self>) {
         let Some(client) = self.client(cx) else {
             return;
@@ -460,17 +406,14 @@ impl PrDetail {
         // head sha is a stronger validator than an HTTP ETag: if it has not
         // moved, the diff cannot have changed, and no request is needed.
         let head_sha = self.pull(cx).map(|pull| pull.head_sha).unwrap_or_default();
-        let key = self.files_cache_key();
 
         self.tasks.push(cx.spawn(async move |this, cx| {
             // Fetch and parse together, off the main thread: patch parsing is
             // pure CPU work and a large pull request has a lot of it.
             let result = Tokio::spawn(&*cx, async move {
                 if let Some(db) = db.as_ref()
-                    && !head_sha.is_empty()
-                    && let Ok(Some(cached)) = db.load_etag(&key).await
-                    && cached.etag == head_sha
-                    && let Ok(files) = serde_json::from_str::<Vec<PullRequestFile>>(&cached.body)
+                    && let Ok(Some(files)) =
+                        db.load_pull_request_files(&repo, number, &head_sha).await
                 {
                     tracing::debug!(%repo, "diff served from cache");
                     return Ok::<Vec<DiffFile>, GitHubError>(
@@ -481,9 +424,9 @@ impl PrDetail {
                 let fetched = client.files(&repo, number).await?;
 
                 if let Some(db) = db.as_ref()
-                    && !head_sha.is_empty()
-                    && let Ok(body) = serde_json::to_string(&fetched)
-                    && let Err(error) = db.save_etag(&key, &head_sha, &body).await
+                    && let Err(error) = db
+                        .save_pull_request_files(&repo, number, &head_sha, &fetched)
+                        .await
                 {
                     tracing::warn!(%error, "could not cache diff");
                 }
@@ -912,7 +855,11 @@ impl PrDetail {
         match action {
             Confirm::Merge(method) => {
                 self.mutate("Merging", cx, move |client, repo, number| {
-                    Box::pin(async move { client.merge(&repo, number, method).await })
+                    Box::pin(async move {
+                        client
+                            .merge(&repo, number, &MergePullRequest::new(method))
+                            .await
+                    })
                 });
             }
             Confirm::Close => self.mutate("Closing", cx, move |client, repo, number| {
@@ -1800,38 +1747,14 @@ impl Render for PrDetail {
 }
 
 fn to_diff_file(file: PullRequestFile) -> DiffFile {
-    let (hunks, availability) = match file.patch.as_deref() {
-        Some(patch) => match parse_patch(patch) {
-            Ok(hunks) => (hunks, PatchAvailability::Present),
-            Err(error) => {
-                tracing::warn!(path = %file.filename, %error, "could not parse patch");
-                (Vec::new(), PatchAvailability::Truncated)
-            }
-        },
-        None => (Vec::new(), PatchAvailability::Omitted),
-    };
-
-    DiffFile {
-        path: file.filename,
-        previous_path: file.previous_filename,
-        status: FileStatus::from_api(&file.status),
-        additions: file.additions,
-        deletions: file.deletions,
-        hunks,
-        availability,
-    }
-}
-
-/// A force-push moves the head commit, invalidating every drafted line anchor.
-///
-/// An unknown sha on either side is treated as "not stale": blocking review
-/// submission because we could not read a field would be worse than the risk it
-/// guards against.
-fn drafts_are_stale(drafted_against: Option<&str>, current: &str) -> bool {
-    match drafted_against {
-        Some(drafted) => !drafted.is_empty() && !current.is_empty() && drafted != current,
-        None => false,
-    }
+    DiffFile::from_patch(
+        file.filename,
+        file.previous_filename,
+        &file.status,
+        file.additions,
+        file.deletions,
+        file.patch.as_deref(),
+    )
 }
 
 type ThemeColor = fn(&rostrum_ui::Theme) -> gpui::Hsla;
@@ -1850,32 +1773,5 @@ fn capitalise(text: &str) -> String {
     match chars.next() {
         Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
         None => String::new(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn drafts_written_against_the_current_head_are_fresh() {
-        assert!(!drafts_are_stale(Some("abc"), "abc"));
-    }
-
-    #[test]
-    fn drafts_written_against_an_older_head_are_stale() {
-        assert!(drafts_are_stale(Some("abc"), "def"));
-    }
-
-    #[test]
-    fn no_drafts_is_never_stale() {
-        assert!(!drafts_are_stale(None, "abc"));
-    }
-
-    /// An unreadable sha must not block the user from submitting.
-    #[test]
-    fn unknown_shas_do_not_block_submission() {
-        assert!(!drafts_are_stale(Some(""), "abc"));
-        assert!(!drafts_are_stale(Some("abc"), ""));
     }
 }

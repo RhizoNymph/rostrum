@@ -13,5 +13,6 @@ pub use conversation::PULL_REQUEST_CONVERSATION;
 pub use error::GitHubError;
 pub use graphql::{BranchUpdateMethod, DraftState};
 pub use rest::{
-    AddLabels, DraftComment, IssueState, MergeMethod, PullRequestFile, ReviewEvent, SubmitReview,
+    AddLabels, DraftComment, IssueState, MergeMethod, MergePullRequest, PullRequestFile,
+    ReviewEvent, SubmitReview,
 };

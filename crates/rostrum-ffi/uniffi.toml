@@ -1,8 +1,7 @@
-# Read by uniffi-bindgen (library mode finds it next to this crate's manifest).
+# UniFFI binding configuration, read in library mode from the crate root.
 [bindings.kotlin]
-# Keep the default package (`uniffi.rostrum_ffi`): the app's R8 rules keep
-# `uniffi.**`, and the app imports from it.
-# `android = true` makes generated objects use Android's SystemCleaner on
-# API 34+ (JNA's cleaner below that) instead of probing for
-# `java.lang.ref.Cleaner`, which Android lacks before API 33.
+# Use the Android object cleaner and Android-friendly runtime helpers.
 android = true
+# Records are snapshots the core hands out, never edited in place: `val`
+# fields make them immutable data classes, which Compose treats as stable.
+generate_immutable_records = true
