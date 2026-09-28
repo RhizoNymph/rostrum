@@ -15,5 +15,6 @@ enum class FakeCall {
     PendingReview, AddDraft, EditDraft, RemoveDraft, DiscardDrafts, SubmitReview,
     ParsePairingLink, PairWithLink, ProbeDesktop, PairManual, SetRemote, ClearRemote, RemoteStatus, MachineInfo,
     LocalStatus, RunLocalJob, AbortLocal, StartSyncAll, SyncAllStatus, Handoffs, RefreshGitHubTokenFromDesktop, Unpair,
+    DesktopConfig, CopyDesktopConfig,
     CheckNotifications, MarkNotificationsSeen,
 }

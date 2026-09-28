@@ -55,6 +55,26 @@ class DesktopGitHubToken(
     override fun hashCode(): Int = (token.hashCode() * 31 + source.hashCode()) * 31 + host.hashCode()
 }
 
+/**
+ * The paired desktop's settings next to this phone's, for "copy settings
+ * from the desktop". [repos] is the desktop's list in its order; [added] are
+ * on the desktop and not here; [removed] are here and dropped by copying.
+ */
+data class DesktopConfigPreview(
+    val machine: String,
+    val repos: List<String>,
+    val added: List<String>,
+    val removed: List<String>,
+    val prsPerRepo: Int,
+    val hideDrafts: Boolean,
+    val hideEmptyRepos: Boolean,
+    val authors: List<String>,
+    val includeInvolved: Boolean,
+    val autostash: Boolean,
+    /** Copying would change anything on this phone. */
+    val changesAnything: Boolean,
+)
+
 /** Whether a desktop is set for this session. */
 sealed interface RemoteStatus {
     data object NotPaired : RemoteStatus

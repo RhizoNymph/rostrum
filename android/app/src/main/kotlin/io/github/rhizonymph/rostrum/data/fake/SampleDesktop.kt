@@ -2,6 +2,7 @@ package io.github.rhizonymph.rostrum.data.fake
 
 import io.github.rhizonymph.rostrum.data.model.Chip
 import io.github.rhizonymph.rostrum.data.model.CloneInfo
+import io.github.rhizonymph.rostrum.data.model.FeedPreferences
 import io.github.rhizonymph.rostrum.data.model.ColorRole
 import io.github.rhizonymph.rostrum.data.model.HandoffState
 import io.github.rhizonymph.rostrum.data.model.InProgress
@@ -43,6 +44,12 @@ internal object SampleDesktop {
     )
 
     fun attach(session: String) = "tmux attach -t =$session"
+
+    /** nymph-desk's own settings, which "copy settings" brings to the phone. */
+    val configRepos = listOf(SamplePulls.ROSTRUM, SamplePulls.ZED, SamplePulls.TOKIO, "serde-rs/serde")
+    const val CONFIG_PRS_PER_REPO = 25
+    val configPreferences = FeedPreferences(hideDrafts = true, hideEmptyRepos = true, authors = emptyList(), includeInvolved = false)
+    const val CONFIG_AUTOSTASH = true
 
     /** Every pull request's local state on the desktop, keyed by pull request. */
     fun localStatuses(): MutableMap<PrRef, LocalStatus> = mutableMapOf(

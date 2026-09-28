@@ -8,6 +8,7 @@ import io.github.rhizonymph.rostrum.data.model.BranchUpdateMethod
 import io.github.rhizonymph.rostrum.data.model.Chip
 import io.github.rhizonymph.rostrum.data.model.ColorRole
 import io.github.rhizonymph.rostrum.data.model.CommentAnchor
+import io.github.rhizonymph.rostrum.data.model.DesktopConfigPreview
 import io.github.rhizonymph.rostrum.data.model.DesktopGitHubToken
 import io.github.rhizonymph.rostrum.data.model.DesktopProbe
 import io.github.rhizonymph.rostrum.data.model.DraftAnchor
@@ -110,6 +111,10 @@ class FakeRostrumBackend(
     private var revision = 0L
 
     private var notificationChecks = 0
+    private var refreshes = 0
+
+    /** How many times [refreshFeed] succeeded, for tests. */
+    val feedRefreshes: Int get() = refreshes
     private val desktop = FakeDesktop(
         clock = clock,
         started = started,
@@ -290,6 +295,7 @@ class FakeRostrumBackend(
 
     override suspend fun refreshFeed(): Outcome<FeedSnapshot> = call(FakeCall.RefreshFeed) {
         signedIn {
+            refreshes++
             val now = clock.instant()
             repos.forEach { loads[it] = RepoLoad.Loaded(now) }
             emitFeed()
@@ -773,6 +779,54 @@ class FakeRostrumBackend(
         call(FakeCall.RefreshGitHubTokenFromDesktop) { desktop.refreshGitHubTokenFromDesktop() }
 
     override suspend fun unpair(): Outcome<Unit> = call(FakeCall.Unpair) { desktop.unpair() }
+
+    private fun desktopPreview(): DesktopConfigPreview {
+        val phone = repos.map { it.lowercase() }.toSet()
+        val desk = SampleDesktop.configRepos.map { it.lowercase() }.toSet()
+        val added = SampleDesktop.configRepos.filter { it.lowercase() !in phone }
+        val removed = repos.filter { it.lowercase() !in desk }
+        val changes = added.isNotEmpty() || removed.isNotEmpty() ||
+            repos != SampleDesktop.configRepos ||
+            prsPerRepo != SampleDesktop.CONFIG_PRS_PER_REPO ||
+            preferences != SampleDesktop.configPreferences ||
+            autostash != SampleDesktop.CONFIG_AUTOSTASH
+        val prefs = SampleDesktop.configPreferences
+        return DesktopConfigPreview(
+            machine = SampleDesktop.MACHINE,
+            repos = SampleDesktop.configRepos,
+            added = added,
+            removed = removed,
+            prsPerRepo = SampleDesktop.CONFIG_PRS_PER_REPO,
+            hideDrafts = prefs.hideDrafts,
+            hideEmptyRepos = prefs.hideEmptyRepos,
+            authors = prefs.authors,
+            includeInvolved = prefs.includeInvolved,
+            autostash = SampleDesktop.CONFIG_AUTOSTASH,
+            changesAnything = changes,
+        )
+    }
+
+    override suspend fun desktopConfig(): Outcome<DesktopConfigPreview> = call(FakeCall.DesktopConfig) {
+        if (!desktop.isPaired) Outcome.Err(BackendError.NotPaired) else Outcome.Ok(desktopPreview())
+    }
+
+    override suspend fun copyDesktopConfig(): Outcome<Settings> = call(FakeCall.CopyDesktopConfig) {
+        if (!desktop.isPaired) {
+            Outcome.Err(BackendError.NotPaired)
+        } else {
+            repos.clear()
+            repos += SampleDesktop.configRepos
+            SampleDesktop.configRepos.forEach { repo ->
+                loads.putIfAbsent(repo, RepoLoad.Idle)
+                labels.putIfAbsent(repo, SamplePulls.labels(repo))
+            }
+            prsPerRepo = SampleDesktop.CONFIG_PRS_PER_REPO
+            preferences = SampleDesktop.configPreferences
+            autostash = SampleDesktop.CONFIG_AUTOSTASH
+            emitFeed()
+            Outcome.Ok(currentSettings())
+        }
+    }
 
     // --- notifications -------------------------------------------------------------
 

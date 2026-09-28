@@ -54,6 +54,8 @@ internal class FakeDesktop(
     private var syncAutostash = false
     private var nextId = 1L
 
+    val isPaired: Boolean get() = remote !is RemoteStatus.NotPaired
+
     private fun <T> withRemote(block: () -> Outcome<T>): Outcome<T> =
         if (remote is RemoteStatus.NotPaired) Outcome.Err(BackendError.NotPaired) else block()
 

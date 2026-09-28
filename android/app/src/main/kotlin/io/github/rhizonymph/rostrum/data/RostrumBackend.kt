@@ -3,6 +3,7 @@ package io.github.rhizonymph.rostrum.data
 import io.github.rhizonymph.rostrum.data.model.AuthorRoster
 import io.github.rhizonymph.rostrum.data.model.BranchUpdateMethod
 import io.github.rhizonymph.rostrum.data.model.CommentAnchor
+import io.github.rhizonymph.rostrum.data.model.DesktopConfigPreview
 import io.github.rhizonymph.rostrum.data.model.DesktopGitHubToken
 import io.github.rhizonymph.rostrum.data.model.DesktopProbe
 import io.github.rhizonymph.rostrum.data.model.FeedPreferences
@@ -255,6 +256,16 @@ interface RostrumBackend {
 
     /** Unpair on the desktop, then forget it here. */
     suspend fun unpair(): Outcome<Unit>
+
+    /** The desktop's settings compared with this phone's. [BackendError.NotPaired] when unpaired. */
+    suspend fun desktopConfig(): Outcome<DesktopConfigPreview>
+
+    /**
+     * Replace this phone's repositories, pull requests per repository, feed
+     * preferences and stash default with the desktop's (fetched afresh, never
+     * a stale preview) and persist them. Refresh the feed afterwards.
+     */
+    suspend fun copyDesktopConfig(): Outcome<Settings>
 
     // --- notifications -------------------------------------------------------
 

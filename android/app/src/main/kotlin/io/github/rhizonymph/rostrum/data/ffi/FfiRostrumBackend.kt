@@ -8,6 +8,7 @@ import io.github.rhizonymph.rostrum.data.describe
 import io.github.rhizonymph.rostrum.data.model.AuthorRoster
 import io.github.rhizonymph.rostrum.data.model.BranchUpdateMethod
 import io.github.rhizonymph.rostrum.data.model.CommentAnchor
+import io.github.rhizonymph.rostrum.data.model.DesktopConfigPreview
 import io.github.rhizonymph.rostrum.data.model.DesktopGitHubToken
 import io.github.rhizonymph.rostrum.data.model.DesktopProbe
 import io.github.rhizonymph.rostrum.data.model.FeedPreferences
@@ -297,6 +298,12 @@ class FfiRostrumBackend(dataDir: File) : RostrumBackend {
         core("refreshGithubTokenFromDesktop") { it.refreshGithubTokenFromDesktop().toModel() }
 
     override suspend fun unpair(): Outcome<Unit> = core("unpair") { it.unpair() }
+
+    // --- desktop settings (see FfiDesktopConfig.kt) --------------------------
+
+    override suspend fun desktopConfig(): Outcome<DesktopConfigPreview> = desktopConfigUnavailable()
+
+    override suspend fun copyDesktopConfig(): Outcome<Settings> = desktopConfigUnavailable()
 
     // --- notifications -------------------------------------------------------
 
