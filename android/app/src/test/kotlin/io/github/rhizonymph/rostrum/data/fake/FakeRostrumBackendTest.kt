@@ -314,6 +314,13 @@ class FakeRostrumBackendTest {
         }
 
         @Test
+        fun `a review without drafts leaves them pending`() = runTest {
+            val backend = testBackend()
+            backend.submitReview(diffOverview, ReviewEvent.Comment, "Summary only", includeDrafts = false).orFail()
+            assertEquals(2, backend.pendingReview(diffOverview).orFail().drafts.size)
+        }
+
+        @Test
         fun `an empty comment review is refused`() = runTest {
             val backend = testBackend()
             backend.discardDrafts(diffOverview)

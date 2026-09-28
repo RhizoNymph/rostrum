@@ -2,7 +2,6 @@ package io.github.rhizonymph.rostrum.data.fake
 
 import io.github.rhizonymph.rostrum.data.BackendError
 import io.github.rhizonymph.rostrum.data.Outcome
-import io.github.rhizonymph.rostrum.data.RemoteErrorCode
 import io.github.rhizonymph.rostrum.data.RostrumBackend
 import io.github.rhizonymph.rostrum.data.model.AuthorRoster
 import io.github.rhizonymph.rostrum.data.model.BranchUpdateMethod
@@ -19,7 +18,6 @@ import io.github.rhizonymph.rostrum.data.model.FileDiffBody
 import io.github.rhizonymph.rostrum.data.model.FilesOverview
 import io.github.rhizonymph.rostrum.data.model.GitHubStatus
 import io.github.rhizonymph.rostrum.data.model.HandoffSession
-import io.github.rhizonymph.rostrum.data.model.JobOutcome
 import io.github.rhizonymph.rostrum.data.model.JobResult
 import io.github.rhizonymph.rostrum.data.model.LabelView
 import io.github.rhizonymph.rostrum.data.model.LocalOp
@@ -47,8 +45,6 @@ import io.github.rhizonymph.rostrum.data.model.ReviewThreadView
 import io.github.rhizonymph.rostrum.data.model.Settings
 import io.github.rhizonymph.rostrum.data.model.Side
 import io.github.rhizonymph.rostrum.data.model.SyncAllOp
-import io.github.rhizonymph.rostrum.data.model.SyncEntry
-import io.github.rhizonymph.rostrum.data.model.SyncEntryState
 import io.github.rhizonymph.rostrum.data.model.SyncRun
 import io.github.rhizonymph.rostrum.data.model.ThreadCommentView
 import io.github.rhizonymph.rostrum.data.model.TimelineEntry
@@ -61,8 +57,6 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.net.URI
-import java.net.URLDecoder
 import java.time.Clock
 import java.time.Duration
 
@@ -113,11 +107,19 @@ class FakeRostrumBackend(
     private var nextId = 100L
     private var revision = 0L
 
-    private var remote: RemoteStatus = if (paired) pairedStatus(SampleDesktop.hosts) else RemoteStatus.NotPaired
-    private val local = SampleDesktop.localStatuses()
-    private var syncRun: SyncRun? = SampleDesktop.lastRun(started)
-    private var syncAutostash = false
     private var notificationChecks = 0
+    private val desktop = FakeDesktop(
+        clock = clock,
+        started = started,
+        paired = paired,
+        pulls = pulls,
+        onFeedChanged = { emitFeed() },
+        adoptTokenIfSignedOut = { if (token == null) token = it },
+        replaceToken = {
+            token = it
+            tokenVerified = false
+        },
+    )
 
     private val updates = MutableSharedFlow<FeedSnapshot>(extraBufferCapacity = 64)
     override val feedUpdates: Flow<FeedSnapshot> = updates.asSharedFlow()
@@ -157,9 +159,6 @@ class FakeRostrumBackend(
 
     private fun <T> withPull(pr: PrRef, block: (FakePull) -> Outcome<T>): Outcome<T> =
         signedIn { pulls[pr]?.let(block) ?: Outcome.Err(BackendError.UnknownPullRequest(pr.repo, pr.number)) }
-
-    private fun <T> withRemote(block: () -> Outcome<T>): Outcome<T> =
-        if (remote is RemoteStatus.NotPaired) Outcome.Err(BackendError.NotPaired) else block()
 
     private fun labelsOf(repo: String): Map<String, LabelView> = labels[repo].orEmpty().associateBy { it.name }
 
@@ -718,87 +717,22 @@ class FakeRostrumBackend(
                 mergeStatus = if (pull.mergeStatus == MergeStatus.Ready) MergeStatus.Blocked else pull.mergeStatus,
             )
         }
-        drafts.remove(pull.ref)
-        draftedAgainst.remove(pull.ref)
+        if (inline.isNotEmpty()) {
+            drafts.remove(pull.ref)
+            draftedAgainst.remove(pull.ref)
+        }
         emitFeed()
     }
 
-    // --- desktop -------------------------------------------------------------------
+    // --- desktop (see FakeDesktop) ------------------------------------------------
 
-    override fun parsePairingLink(uri: String): Outcome<PairingPreview> {
-        val parsed = runCatchingUri(uri) ?: return Outcome.Err(BackendError.InvalidInput("That isn't a Rostrum pairing link"))
-        if (parsed.scheme != "rostrum" || parsed.host != "pair") {
-            return Outcome.Err(BackendError.InvalidInput("That isn't a Rostrum pairing link"))
-        }
-        val params = parsed.rawQuery.orEmpty().split('&').filter { '=' in it }.associate {
-            val (k, v) = it.split('=', limit = 2)
-            k to URLDecoder.decode(v, Charsets.UTF_8)
-        }
-        val code = params["code"]?.takeIf { it.isNotBlank() }
-            ?: return Outcome.Err(BackendError.InvalidInput("The link has no pairing code"))
-        return Outcome.Ok(
-            PairingPreview(
-                machine = params["name"] ?: SampleDesktop.MACHINE,
-                hosts = params["hosts"]?.split(',')?.filter { it.isNotBlank() } ?: SampleDesktop.hosts,
-                port = params["port"]?.toIntOrNull() ?: SampleDesktop.PORT,
-                fingerprintShort = params["fp"]?.let(::shortFingerprint) ?: SampleDesktop.FINGERPRINT_SHORT,
-                code = code,
-            ),
-        )
-    }
+    override fun parsePairingLink(uri: String): Outcome<PairingPreview> = desktop.parsePairingLink(uri)
 
-    private fun runCatchingUri(uri: String): URI? = try {
-        URI(uri.trim())
-    } catch (e: java.net.URISyntaxException) {
-        null
-    }
+    override suspend fun pairWithLink(uri: String, deviceName: String): Outcome<PairingResult> =
+        call(FakeCall.PairWithLink) { desktop.pairWithLink(uri, deviceName) }
 
-    private fun pairedStatus(hosts: List<String>) = RemoteStatus.Paired(
-        hosts = hosts,
-        port = SampleDesktop.PORT,
-        fingerprintShort = SampleDesktop.FINGERPRINT_SHORT,
-        currentHost = hosts.first(),
-    )
-
-    private fun completePairing(machine: String, hosts: List<String>): PairingResult {
-        remote = pairedStatus(hosts)
-        val github = DesktopGitHubToken(DESKTOP_TOKEN, "gh auth token", "github.com")
-        if (token == null) token = github.token
-        return PairingResult(
-            machine = SampleDesktop.machine().copy(name = machine),
-            endpoint = """{"hosts":[${hosts.joinToString(",") { "\"$it\"" }}],"port":${SampleDesktop.PORT},"fingerprint":"${SampleDesktop.FINGERPRINT}"}""",
-            deviceId = "device-${nextId++}",
-            deviceToken = "rdt_sample_${nextId++}",
-            github = github,
-        )
-    }
-
-    override suspend fun pairWithLink(uri: String, deviceName: String): Outcome<PairingResult> = call(FakeCall.PairWithLink) {
-        when (val preview = parsePairingLink(uri)) {
-            is Outcome.Err -> preview
-            is Outcome.Ok -> Outcome.Ok(completePairing(preview.value.machine, preview.value.hosts))
-        }
-    }
-
-    override suspend fun probeDesktop(host: String, port: Int): Outcome<DesktopProbe> = call(FakeCall.ProbeDesktop) {
-        val trimmed = host.trim()
-        when {
-            trimmed.isEmpty() -> Outcome.Err(BackendError.InvalidInput("Enter the desktop's address"))
-            port !in 1..65535 -> Outcome.Err(BackendError.InvalidInput("Ports run from 1 to 65535"))
-            "unreachable" in trimmed -> Outcome.Err(BackendError.DesktopUnreachable("connection refused by $trimmed:$port"))
-            else -> Outcome.Ok(
-                DesktopProbe(
-                    machine = SampleDesktop.MACHINE,
-                    apiVersion = 1,
-                    compatible = true,
-                    host = trimmed,
-                    port = port,
-                    fingerprint = SampleDesktop.FINGERPRINT,
-                    fingerprintShort = SampleDesktop.FINGERPRINT_SHORT,
-                ),
-            )
-        }
-    }
+    override suspend fun probeDesktop(host: String, port: Int): Outcome<DesktopProbe> =
+        call(FakeCall.ProbeDesktop) { desktop.probeDesktop(host, port) }
 
     override suspend fun pairManual(
         host: String,
@@ -806,196 +740,35 @@ class FakeRostrumBackend(
         fingerprint: String,
         code: String,
         deviceName: String,
-    ): Outcome<PairingResult> = call(FakeCall.PairManual) {
-        val normalized = code.filter { it.isLetterOrDigit() }.uppercase()
-        when {
-            normalized.length != 8 -> Outcome.Err(BackendError.RemoteApi(RemoteErrorCode.PairingCodeInvalid, "the code has 8 characters"))
-            normalized == "00000000" -> Outcome.Err(BackendError.RemoteApi(RemoteErrorCode.PairingCodeExpired, "the code expired"))
-            fingerprint != SampleDesktop.FINGERPRINT -> Outcome.Err(BackendError.CertificateMismatch(host))
-            else -> Outcome.Ok(completePairing(SampleDesktop.MACHINE, listOf(host.trim())))
-        }
-    }
+    ): Outcome<PairingResult> = call(FakeCall.PairManual) { desktop.pairManual(host, port, fingerprint, code, deviceName) }
 
-    override suspend fun setRemote(endpoint: String, deviceToken: String): Outcome<RemoteStatus> = call(FakeCall.SetRemote) {
-        if (endpoint.isBlank() || deviceToken.isBlank()) {
-            Outcome.Err(BackendError.InvalidInput("The saved pairing is incomplete"))
-        } else {
-            val hosts = Regex("\"hosts\":\\[([^]]*)]").find(endpoint)?.groupValues?.get(1)
-                ?.split(',')?.map { it.trim().trim('"') }?.filter { it.isNotEmpty() }
-                ?.takeIf { it.isNotEmpty() } ?: SampleDesktop.hosts
-            remote = pairedStatus(hosts)
-            Outcome.Ok(remote)
-        }
-    }
+    override suspend fun setRemote(endpoint: String, deviceToken: String): Outcome<RemoteStatus> =
+        call(FakeCall.SetRemote) { desktop.setRemote(endpoint, deviceToken) }
 
-    override suspend fun clearRemote(): Outcome<Unit> = call(FakeCall.ClearRemote) {
-        remote = RemoteStatus.NotPaired
-        Outcome.Ok(Unit)
-    }
+    override suspend fun clearRemote(): Outcome<Unit> = call(FakeCall.ClearRemote) { desktop.clearRemote() }
 
-    override suspend fun remoteStatus(): Outcome<RemoteStatus> = call(FakeCall.RemoteStatus) { Outcome.Ok(remote) }
+    override suspend fun remoteStatus(): Outcome<RemoteStatus> = call(FakeCall.RemoteStatus) { desktop.remoteStatus() }
 
-    override suspend fun machineInfo(): Outcome<MachineInfo> =
-        call(FakeCall.MachineInfo) { withRemote { Outcome.Ok(SampleDesktop.machine().copy(autostash = autostash)) } }
+    override suspend fun machineInfo(): Outcome<MachineInfo> = call(FakeCall.MachineInfo) { desktop.machineInfo(autostash) }
 
-    private fun localOf(pr: PrRef): LocalStatus = local[pr]
-        ?: if (SampleDesktop.machine().clones.any { it.repo == pr.repo }) LocalStatus.NotCheckedOut else LocalStatus.NotConfigured
-
-    override suspend fun localStatus(pr: PrRef): Outcome<LocalStatus> =
-        call(FakeCall.LocalStatus) { withRemote { Outcome.Ok(localOf(pr)) } }
-
-    private fun runJob(pr: PrRef, op: LocalOp, autostash: Boolean): JobResult {
-        val status = localOf(pr)
-        val branch = (status as? LocalStatus.CheckedOut)?.branch
-        val name = branch?.branch ?: pulls[pr]?.headRef.orEmpty()
-        val outcome: JobOutcome = when {
-            status == LocalStatus.NotConfigured -> JobOutcome.NotConfigured
-            branch == null -> JobOutcome.NotCheckedOut
-            branch.inProgress != null -> JobOutcome.Refused(branch.inProgress.description.lowercase())
-            branch.blocker != null && !autostash -> JobOutcome.Refused(branch.blocker)
-            op == LocalOp.PullRebase || op == LocalOp.MergeRemote ->
-                if (branch.behind == 0) JobOutcome.UpToDate else JobOutcome.Completed
-            (pulls[pr]?.behind ?: 0) == 0 -> JobOutcome.UpToDate
-            pulls[pr]?.mergeStatus == MergeStatus.Conflicts -> {
-                val session = "rostrum-${pr.repo.replace('/', '-')}-${pr.number}"
-                JobOutcome.HandedOff(session, SampleDesktop.attach(session))
-            }
-            else -> JobOutcome.Completed
-        }
-        if (branch != null) {
-            local[pr] = LocalStatus.CheckedOut(
-                when (outcome) {
-                    JobOutcome.Completed -> branch.copy(
-                        behind = 0,
-                        ahead = if (op == LocalOp.MergeBase || op == LocalOp.RebaseBase) branch.ahead + (pulls[pr]?.behind ?: 0) else branch.ahead,
-                        blocker = if (autostash) null else branch.blocker,
-                    )
-                    is JobOutcome.HandedOff -> branch.copy(
-                        inProgress = io.github.rhizonymph.rostrum.data.model.InProgress(
-                            io.github.rhizonymph.rostrum.data.model.InProgressKind.Rebase,
-                            "Rebase onto ${pulls[pr]?.baseRef ?: "main"} stopped on conflicts",
-                            abortable = true,
-                        ),
-                        handoff = io.github.rhizonymph.rostrum.data.model.HandoffState(outcome.session, true, outcome.attachCommand),
-                        conflictedFiles = listOf("src/lib.rs"),
-                    )
-                    else -> branch
-                },
-            )
-        }
-        return SampleDesktop.result(outcome, name)
-    }
+    override suspend fun localStatus(pr: PrRef): Outcome<LocalStatus> = call(FakeCall.LocalStatus) { desktop.localStatus(pr) }
 
     override suspend fun runLocalJob(pr: PrRef, op: LocalOp, autostash: Boolean): Outcome<JobResult> =
-        call(FakeCall.RunLocalJob) { withRemote { Outcome.Ok(runJob(pr, op, autostash)).also { emitFeed() } } }
+        call(FakeCall.RunLocalJob) { desktop.runLocalJob(pr, op, autostash) }
 
-    override suspend fun abortLocal(pr: PrRef): Outcome<Unit> = call(FakeCall.AbortLocal) {
-        withRemote {
-            val branch = (local[pr] as? LocalStatus.CheckedOut)?.branch
-            if (branch?.inProgress == null || !branch.inProgress.abortable) {
-                Outcome.Err(BackendError.RemoteApi(RemoteErrorCode.BadRequest, "Nothing to abort in this worktree"))
-            } else {
-                local[pr] = LocalStatus.CheckedOut(branch.copy(inProgress = null, handoff = null, conflictedFiles = emptyList()))
-                pulls[pr]?.let { pull -> pulls[pr] = pull.copy(localChips = pull.localChips.filterNot { it.text == "handed off" }) }
-                emitFeed()
-                Outcome.Ok(Unit)
-            }
-        }
-    }
+    override suspend fun abortLocal(pr: PrRef): Outcome<Unit> = call(FakeCall.AbortLocal) { desktop.abortLocal(pr) }
 
-    override suspend fun startSyncAll(op: SyncAllOp, autostash: Boolean): Outcome<SyncRun> = call(FakeCall.StartSyncAll) {
-        withRemote {
-            if (syncRun?.running == true) {
-                return@withRemote Outcome.Err(BackendError.RemoteApi(RemoteErrorCode.Busy, "a sync is already running"))
-            }
-            val entries = local.entries
-                .filter { (pr, status) -> status is LocalStatus.CheckedOut && pulls[pr]?.state == PullState.Open }
-                .map { (pr, status) -> SyncEntry(pr.repo, pr.number, (status as LocalStatus.CheckedOut).branch.branch, SyncEntryState.Pending) }
-            val summary = SampleDesktop.summarize(entries)
-            val run = SyncRun(
-                id = (syncRun?.id ?: 0) + 1,
-                op = when (op) {
-                    SyncAllOp.Pull -> LocalOp.PullRebase
-                    SyncAllOp.MergeBase -> LocalOp.MergeBase
-                    SyncAllOp.RebaseBase -> LocalOp.RebaseBase
-                },
-                startedAt = clock.instant(),
-                finishedAt = null,
-                entries = entries,
-                summary = summary,
-                progressText = SampleDesktop.progressText(summary, finished = false),
-            )
-            syncRun = run
-            syncAutostash = autostash
-            Outcome.Ok(run)
-        }
-    }
+    override suspend fun startSyncAll(op: SyncAllOp, autostash: Boolean): Outcome<SyncRun> =
+        call(FakeCall.StartSyncAll) { desktop.startSyncAll(op, autostash) }
 
-    /** Each poll finishes one more entry, so progress is visible and deterministic. */
-    override suspend fun syncAllStatus(): Outcome<SyncRun?> = call(FakeCall.SyncAllStatus) {
-        withRemote {
-            val run = syncRun
-            if (run != null && run.running) {
-                val index = run.entries.indexOfFirst { it.state !is SyncEntryState.Done }
-                val entries = run.entries.toMutableList()
-                if (index >= 0) {
-                    val entry = entries[index]
-                    entries[index] = entry.copy(state = SyncEntryState.Done(runJob(PrRef(entry.repo, entry.number), run.op, syncAutostash)))
-                    if (index + 1 < entries.size) entries[index + 1] = entries[index + 1].copy(state = SyncEntryState.Running)
-                }
-                val summary = SampleDesktop.summarize(entries)
-                val finished = summary.done == summary.total
-                syncRun = run.copy(
-                    entries = entries,
-                    summary = summary,
-                    finishedAt = if (finished) clock.instant() else null,
-                    progressText = SampleDesktop.progressText(summary, finished),
-                )
-                if (finished) emitFeed()
-            }
-            Outcome.Ok(syncRun)
-        }
-    }
+    override suspend fun syncAllStatus(): Outcome<SyncRun?> = call(FakeCall.SyncAllStatus) { desktop.syncAllStatus() }
 
-    override suspend fun handoffs(): Outcome<List<HandoffSession>> = call(FakeCall.Handoffs) {
-        withRemote {
-            Outcome.Ok(
-                local.mapNotNull { (pr, status) ->
-                    val branch = (status as? LocalStatus.CheckedOut)?.branch ?: return@mapNotNull null
-                    val handoff = branch.handoff?.takeIf { it.running } ?: return@mapNotNull null
-                    val conflicts = branch.conflictedFiles.size
-                    HandoffSession(
-                        session = handoff.session,
-                        repo = pr.repo,
-                        number = pr.number,
-                        headRef = branch.branch,
-                        worktree = branch.worktree,
-                        startedAt = started.minus(Duration.ofMinutes(3)),
-                        attachCommand = handoff.attachCommand,
-                        description = "Rebase onto ${pulls[pr]?.baseRef ?: "main"} stopped · $conflicts conflicted file${if (conflicts == 1) "" else "s"}",
-                        abortLabel = if (branch.inProgress?.abortable == true) "rebase" else null,
-                    )
-                },
-            )
-        }
-    }
+    override suspend fun handoffs(): Outcome<List<HandoffSession>> = call(FakeCall.Handoffs) { desktop.handoffs() }
 
     override suspend fun refreshGitHubTokenFromDesktop(): Outcome<DesktopGitHubToken> =
-        call(FakeCall.RefreshGitHubTokenFromDesktop) {
-            withRemote {
-                val github = DesktopGitHubToken(DESKTOP_TOKEN, "gh auth token", "github.com")
-                token = github.token
-                tokenVerified = false
-                Outcome.Ok(github)
-            }
-        }
+        call(FakeCall.RefreshGitHubTokenFromDesktop) { desktop.refreshGitHubTokenFromDesktop() }
 
-    override suspend fun unpair(): Outcome<Unit> = call(FakeCall.Unpair) {
-        withRemote {
-            remote = RemoteStatus.NotPaired
-            Outcome.Ok(Unit)
-        }
-    }
+    override suspend fun unpair(): Outcome<Unit> = call(FakeCall.Unpair) { desktop.unpair() }
 
     // --- notifications -------------------------------------------------------------
 
@@ -1028,7 +801,6 @@ class FakeRostrumBackend(
 
     companion object {
         const val SAMPLE_TOKEN = "ghp_sampleTokenForPreviews0123456789"
-        private const val DESKTOP_TOKEN = "gho_desktopHandedOverSampleToken01"
 
         private val tokenPrefixes = listOf("ghp_", "github_pat_", "gho_", "ghu_", "ghs_")
 
