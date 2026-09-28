@@ -234,9 +234,20 @@ unconsumed older one.
   stale preview), replaces the phone's, persists them and returns the new
   `Settings`. Both fail with `NotPaired` when unpaired.
 - `DesktopConfigCopier` (in `ui/desktopconfig/`) is shared by both entry
-  points: `preview()`, and `copy(machine)` = `copyDesktopConfig()` then
-  `refreshFeed()` (a failed refresh does not undo the copy), returning "Copied
-  7 repositories from framework".
+  points: `preview()` returns a `DesktopConfigOffer` (the preview plus what
+  it would change, in words), and `copy(machine)` = `copyDesktopConfig()`
+  then `refreshFeed()` (a failed refresh does not undo the copy), returning
+  "Copied 7 repositories from framework".
+- The core counts a reorder alone as a change (it reorders the feed), so
+  `changesAnything` can be true with nothing added or removed.
+  `DesktopConfigText.changeLines(preview, phone)` compares with this phone's
+  `Settings` and says "Adds 6 repositories", "Removes 2 repositories",
+  "Reorders your repositories to match framework", or "Changes pull requests
+  per repository (10 → 25), feed filters and the stash default"; without the
+  phone's settings it admits "Reorders your repositories or changes feed
+  settings to match framework". The core clamps `prsPerRepo` to 1..=100,
+  drops the desktop's duplicate repositories and blank authors, and keeps
+  pending drafts on repositories that copying drops.
 - **After pairing** (`PairViewModel`, link or manual): the preview is read.
   `changesAnything` → the Pair screen becomes `CopySettingsStep` ("Copy
   settings from <machine>?", the desktop's repositories with added ones
@@ -466,7 +477,7 @@ What the core does not provide, and what the app does instead:
 | `data/ffi/CoreHandle.kt` | Opens the process's one `RostrumCore` (off the main thread), log sink, `onOpened` |
 | `data/ffi/FfiErrors.kt` | `RostrumException.toBackendError()`, `RemoteErrorCode` mapping, `ffiCall` |
 | `data/ffi/FfiLogSink.kt` | Core `tracing` records → logcat key=value lines |
-| `data/ffi/FfiDesktopConfig.kt` | `desktopConfig` / `copyDesktopConfig` over the core (pending the core update that adds them) |
+| `data/ffi/FfiDesktopConfig.kt` | `DesktopConfigPreview` mapping for `desktopConfig` / `copyDesktopConfig` |
 | `data/ffi/CommonMappings.kt`, `FeedMappings.kt`, `DetailMappings.kt`, `DiffMappings.kt`, `RemoteMappings.kt` | Generated records ↔ model |
 | `data/fake/FakeRostrumBackend.kt` | In-memory backend for tests and previews; `failNext(FakeCall, error)` |
 | `data/fake/FakeDesktop.kt` | The fake's desktop: pairing (the core's link format), remote, local jobs, sync all, handoffs |
@@ -565,7 +576,8 @@ carries the host's `libjnidispatch`). `HostSmokeTest` opens one real core on
 a temp directory and drives it through `FfiRostrumBackend`: status and
 warnings, settings, `addRepo` validation errors, the cached feed, the
 observer reaching `feedUpdates`, `parsePairingLink` on a sample link,
-`renderMarkdown`, error mapping (`NotSignedIn`, `NotPaired`), and that a
+`renderMarkdown`, error mapping (`NotSignedIn`, `NotPaired`, including
+`desktopConfig` and `copyDesktopConfig` unpaired), and that a
 token never reaches the data directory. No network. The normal unit run
 excludes the tag, and the tests skip themselves when not started by this
 task.
