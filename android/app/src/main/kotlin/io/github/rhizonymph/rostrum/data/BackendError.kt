@@ -69,9 +69,6 @@ sealed interface BackendError {
     /** The local database, config file or secret store failed. */
     data class Storage(val reason: String) : BackendError
 
-    /** Declared in the core but not built yet. */
-    data class Unimplemented(val what: String) : BackendError
-
     /** A bug: a background task died or an invariant broke. */
     data class Internal(val reason: String) : BackendError
 }
@@ -119,7 +116,6 @@ fun BackendError.describe(): String = when (this) {
     is BackendError.DuplicateRepo -> "$repo is already in your feed"
     is BackendError.InvalidInput -> reason
     is BackendError.Storage -> "Local storage failed: $reason"
-    is BackendError.Unimplemented -> "$what isn't available yet."
     is BackendError.Internal -> "Something went wrong: $reason"
 }
 

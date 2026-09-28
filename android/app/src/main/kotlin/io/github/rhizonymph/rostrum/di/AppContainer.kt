@@ -3,7 +3,7 @@ package io.github.rhizonymph.rostrum.di
 import android.app.Application
 import android.os.Build
 import io.github.rhizonymph.rostrum.data.RostrumBackend
-import io.github.rhizonymph.rostrum.data.fake.FakeRostrumBackend
+import io.github.rhizonymph.rostrum.data.ffi.FfiRostrumBackend
 import io.github.rhizonymph.rostrum.data.model.Settings
 import io.github.rhizonymph.rostrum.data.secrets.AndroidKeystoreCipher
 import io.github.rhizonymph.rostrum.data.secrets.EncryptedFileSecretStore
@@ -23,7 +23,6 @@ import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.launch
 import java.io.File
 import java.time.Clock
-import java.time.Duration
 
 /**
  * The app's object graph, built once by [io.github.rhizonymph.rostrum.RostrumApplication].
@@ -34,8 +33,12 @@ import java.time.Duration
 class AppContainer(private val app: Application) {
     val clock: Clock = Clock.systemDefaultZone()
 
-    /** Phase 1: the in-memory fake. Replaced by the adapter over `RostrumCore`. */
-    val backend: RostrumBackend = FakeRostrumBackend(clock = clock, latency = Duration.ofMillis(350))
+    /**
+     * The Rust core, through the generated bindings. One per process: the
+     * UI and the notification worker share it. It keeps its settings and
+     * cache under `files/core`; secrets never go there.
+     */
+    val backend: RostrumBackend = FfiRostrumBackend(File(app.filesDir, "core"))
 
     val secrets: SecretStore = EncryptedFileSecretStore(
         directory = File(app.noBackupFilesDir, "secrets"),
