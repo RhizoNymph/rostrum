@@ -28,9 +28,10 @@ pub mod secret;
 pub mod client;
 
 pub use api::{
-    AbortRequest, ApiError, ApiErrorCode, CloneInfo, HandoffSession, HandoffStatus, InProgressKind,
-    JobOutcome, JobRequest, LocalBranchStatus, LocalOpKind, LocalStatus, LocalStatusRequest,
-    MachineInfo, PrKey, PrRef, SyncAllRequest, SyncEntry, SyncEntryState, SyncRun, SyncSummary,
+    AbortRequest, ApiError, ApiErrorCode, CloneInfo, DesktopConfig, HandoffSession, HandoffStatus,
+    InProgressKind, JobOutcome, JobRequest, LocalBranchStatus, LocalOpKind, LocalStatus,
+    LocalStatusRequest, MachineInfo, PrKey, PrRef, SyncAllRequest, SyncEntry, SyncEntryState,
+    SyncRun, SyncSummary,
 };
 pub use code::{PairingCode, PairingCodeError};
 pub use fingerprint::{CertFingerprint, FingerprintError};
@@ -54,6 +55,9 @@ pub mod routes {
     pub const PAIR: &str = "/api/v1/pair";
     /// `GET` → [`crate::MachineInfo`].
     pub const MACHINE: &str = "/api/v1/machine";
+    /// `GET` → [`crate::DesktopConfig`]: the repositories and feed preferences
+    /// a phone may copy.
+    pub const CONFIG: &str = "/api/v1/config";
     /// `GET` → [`crate::GitHubHandover`]: the desktop's current GitHub token,
     /// for a phone whose copy stopped working.
     pub const GITHUB_TOKEN: &str = "/api/v1/github-token";
