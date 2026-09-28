@@ -64,6 +64,13 @@ Overview:
       pairing. ViewModels depend on one Kotlin interface,
       `RostrumBackend`, shaped after `RostrumCore`; secrets are sealed with an
       Android Keystore key; WorkManager runs the notification check.
+    android_profiles: >
+      Several paired desktops on one phone, each a profile with its own
+      repositories, filters, cache, drafts and GitHub account (a desktop's
+      handover or a pasted token). The core's profile registry holds one core
+      per profile; the app keeps each profile's secrets under its id, shows the
+      active profile only, switches between them, and checks every profile
+      for notifications.
 
   data_flow: >
     At startup the app resolves a GitHub token (`gh auth token`, falling back to
@@ -115,16 +122,21 @@ Overview:
     `librostrum_ffi.so` through JNA. The Gradle build produces the library and
     the bindings together, from one pinned uniffi version.
 
-    Inside the app, every screen's ViewModel talks to `RostrumBackend` and
-    gets back `Outcome` values (never exceptions). At start-up
-    `SessionRepository` unseals the GitHub token and the desktop pairing from
-    app-private files and hands them to the backend, which keeps them in
-    memory only; sign-in and pairing results flow the other way and are
-    sealed again. The feed arrives as `FeedSnapshot`s, from calls and from the
+    Inside the app, every screen's ViewModel talks to the active profile's
+    `RostrumBackend` and gets back `Outcome` values (never exceptions). Each
+    profile (one per paired desktop, or per pasted token) has its own core
+    from the core's profile registry, and `ProfileManager` owns them. At
+    start-up it wipes the single-profile state of older builds, then each
+    profile's `SessionRepository` unseals that profile's GitHub token and
+    desktop pairing from app-private files and hands them to its backend,
+    which keeps them in memory only; sign-in and pairing results flow the
+    other way and are sealed again under the profile's id. Switching
+    profiles rebuilds the navigation graph over the new profile's backend. The feed arrives as `FeedSnapshot`s, from calls and from the
     backend's update flow, newest revision winning. `rostrum://pair` links and
-    notification taps enter through `MainActivity` into a link inbox that the
-    navigation host drains. The backend is `FfiRostrumBackend`: one
-    `RostrumCore` per process, each method one core call with its records
+    notification taps enter through `MainActivity` into a link inbox; the
+    root switches to a notification's profile first, then the navigation
+    host drains it. The backend is `FfiRostrumBackend`: one `RostrumCore` per
+    profile, each method one core call with its records
     and `RostrumException`s mapped to the app's model; the core's feed
     observer feeds the update flow. `FakeRostrumBackend` serves unit tests
     and previews only.
@@ -197,8 +209,13 @@ Features Index:
   android_app:
     description: Compose UI, RostrumBackend over the Rust core (FfiRostrumBackend), Keystore secrets, session, deep links, notifications.
     entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/RostrumApplication.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/RostrumBackend.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/ffi/FfiRostrumBackend.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/navigation/RostrumNavHost.kt]
-    depends_on: [android_build, android_core]
+    depends_on: [android_build, android_core, android_profiles]
     doc: docs/features/android_app.md
+  android_profiles:
+    description: One profile per paired desktop or pasted token; ProfileManager over the core's profile registry, per-profile secrets, switching, pairing into profiles, notifications across profiles.
+    entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/profiles/ProfileManager.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/ffi/FfiProfileRegistry.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/app/RostrumApp.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/profiles/ProfileSwitcherSheet.kt]
+    depends_on: [android_core, android_app]
+    doc: docs/features/android_profiles.md
 ```
 
 ## Workspace layout
