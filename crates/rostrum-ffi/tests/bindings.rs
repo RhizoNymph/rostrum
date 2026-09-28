@@ -117,6 +117,23 @@ fn kotlin_bindings_generate_from_the_built_library() {
             "generated Kotlin lacks {expected:?}"
         );
     }
+    // The Pair screen reads links and probes through the registry before any
+    // profile (and so any core) exists: both must be on the registry itself,
+    // not only on the core.
+    let registry = kotlin
+        .split("public interface ProfileRegistryInterface")
+        .nth(1)
+        .and_then(|rest| rest.split("\n}\n").next())
+        .expect("the registry's interface");
+    for expected in [
+        "fun `parsePairingLink`(`uri`: kotlin.String): PairingPreview",
+        "suspend fun `probeDesktop`(`host`: kotlin.String, `port`: kotlin.UShort): DesktopProbe",
+    ] {
+        assert!(
+            registry.contains(expected),
+            "ProfileRegistry lacks {expected:?}"
+        );
+    }
     // `close` is reserved for releasing the object; no method may shadow it.
     assert!(!kotlin.contains("suspend fun `close`("));
 }

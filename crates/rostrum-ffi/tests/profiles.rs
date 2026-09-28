@@ -515,3 +515,44 @@ async fn removing_a_profile_whose_desktop_is_gone_still_succeeds() {
         .expect("removed despite the desktop being unreachable");
     assert!(registry.profiles().is_empty());
 }
+
+#[tokio::test]
+async fn the_pair_screen_reads_links_and_probes_before_any_profile_exists() {
+    let scratch = Scratch::new("pre-pairing");
+    let registry = registry(&scratch);
+    let (port, fingerprint, _) = serve(desktop("desk-one")).await;
+
+    let preview = registry
+        .parse_pairing_link(link(port, fingerprint, CODE))
+        .expect("preview");
+    assert_eq!(preview.hosts, vec!["127.0.0.1"]);
+    assert_eq!(preview.port, port);
+    assert_eq!(preview.code, "K7QX-M2PD");
+    assert_eq!(preview.fingerprint_short, fingerprint.short());
+    assert!(matches!(
+        registry.parse_pairing_link("https://example.com".into()),
+        Err(RostrumError::InvalidInput { .. })
+    ));
+
+    let probe = registry
+        .probe_desktop("127.0.0.1".into(), port)
+        .await
+        .expect("probe");
+    assert_eq!(probe.machine, "desk-one");
+    assert!(probe.compatible);
+    assert_eq!(probe.fingerprint, fingerprint.to_base64url());
+    assert_eq!(probe.fingerprint_short, fingerprint.short());
+    assert!(matches!(
+        registry.probe_desktop("not a host!".into(), port).await,
+        Err(RostrumError::InvalidInput { .. })
+    ));
+    assert!(matches!(
+        registry.probe_desktop("127.0.0.1".into(), 0).await,
+        Err(RostrumError::InvalidInput { .. })
+    ));
+
+    // Neither made a profile or wrote anything.
+    assert!(registry.profiles().is_empty());
+    assert_eq!(profile_dirs(&scratch), Vec::<String>::new());
+    assert!(!scratch.dir.join("profiles.json").exists());
+}

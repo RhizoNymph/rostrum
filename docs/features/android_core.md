@@ -66,7 +66,7 @@ Kotlin names are camelCase; every call that touches state or I/O is
 
 | Area | Methods |
 |---|---|
-| profiles | `ProfileRegistry.open(rootDir)` (not suspend), `profiles()`, `activeProfile()`, `setActiveProfile(id)`, `renameProfile(id, label)`, `setProfileLogin(id, login?)` (not suspend); `core(id) → RostrumCore`, `createTokenProfile(label)`, `pairDesktopWithLink(uri, deviceName) → ProfilePairing`, `pairDesktopManual(host, port, fingerprint, code, deviceName) → ProfilePairing`, `removeProfile(id)` |
+| profiles | `ProfileRegistry.open(rootDir)` (not suspend), `profiles()`, `activeProfile()`, `setActiveProfile(id)`, `renameProfile(id, label)`, `setProfileLogin(id, login?)` (not suspend); `core(id) → RostrumCore`, `createTokenProfile(label)`, `pairDesktopWithLink(uri, deviceName) → ProfilePairing`, `pairDesktopManual(host, port, fingerprint, code, deviceName) → ProfilePairing`, `removeProfile(id)`; `parsePairingLink(uri)` (not suspend) and `probeDesktop(host, port)` for the Pair screen before any profile exists — the same code as the core's |
 | lifecycle | `RostrumCore.open(dataDir)`, `warnings()` |
 | session | `setGithubToken(token?) → GitHubStatus`, `githubStatus()`, `viewer() → UserRef` |
 | settings | `settings()`, `addRepo(input) → "owner/name"`, `removeRepo(repo) → Boolean`, `setRefreshInterval(s)`, `setPrsPerRepo(n)`, `setNotifications(newPullRequests, reviewRequests)`, `setAutostash(b)` — setters return `Settings` |
@@ -331,6 +331,11 @@ them.
   Pairing never changes the active profile. The GitHub token handover in
   `PairingResult` works as for a single core: it is applied to that
   profile's core when it has none, and Kotlin stores it under the profile id.
+- **Before any profile.** The registry's `parsePairingLink` and
+  `probeDesktop` call the same functions as the core's
+  (`remote::pairing_preview`, `remote::probe_desktop_at`), so the Pair screen
+  can read a link and probe a desktop on first run; neither creates a profile
+  or touches disk.
 - **Removal.** `removeProfile` unpairs on the desktop when the profile's core
   is open with a remote (any failure — unreachable, revoked — is logged and
   ignored), closes the core's SQLite pool, deletes the directory, removes the

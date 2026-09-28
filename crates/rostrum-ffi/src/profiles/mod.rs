@@ -27,7 +27,10 @@ use rostrum_remote::{Endpoint, PairingCode};
 use crate::{
     engine::RostrumCore,
     error::RostrumError,
-    remote::{PairingResult, link_offer, manual_offer},
+    remote::{
+        DesktopProbe, PairingPreview, PairingResult, link_offer, manual_offer, pairing_preview,
+        probe_desktop_at,
+    },
 };
 use store::{ProfileRecord, RegistryFile, StoredKind, is_profile_id, new_id, now_ms};
 
@@ -323,6 +326,24 @@ impl ProfileRegistry {
             Ok(())
         })?;
         Ok(info)
+    }
+
+    /// Read a `rostrum://pair?…` link without contacting anything or
+    /// touching disk — for the Pair screen before any profile exists. The
+    /// same code as `RostrumCore::parse_pairing_link`.
+    pub fn parse_pairing_link(&self, uri: String) -> Result<PairingPreview, RostrumError> {
+        pairing_preview(&uri)
+    }
+
+    /// Ask a desktop typed in by address who it is and which certificate it
+    /// presents, trusting nothing yet and creating no profile. The same code
+    /// as `RostrumCore::probe_desktop`.
+    pub async fn probe_desktop(
+        &self,
+        host: String,
+        port: u16,
+    ) -> Result<DesktopProbe, RostrumError> {
+        probe_desktop_at(&host, port).await
     }
 
     /// Pair from a rostrum://pair link. If a profile already exists for the same
