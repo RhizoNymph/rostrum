@@ -214,7 +214,7 @@ fn render_thread(
     };
     // Replies attach to the thread's first comment, which is the id GitHub's
     // reply endpoint expects.
-    let reply_target = thread.comments.first().and_then(|c| c.database_id);
+    let reply_target = thread.reply_target();
 
     v_flex()
         .ml_4()

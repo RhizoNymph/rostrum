@@ -16,8 +16,9 @@ use crate::{
     graphql::{
         self, AuthorNode, BranchUpdateMethod, DivergenceBatchData, DivergenceQueryData, DraftState,
         GraphQlResponse, PrNode, RateLimit, RepoQueryData, SetDraftData, UpdateBranchData,
+        ViewerQueryData,
     },
-    rest::{AddLabels, IssueState, MergeMethod, PullRequestFile, SubmitReview},
+    rest::{AddLabels, IssueState, MergePullRequest, PullRequestFile, SubmitReview},
 };
 
 const GRAPHQL_URL: &str = "https://api.github.com/graphql";
@@ -51,6 +52,20 @@ impl GitHubClient {
     pub fn new(token: Token) -> Result<Self, GitHubError> {
         let http = Client::builder().user_agent(USER_AGENT).build()?;
         Ok(Self { http, token })
+    }
+
+    /// Who the token belongs to.
+    ///
+    /// One small query, so a token handed in from outside — pasted, or from
+    /// a paired desktop — can be checked before anything else relies on it:
+    /// a bad one fails here with [`GitHubError::Unauthorized`].
+    pub async fn viewer(&self) -> Result<User, GitHubError> {
+        let data: ViewerQueryData = self
+            .graphql(graphql::VIEWER, json!({}), "the viewer")
+            .await?;
+        data.viewer
+            .and_then(AuthorNode::into_user)
+            .ok_or(GitHubError::EmptyData)
     }
 
     /// Fetch open pull requests for one repository.
@@ -314,13 +329,14 @@ impl GitHubClient {
     /// Merge the pull request.
     ///
     /// A refusal (branch protection, failing checks, a conflict, a base branch
-    /// that moved) comes back as [`GitHubError::MergeBlocked`] carrying
-    /// GitHub's own explanation, not as a generic HTTP error.
+    /// that moved, a head that no longer matches [`MergePullRequest::sha`])
+    /// comes back as [`GitHubError::MergeBlocked`] carrying GitHub's own
+    /// explanation, not as a generic HTTP error.
     pub async fn merge(
         &self,
         repo: &RepoId,
         number: PrNumber,
-        method: MergeMethod,
+        request: &MergePullRequest,
     ) -> Result<(), GitHubError> {
         let url = format!(
             "{REST_BASE}/repos/{}/{}/pulls/{}/merge",
@@ -328,10 +344,9 @@ impl GitHubClient {
             repo.name(),
             number.0
         );
-        let body = json!({ "merge_method": method.as_api_str() });
 
         let response = self
-            .execute(self.rest(Method::PUT, &url).json(&body))
+            .execute(self.rest(Method::PUT, &url).json(request))
             .await?;
         if let Some(err) = classify_merge_status(response.status, &response.body) {
             return Err(err);

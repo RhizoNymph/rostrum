@@ -14,7 +14,7 @@ pub struct RepoId {
     name: String,
 }
 
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 pub enum ParseRepoIdError {
     #[error("expected `owner/name`, got `{0}`")]
     Shape(String),
@@ -390,6 +390,17 @@ impl Side {
             Self::Right => "RIGHT",
         }
     }
+}
+
+/// Where a pull request is in its life, as GitHub's `PullRequest.state`
+/// reports it. The feed only ever holds open ones; the detail view can outlive
+/// a merge or a close, and says which.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PullState {
+    Open,
+    Closed,
+    Merged,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

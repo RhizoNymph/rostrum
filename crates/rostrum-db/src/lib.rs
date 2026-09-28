@@ -10,12 +10,18 @@
 //!    change, a corrupt draft surfaces as an error instead of being discarded,
 //!    and [`Db::prune_cache`] never touches them.
 //!
+//! One further table sits between the two: the notification check's seen set
+//! ([`Db::save_baseline`]). It survives cache schema changes like drafts do,
+//! but it is derived state, so a corrupt row is discarded like cache.
+//!
 //! Domain values are stored as JSON text: the readers of this data are Rust
 //! types with `serde` impls, and nothing queries across their fields.
 
+mod baseline;
 mod cache;
 mod drafts;
 mod error;
+mod files;
 mod schema;
 mod types;
 

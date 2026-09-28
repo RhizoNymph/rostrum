@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Duration, Utc};
 use rostrum_core::{
     CheckRun, CheckState, CommentId, Conversation, EventKind, Label, MergeStateStatus, Mergeable,
-    NodeId, PrNumber, PullRequest, RepoId, ReviewDecision, ReviewThread, Side, ThreadComment,
-    ThreadId, TimelineItem, User,
+    NodeId, PrNumber, PullRequest, PullState, RepoId, ReviewDecision, ReviewThread, Side,
+    ThreadComment, ThreadId, TimelineItem, User,
 };
 use rostrum_github::DraftComment;
 
@@ -104,6 +104,7 @@ fn conversation() -> Conversation {
             state: Some(CheckState::Success),
             url: None,
         }],
+        state: Some(PullState::Open),
     }
 }
 

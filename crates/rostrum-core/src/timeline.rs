@@ -3,7 +3,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::model::{CheckState, Side, User};
+use crate::model::{CheckState, PullState, Side, User};
 
 /// GraphQL node id of an issue or review comment.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -51,6 +51,23 @@ pub struct ReviewThread {
     pub is_resolved: bool,
     pub is_outdated: bool,
     pub comments: Vec<ThreadComment>,
+}
+
+impl ReviewThread {
+    /// The REST id a reply into this thread is addressed to: its first
+    /// comment's, which is what GitHub's reply endpoint expects. `None` when
+    /// GitHub withheld it, and then the thread cannot be replied to.
+    pub fn reply_target(&self) -> Option<u64> {
+        self.comments.first().and_then(|comment| comment.database_id)
+    }
+
+    /// Whether this thread belongs at the diff line anchored by `path`,
+    /// `line` and `side`. An outdated thread has no current line and belongs
+    /// nowhere in the diff; the same number on the other side is a different
+    /// line.
+    pub fn is_anchored_at(&self, path: &str, line: u32, side: Side) -> bool {
+        self.path == path && self.side == side && self.line == Some(line)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,6 +150,10 @@ pub struct Conversation {
     /// Threads stored once; timeline reviews reference them by id.
     pub threads: Vec<ReviewThread>,
     pub checks: Vec<CheckRun>,
+    /// Open, closed or merged, as of this fetch. Defaulted so a conversation
+    /// cached before the field existed still decodes.
+    #[serde(default)]
+    pub state: Option<PullState>,
 }
 
 impl Conversation {
@@ -227,5 +248,61 @@ mod tests {
         assert_eq!(conversation.threads_for_path("src/main.rs").count(), 1);
         assert_eq!(conversation.threads_for_path("other.rs").count(), 0);
         assert_eq!(conversation.unresolved_thread_count(), 1);
+    }
+
+    fn thread_comment(database_id: Option<u64>) -> ThreadComment {
+        ThreadComment {
+            id: CommentId("c".into()),
+            database_id,
+            author: None,
+            body: String::new(),
+            created_at: at(0),
+        }
+    }
+
+    fn thread_at(line: Option<u32>, side: Side) -> ReviewThread {
+        ReviewThread {
+            id: ThreadId("t".into()),
+            path: "src/main.rs".into(),
+            line,
+            original_line: line,
+            side,
+            is_resolved: false,
+            is_outdated: line.is_none(),
+            comments: vec![],
+        }
+    }
+
+    #[test]
+    fn replies_go_to_the_first_comment() {
+        let mut thread = thread_at(Some(3), Side::Right);
+        assert_eq!(thread.reply_target(), None);
+        thread.comments = vec![thread_comment(Some(11)), thread_comment(Some(12))];
+        assert_eq!(thread.reply_target(), Some(11));
+        thread.comments = vec![thread_comment(None), thread_comment(Some(12))];
+        assert_eq!(thread.reply_target(), None);
+    }
+
+    #[test]
+    fn a_thread_is_anchored_by_path_line_and_side() {
+        let thread = thread_at(Some(10), Side::Right);
+        assert!(thread.is_anchored_at("src/main.rs", 10, Side::Right));
+        assert!(!thread.is_anchored_at("src/main.rs", 10, Side::Left));
+        assert!(!thread.is_anchored_at("src/main.rs", 11, Side::Right));
+        assert!(!thread.is_anchored_at("src/lib.rs", 10, Side::Right));
+        // Outdated: no current line, so it belongs at none.
+        let outdated = thread_at(None, Side::Right);
+        assert!(!outdated.is_anchored_at("src/main.rs", 10, Side::Right));
+    }
+
+    #[test]
+    fn a_conversation_cached_without_a_state_still_decodes() {
+        let json = r#"{"items":[],"threads":[],"checks":[]}"#;
+        let conversation: Conversation = serde_json::from_str(json).expect("decodes");
+        assert_eq!(conversation.state, None);
+
+        let json = r#"{"items":[],"threads":[],"checks":[],"state":"MERGED"}"#;
+        let conversation: Conversation = serde_json::from_str(json).expect("decodes");
+        assert_eq!(conversation.state, Some(PullState::Merged));
     }
 }
