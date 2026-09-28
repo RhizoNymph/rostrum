@@ -120,6 +120,11 @@ async fn the_page_is_self_contained() {
     let html = page(&kit, "127.0.0.1", PAGE_HOST).await;
     assert!(html.starts_with("<!doctype html>"));
     assert!(html.contains("<style>") && html.contains("<script>"));
+    assert!(
+        html.contains("[hidden] { display: none !important; }"),
+        "a class's display must not override the hidden attribute"
+    );
+    assert!(html.contains("class=\"offer\" id=\"offer\" hidden"));
     for external in ["<link", "src=\"http", "href=\"https://", "@import", "url("] {
         assert!(
             !html.contains(external),

@@ -12,6 +12,9 @@
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
+/* Display rules on classes (.offer is a grid) must not un-hide an element
+   the script has hidden. */
+[hidden] { display: none !important; }
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
   margin: 0;
