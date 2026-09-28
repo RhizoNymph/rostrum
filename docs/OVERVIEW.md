@@ -48,6 +48,13 @@ Overview:
       generates its Kotlin bindings with UniFFI, packages both into a signed
       APK, and publishes that APK for `rostrumd` to serve to phones. It also
       owns the Compose theme foundation (palette, Material mapping, fonts).
+    android_app: >
+      The Android client. Jetpack Compose screens for the feed, a pull
+      request (conversation, files, checks, branch), the single-file diff with
+      inline comments and pending reviews, merging, settings, the paired
+      desktop, sign-in and pairing. ViewModels depend on one Kotlin interface,
+      `RostrumBackend`, shaped after `RostrumCore`; secrets are sealed with an
+      Android Keystore key; WorkManager runs the notification check.
 
   data_flow: >
     At startup the app resolves a GitHub token (`gh auth token`, falling back to
@@ -89,6 +96,17 @@ Overview:
     `rostrum-ffi`: Kotlin calls the UniFFI-generated bindings, which call into
     `librostrum_ffi.so` through JNA. The Gradle build produces the library and
     the bindings together, from one pinned uniffi version.
+
+    Inside the app, every screen's ViewModel talks to `RostrumBackend` and
+    gets back `Outcome` values (never exceptions). At start-up
+    `SessionRepository` unseals the GitHub token and the desktop pairing from
+    app-private files and hands them to the backend, which keeps them in
+    memory only; sign-in and pairing results flow the other way and are
+    sealed again. The feed arrives as `FeedSnapshot`s, from calls and from the
+    backend's update flow, newest revision winning. `rostrum://pair` links and
+    notification taps enter through `MainActivity` into a link inbox that the
+    navigation host drains. Phase 1 runs on `FakeRostrumBackend`; phase 2
+    swaps in an adapter over the generated `RostrumCore`.
 
 Features Index:
   ui_foundation:
@@ -141,6 +159,11 @@ Features Index:
     entry_points: [android/scripts/build-apk.sh, android/app/build.gradle.kts, crates/rostrum-ffi/src/lib.rs]
     depends_on: []
     doc: docs/features/android_build.md
+  android_app:
+    description: Compose UI, RostrumBackend and its fake, Keystore secrets, session, deep links, notifications.
+    entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/RostrumApplication.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/RostrumBackend.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/navigation/RostrumNavHost.kt]
+    depends_on: [android_build]
+    doc: docs/features/android_app.md
 ```
 
 ## Workspace layout

@@ -26,9 +26,9 @@ APK for `rostrumd` to serve to phones.
 
 ## Non-scope
 
-- **Real screens, navigation, and the pairing flow.** `MainActivity` declares
-  the `rostrum://pair` deep link and keeps `intent` current. Nothing reads it
-  yet.
+- **Screens, navigation, secrets, pairing and notifications.** Those are the
+  app itself, documented in `docs/features/android_app.md`. This feature only
+  declares the `rostrum://pair` intent filter they rely on.
 - **The real FFI surface.** The exports of `rostrum-ffi` are replaced later;
   this feature fixes only the crate/bin/package names the build relies on.
 - **Serving the APK.** `rostrumd` serves `~/.local/share/rostrum/server/apk/`.
@@ -127,15 +127,15 @@ that is missing.
    sha256 and size of that copy → JSON to a temp file → rename the APK, then
    the JSON.
 
-At runtime the call path is: `MainActivity` → `RostrumApp` → `produceState`
-on `Dispatchers.Default` → `RustCore.probe()` →
+At runtime the call path into Rust is `RustCore.probe()` →
 `uniffi.rostrum_ffi.ffiVersion()`. On first use, the generated `UniffiLib`
 object calls `Native.register(..., "rostrum_ffi")`. JNA loads
 `libjnidispatch.so` and `librostrum_ffi.so` from the APK and the bindings
 check the API checksums. The Rust function returns a `RustBuffer`, which the
 bindings lift into a Kotlin `String`. A `LinkageError` anywhere in that
-chain becomes `CoreLink.Unavailable`, which the shell screen shows in the
-danger colour.
+chain becomes `CoreLink.Unavailable`. While the app runs on the fake backend
+(phase 1 of `android_app`), nothing calls the probe; the adapter over
+`RostrumCore` replaces it.
 
 ## The Rust side: `rostrum-ffi`
 
@@ -216,8 +216,11 @@ describes an APK that is not there yet.
   `res/font/`. Their OFL licenses are in `assets/licenses/`.
   `RostrumTypography` is Material's scale set in Plex Sans;
   `RostrumTheme.mono` gives `code`, `codeStrong`, and `number` styles.
-- Packages: `io.github.rhizonymph.rostrum` (activity), `.ui` (screens),
-  `.ui.theme`, and `.data` (FFI adapters; `RustCore` is the first).
+- `RostrumText` (`ui/theme/TextStyles.kt`) names the mockups' recurring text
+  styles (screen title, row title, section label, chip, mono sizes, diff
+  lines).
+- Packages: see `docs/features/android_app.md`; `.ui.theme` belongs here and
+  `.data.RustCore` is the FFI probe.
 
 ## Common tasks
 
@@ -226,6 +229,7 @@ android/scripts/build-apk.sh              # release APK, end to end
 android/scripts/publish-apk.sh            # hand it to rostrumd
 cd android && ./gradlew :app:assembleDebug -Prostrum.cargoProfile=dev   # fast debug build
 cd android && ./gradlew buildSrc:test     # ReleaseSigning / .env parser tests
+cd android && ./gradlew :app:testDebugUnitTest -Prostrum.cargoProfile=dev   # app JVM unit tests (JUnit 5)
 ~/.cargo/bin/cargo test -p rostrum-ffi    # Rust side
 ```
 
@@ -300,11 +304,11 @@ cd android && ./gradlew buildSrc:test     # ReleaseSigning / .env parser tests
 | `android/app/build.gradle.kts` | Wires the Rust tasks and source dirs, `android {}`, signing, dependencies |
 | `android/app/proguard-rules.pro` | R8 keep rules for JNA and `uniffi.**` |
 | `android/app/src/main/AndroidManifest.xml` | Permissions, `MainActivity`, `rostrum://pair` filter |
-| `android/app/src/main/kotlin/io/github/rhizonymph/rostrum/MainActivity.kt` | Edge-to-edge single activity |
-| `android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/ShellScreen.kt` | `RostrumApp` (root), `ShellScreen` |
+| `android/app/src/main/kotlin/io/github/rhizonymph/rostrum/MainActivity.kt` | Edge-to-edge single activity (see `android_app`) |
 | `android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/theme/Color.kt` | `RostrumColors`, `DarkRostrumColors`, `LocalRostrumColors` |
 | `android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/theme/Type.kt` | `RostrumFonts`, `RostrumTypography`, `RostrumMonoTypography` |
 | `android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/theme/Theme.kt` | `RostrumTheme` composable and accessors, `toMaterialColorScheme()` |
+| `android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/theme/TextStyles.kt` | `RostrumText`: the mockups' text styles |
 | `android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/RustCore.kt` | `CoreLink`, `RustCore.probe()` |
 | `android/app/src/main/res/` | Window theme, strings, adaptive icon, fonts |
 | `android/app/src/main/assets/licenses/` | OFL texts for both font families |
