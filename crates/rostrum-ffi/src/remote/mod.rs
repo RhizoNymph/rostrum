@@ -5,9 +5,12 @@
 //! self-signed certificate is trusted by fingerprint alone, and a request is
 //! sent to at most one of its addresses.
 
+mod config;
 mod convert;
 mod refs;
 mod types;
+
+pub use config::DesktopConfigPreview;
 
 pub use types::{
     CloneInfo, DesktopGitHubToken, DesktopProbe, HandoffSession, HandoffState, InProgress,
@@ -139,7 +142,7 @@ impl RostrumCore {
         })
     }
 
-    async fn remote(&self) -> Result<Arc<RemoteClient>, RostrumError> {
+    pub(crate) async fn remote(&self) -> Result<Arc<RemoteClient>, RostrumError> {
         self.actor.try_call(|state| state.remote_client()).await
     }
 

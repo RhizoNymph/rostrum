@@ -171,6 +171,31 @@ impl FeedState {
         self.applied.remove(id);
     }
 
+    /// Watch exactly `ids`, in that order: repositories kept keep their
+    /// state (pull requests, load state, collapse), new ones start idle, and
+    /// the rest are forgotten as `remove_repo` forgets them. Returns the
+    /// repositories that were dropped.
+    pub(crate) fn set_repos(&mut self, ids: Vec<RepoId>) -> Vec<RepoId> {
+        let mut previous: HashMap<RepoId, RepoState> = HashMap::new();
+        let mut removed = Vec::new();
+        for repo in std::mem::take(&mut self.repos) {
+            if ids.contains(&repo.id) {
+                previous.insert(repo.id.clone(), repo);
+            } else {
+                removed.push(repo.id);
+            }
+        }
+        self.repos = ids
+            .into_iter()
+            .map(|id| previous.remove(&id).unwrap_or_else(|| RepoState::new(id)))
+            .collect();
+        for id in &removed {
+            self.known.retain(|key, _| &key.repo != id);
+            self.applied.remove(id);
+        }
+        removed
+    }
+
     pub(crate) fn toggle_collapsed(&mut self, id: &RepoId) -> bool {
         match self.repos.iter_mut().find(|repo| &repo.id == id) {
             Some(repo) => {
@@ -532,6 +557,44 @@ mod tests {
         state.remove_repo(&repo_id("a/b"));
         assert!(state.known.is_empty());
         assert!(state.repos.is_empty());
+    }
+
+    #[test]
+    fn setting_the_repositories_keeps_reorders_adds_and_forgets() {
+        let mut state = feed(&["a/b", "c/d", "e/f"]);
+        load(&mut state, "a/b", vec![pull(1)]);
+        load(&mut state, "c/d", vec![pull(2)]);
+        assert!(state.toggle_collapsed(&repo_id("c/d")));
+
+        let removed = state.set_repos(vec![repo_id("g/h"), repo_id("c/d"), repo_id("a/b")]);
+        assert_eq!(removed, vec![repo_id("e/f")]);
+        assert_eq!(
+            state.repo_ids(),
+            vec![repo_id("g/h"), repo_id("c/d"), repo_id("a/b")]
+        );
+        // Kept repositories keep what they had; the new one starts idle.
+        let snapshot = state.snapshot(None, false);
+        assert_eq!(snapshot.repos[0].load, RepoLoad::Idle);
+        assert_eq!(snapshot.repos[1].body, RepoBody::Collapsed);
+        assert_eq!(pulls(&snapshot.repos[2]), vec![1]);
+
+        // Dropping a repository forgets its pull requests and its fetch order.
+        let removed = state.set_repos(vec![repo_id("g/h")]);
+        assert_eq!(removed, vec![repo_id("c/d"), repo_id("a/b")]);
+        assert!(state.known.is_empty());
+        let snapshot = state.snapshot(None, false);
+        assert_eq!(
+            snapshot
+                .repos
+                .iter()
+                .map(|section| section.repo.as_str())
+                .collect::<Vec<_>>(),
+            vec!["g/h"]
+        );
+        // A re-added repository fetches afresh rather than being taken for
+        // one whose newer fetch already landed.
+        state.set_repos(vec![repo_id("g/h"), repo_id("a/b")]);
+        load(&mut state, "a/b", vec![pull(5)]);
     }
 
     #[test]

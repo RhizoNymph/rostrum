@@ -33,7 +33,8 @@ each.
   stale when the head moves; submission as comment/approve/request-changes.
 - The paired desktop: pairing by link or by address + probed fingerprint,
   the local worktree status and the four local jobs plus abort, sync-all,
-  handoff sessions, fetching a fresh GitHub token, unpairing.
+  handoff sessions, fetching a fresh GitHub token, unpairing, and copying the
+  desktop's repositories and feed preferences onto the phone.
 - Background notifications: new pull requests and new review requests since
   the last check, against a persisted seen set.
 - Structured logs forwarded to Kotlin.
@@ -68,7 +69,7 @@ Kotlin names are camelCase; every call that touches state or I/O is
 | detail | `pullDetail(repo, n)`, `cachedPullDetail(repo, n)`, `pullHeader(repo, n)`, `repositoryLabels(repo)`, `addLabel`, `removeLabel`, `addComment`, `replyToThread(repo, n, threadId, body)`, `merge(repo, n, method, title?, message?, expectedHeadSha)`, `closePullRequest`, `reopenPullRequest`, `setDraft(repo, n, draft)`, `updateBranch(repo, n, method, expectedHeadOid)` |
 | files | `filesOverview(repo, n) → FilesOverview`, `fileDiff(repo, n, fileIndex) → FileDiff` |
 | review | `pendingReview`, `addDraft(repo, n, anchor, rangeStart?, body)`, `editDraft(…, draftId, body)`, `removeDraft(…, draftId)`, `discardDrafts` — all return `PendingReview`; `submitReview(repo, n, event, body, includeDrafts)` |
-| remote | `parsePairingLink(uri)` (not suspend), `pairWithLink(uri, deviceName)`, `probeDesktop(host, port)`, `pairManual(host, port, fingerprint, code, deviceName)`, `setRemote(endpoint, deviceToken)`, `clearRemote()`, `remoteStatus()`, `machineInfo()`, `localStatus(repo, n)`, `runLocalJob(repo, n, op, autostash)`, `abortLocal(repo, n)`, `startSyncAll(op, autostash)`, `syncAllStatus()`, `handoffs()`, `refreshGithubTokenFromDesktop()`, `unpair()` |
+| remote | `parsePairingLink(uri)` (not suspend), `pairWithLink(uri, deviceName)`, `probeDesktop(host, port)`, `pairManual(host, port, fingerprint, code, deviceName)`, `setRemote(endpoint, deviceToken)`, `clearRemote()`, `remoteStatus()`, `machineInfo()`, `localStatus(repo, n)`, `runLocalJob(repo, n, op, autostash)`, `abortLocal(repo, n)`, `startSyncAll(op, autostash)`, `syncAllStatus()`, `handoffs()`, `refreshGithubTokenFromDesktop()`, `unpair()`, `desktopConfig() → DesktopConfigPreview`, `copyDesktopConfig() → Settings` |
 | notifications | `checkNotifications() → List<NotificationEvent>`, `markNotificationsSeen()` |
 | logging | top-level `installLogSink(LogSink, LogLevel)` |
 | markdown | top-level `renderMarkdown(source, repo) → List<MdBlock>`: the composer's Preview, rendered exactly as the timeline will show it |
@@ -108,6 +109,11 @@ Key records and enums, by screen:
 - **Review**: `PendingReview { drafts: [ReviewDraft { id, anchor, body,
   location }], draftedAgainst?, headSha, stale }`, `CommentAnchor { path,
   line, side }`, `ReviewEvent`.
+- **Copying the desktop's config**: `DesktopConfigPreview { machine, repos,
+  added, removed, prsPerRepo, hideDrafts, hideEmptyRepos, authors,
+  includeInvolved, autostash, changesAnything }` — `repos` is the desktop's
+  list in its order, `added` what the phone lacks, `removed` what copying
+  drops.
 - **Remote**: `PairingPreview`, `DesktopProbe`, `PairingResult { machine,
   endpoint, deviceId, deviceToken, github? }`, `RemoteStatus`, `MachineInfo`,
   `LocalStatus = NotConfigured | NotCheckedOut | CheckedOut(LocalBranch)`,
@@ -234,6 +240,40 @@ Compose UI ──suspend call──▶ UniFFI scaffolding (async_runtime = "toki
   known pull request; sync-all builds one `PrRef` per open pull request in
   the feed whose repository `machineInfo` lists a clone for.
 
+### Copying the desktop's config
+
+The desktop serves the shareable part of its `config.json`
+(`rostrum_remote::DesktopConfig` on `/api/v1/config`): repositories in its
+order, pull requests per repository, the four feed preferences, and
+autostash. Clone paths and the conflict handler describe the desktop and are
+not sent; the refresh interval and notification switches are each device's
+own and are not copied; the search box is never touched.
+
+- `desktopConfig` fetches the machine info and the config together and diffs
+  the config against this phone's (`remote::config::preview`, pure):
+  `added` in the desktop's order, `removed` in the phone's (an entry the
+  phone cannot parse is listed as removed, since copying drops it).
+  `changesAnything` is computed by applying the copy to a clone of the
+  phone's `Config` and comparing the two, so it cannot disagree with what
+  `copyDesktopConfig` would do — a reorder alone counts as a change, because
+  it reorders the feed.
+- `copyDesktopConfig` fetches the config again rather than trusting the
+  preview Kotlin holds, then, inside the actor: writes it with
+  `remote::config::apply` (repeats and blank authors dropped, pull requests
+  per repository clamped to 1..=100, clone paths of dropped repositories
+  dropped with them, as `Config::remove_repo` does), which leaves memory
+  untouched if the file cannot be written; replaces the feed's repositories
+  with `FeedState::set_repos` (kept repositories keep their pull requests and
+  collapse state, new ones start idle); forgets everything held for dropped
+  repositories through `CoreState::forget_repo`, the same cleanup
+  `removeRepo` uses (pending review drafts are kept); rebuilds the filter
+  from the new preferences while keeping the query; and publishes, so the
+  observer sees the new feed. It returns the new `Settings`; Kotlin runs
+  `refreshFeed` next.
+- Both return `NotPaired` without a desktop and map the client's failures
+  like every other desktop call (`DeviceRevoked`, `DesktopUnreachable`,
+  `CertificateMismatch`, …).
+
 ### Notifications
 
 `checkNotifications` refreshes every repository (without disturbing a
@@ -269,12 +309,12 @@ the data directory for every secret that passed through.
 | `src/engine/actor.rs` | State mailbox | `Actor::call/try_call`, `WeakActor` |
 | `src/engine/writer.rs` | Ordered SQLite writes with acks | `Writer`, `Write`, `settled` |
 | `src/engine/notifier.rs` | Ordered observer delivery | `Notifier` |
-| `src/engine/state.rs` | `CoreState`, `PullKey`, input parsing, `publish` | — |
+| `src/engine/state.rs` | `CoreState`, `PullKey`, input parsing, `publish`, `forget_repo` | — |
 | `src/engine/recent.rs` | Bounded in-memory caches | `Recent` |
 | `src/session.rs` | Token, trust, viewer; GitHub API root | `GitHubStatus`, `Session`, `GitHubApi` |
 | `src/settings.rs` | Settings screen | `Settings` |
 | `src/feed/types.rs` | Feed records and the observer trait | `FeedSnapshot`, `RepoSection`, `RepoBody`, `PrSummary`, `FeedObserver`, … |
-| `src/feed/state.rs` | Feed state, fetch sequencing, snapshot from `flatten` | `FeedState`, `Applied` |
+| `src/feed/state.rs` | Feed state, fetch sequencing, `set_repos`, snapshot from `flatten` | `FeedState`, `Applied` |
 | `src/feed/refresh.rs` | Fetch pipeline and merge-state probes | `fetch_repo`, `Scope`, `Probes`, `ProbeSlot` |
 | `src/feed/chips.rs` | Chip text and colour roles (the desktop's rules) | `merge_chip`, `behind_chip`, `base_divergence`, … |
 | `src/feed/summary.rs` | Feed row | `summarize` |
@@ -295,12 +335,13 @@ the data directory for every secret that passed through.
 | `src/remote/types.rs` | Desktop records | `PairingResult`, `LocalStatus`, `JobResult`, `SyncRun`, … |
 | `src/remote/convert.rs` | Protocol → records | — |
 | `src/remote/refs.rs` | `PrRef` building for jobs and sync-all | `pr_ref`, `sync_refs` |
+| `src/remote/config.rs` | Copying the desktop's config: preview diff, apply, exports | `DesktopConfigPreview`, `preview`, `apply` |
 | `src/notifications.rs` | Notification check and event policy | `NotificationEvent`, `NotificationKind`, `events` |
 | `src/logging.rs` | tracing → Kotlin | `LogSink`, `LogRecord`, `install_log_sink` |
-| `tests/remote_pairing.rs` | Pairing and every desktop call against a TLS stand-in | — |
+| `tests/remote_pairing.rs` | Pairing, every desktop call, and copying the desktop's config against a TLS stand-in | — |
 | `tests/github_flows.rs` | Refresh, probes, notifications, mutations against a GitHub stand-in | — |
 | `tests/core_offline.rs` | Cache-only flows and restarts | — |
-| `tests/bindings.rs` | Kotlin generation from the built library | — |
+| `tests/bindings.rs` | Kotlin generation from the library this test run built (the newest `librostrum_ffi` under the profile directory, since `cargo test` does not copy it up) | — |
 
 Logic this feature moved out of the gpui crate into gpui-free crates (the
 desktop now calls these):
@@ -336,6 +377,10 @@ against the library `cargo test` builds and checks the surface.
 
 ## Invariants
 
+- **Copying the desktop's config touches only what it names.** Repositories,
+  pull requests per repository, the four feed preferences and autostash; the
+  refresh interval, notification switches, search query and pending drafts
+  are the phone's and stay.
 - **No secrets persisted in Rust.** Tokens live in memory only, are redacted
   in `Debug`, and never reach SQLite or `config.json`.
 - **Anchors are computed in Rust only.** Every diff line's anchor comes from

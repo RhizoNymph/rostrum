@@ -77,6 +77,11 @@ fn kotlin_bindings_generate_from_the_built_library() {
         "suspend fun `addDraft`(",
         "suspend fun `pairWithLink`(",
         "suspend fun `checkNotifications`(): List<NotificationEvent>",
+        // Copying the desktop's config, under the names the UI uses.
+        "suspend fun `desktopConfig`(): DesktopConfigPreview",
+        "suspend fun `copyDesktopConfig`(): Settings",
+        "data class DesktopConfigPreview",
+        "val `changesAnything`: kotlin.Boolean",
         // Errors are one sealed class with a readable description.
         "sealed class RostrumException",
         "fun `describe`(): kotlin.String",

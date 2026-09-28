@@ -135,6 +135,18 @@ impl CoreState {
         Ok(())
     }
 
+    /// Forget everything held for a repository that is no longer watched:
+    /// its feed section and pull requests, merge-state re-checks, label
+    /// palette, and cached conversations and diffs. Pending review drafts are
+    /// kept — they are the user's unsent work, and SQLite still has them.
+    pub(crate) fn forget_repo(&mut self, id: &RepoId) {
+        self.feed.remove_repo(id);
+        self.probes.remove(id);
+        self.labels.remove(id);
+        self.conversations.retain(|key| &key.repo != id);
+        self.files.retain(|key| &key.repo != id);
+    }
+
     /// The pull request as last seen in the feed. Kept after it leaves the
     /// feed (merged, closed), so the detail view outlives the refresh.
     pub(crate) fn known(&self, key: &PullKey) -> Result<&PullRequest, RostrumError> {

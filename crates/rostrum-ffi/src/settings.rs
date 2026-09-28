@@ -20,7 +20,7 @@ use crate::{
 /// a pathological value must not become a request storm.
 const REFRESH_SECS: std::ops::RangeInclusive<u64> = 10..=3600;
 /// GitHub's page size caps a single query at 100.
-const PRS_PER_REPO: std::ops::RangeInclusive<u32> = 1..=100;
+pub(crate) const PRS_PER_REPO: std::ops::RangeInclusive<u32> = 1..=100;
 
 /// Everything on the settings screen.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -118,11 +118,7 @@ impl RostrumCore {
                 let mut removed = false;
                 state.edit_config(|config| removed = config.remove_repo(&id))?;
                 if removed {
-                    state.feed.remove_repo(&id);
-                    state.probes.remove(&id);
-                    state.labels.remove(&id);
-                    state.conversations.retain(|key| key.repo != id);
-                    state.files.retain(|key| key.repo != id);
+                    state.forget_repo(&id);
                     state.publish();
                     tracing::info!(repo = %id, "repository removed");
                 }
