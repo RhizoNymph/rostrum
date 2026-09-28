@@ -30,7 +30,9 @@ pub(crate) fn resolve(
         return Ok(CoreAnchor::single(&file.path, end.line, side));
     };
     if start.path != end.path {
-        return Err(RostrumError::invalid("a comment range must stay within one file"));
+        return Err(RostrumError::invalid(
+            "a comment range must stay within one file",
+        ));
     }
     if start.side != end.side {
         return Err(RostrumError::invalid(
@@ -39,7 +41,9 @@ pub(crate) fn resolve(
     }
     let start_hunk = hunk_of(file, start.line, side).ok_or_else(|| missing(start))?;
     if start_hunk != end_hunk {
-        return Err(RostrumError::invalid("a comment range must stay within one hunk"));
+        return Err(RostrumError::invalid(
+            "a comment range must stay within one hunk",
+        ));
     }
     Ok(CoreAnchor::single(&file.path, start.line, side).extended_to(end.line, side))
 }
@@ -99,7 +103,10 @@ mod tests {
     #[test]
     fn a_line_in_the_diff_resolves_to_a_single_anchor() {
         let anchor = resolve(&files(), &at(11, Side::Right), None).expect("valid");
-        assert_eq!(anchor, CoreAnchor::single("src/lib.rs", 11, CoreSide::Right));
+        assert_eq!(
+            anchor,
+            CoreAnchor::single("src/lib.rs", 11, CoreSide::Right)
+        );
         // The removed line's old number, on the left.
         let removed = resolve(&files(), &at(11, Side::Left), None).expect("valid");
         assert_eq!(removed.side, CoreSide::Left);
@@ -118,7 +125,10 @@ mod tests {
             },
         ] {
             assert!(
-                matches!(resolve(&files(), &bad, None), Err(RostrumError::InvalidInput { .. })),
+                matches!(
+                    resolve(&files(), &bad, None),
+                    Err(RostrumError::InvalidInput { .. })
+                ),
                 "{bad:?}"
             );
         }
@@ -131,18 +141,24 @@ mod tests {
         assert_eq!((range.start_line, range.line), (Some(10), 12));
         assert_eq!(range.start_side, Some(CoreSide::Right));
 
-        let same = resolve(&files(), &at(11, Side::Right), Some(&at(11, Side::Right)))
-            .expect("valid");
+        let same =
+            resolve(&files(), &at(11, Side::Right), Some(&at(11, Side::Right))).expect("valid");
         assert_eq!(same.start_line, None);
     }
 
     #[test]
     fn a_range_across_sides_hunks_or_files_is_refused() {
         let across_sides = resolve(&files(), &at(12, Side::Right), Some(&at(11, Side::Left)));
-        assert!(matches!(across_sides, Err(RostrumError::InvalidInput { .. })));
+        assert!(matches!(
+            across_sides,
+            Err(RostrumError::InvalidInput { .. })
+        ));
 
         let across_hunks = resolve(&files(), &at(40, Side::Right), Some(&at(10, Side::Right)));
-        assert!(matches!(across_hunks, Err(RostrumError::InvalidInput { .. })));
+        assert!(matches!(
+            across_hunks,
+            Err(RostrumError::InvalidInput { .. })
+        ));
 
         let across_files = resolve(
             &files(),
@@ -153,6 +169,9 @@ mod tests {
                 side: Side::Right,
             }),
         );
-        assert!(matches!(across_files, Err(RostrumError::InvalidInput { .. })));
+        assert!(matches!(
+            across_files,
+            Err(RostrumError::InvalidInput { .. })
+        ));
     }
 }

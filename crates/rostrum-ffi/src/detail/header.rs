@@ -1,7 +1,9 @@
 //! The detail header: the facts the header, the Branch tab and the action bar
 //! decide on, derived once.
 
-use rostrum_core::{LoginKey, PullRequest, PullState as CoreState, RepoId, arrivals::is_review_requested_from};
+use rostrum_core::{
+    LoginKey, PullRequest, PullState as CoreState, RepoId, arrivals::is_review_requested_from,
+};
 
 use crate::{
     detail::{DraftAction, MergeVerdict, PullHeader},

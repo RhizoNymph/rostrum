@@ -155,9 +155,8 @@ mod tests {
     #[test]
     fn events_arrive_with_their_fields_kept_apart_from_the_message() {
         let sink = Arc::new(Collect::default());
-        let subscriber = tracing_subscriber::registry().with(
-            SinkLayer { sink: sink.clone() }.with_filter(LevelFilter::from(LogLevel::Info)),
-        );
+        let subscriber = tracing_subscriber::registry()
+            .with(SinkLayer { sink: sink.clone() }.with_filter(LevelFilter::from(LogLevel::Info)));
         tracing::subscriber::with_default(subscriber, || {
             tracing::info!(repo = "a/b", count = 3, "refreshed");
             tracing::debug!("filtered out");

@@ -91,12 +91,21 @@ async fn a_refresh_fetches_every_repository_and_survives_one_failing() {
 
     let snapshot = core.refresh_feed().await.expect("refresh");
     let prs = pulls(&snapshot);
-    assert_eq!(prs.iter().map(|pr| pr.number).collect::<Vec<_>>(), vec![1, 2]);
+    assert_eq!(
+        prs.iter().map(|pr| pr.number).collect::<Vec<_>>(),
+        vec![1, 2]
+    );
     assert_eq!(
         prs[0].behind_chip.as_ref().map(|chip| chip.text.as_str()),
         Some("↓3")
     );
-    assert!(prs[0].base_divergence.as_ref().expect("divergence").fast_forwards);
+    assert!(
+        prs[0]
+            .base_divergence
+            .as_ref()
+            .expect("divergence")
+            .fast_forwards
+    );
     assert_eq!(prs[0].checks_role, ColorRole::Success);
     assert_eq!(prs[0].labels[0].color, Some(0xFFD7_3A4A));
     assert!(prs[1].is_yours && prs[1].review_requested);
@@ -106,8 +115,14 @@ async fn a_refresh_fetches_every_repository_and_survives_one_failing() {
         panic!("expected the missing repository to fail");
     };
     assert!(reason.contains("not found"), "{reason}");
-    assert_eq!(snapshot.viewer.as_ref().map(|viewer| viewer.login.as_str()), Some("me"));
-    assert!(matches!(core.github_status().await, GitHubStatus::Verified { .. }));
+    assert_eq!(
+        snapshot.viewer.as_ref().map(|viewer| viewer.login.as_str()),
+        Some("me")
+    );
+    assert!(matches!(
+        core.github_status().await,
+        GitHubStatus::Verified { .. }
+    ));
     // One divergence batch, for the one repository with pull requests.
     assert_eq!(fake.graphql_calls("compare(headRef").len(), 1);
     assert_eq!(core.viewer().await.expect("viewer").login, "me");
@@ -272,8 +287,14 @@ async fn detail_diff_review_and_mutations_send_what_github_expects() {
     let detail = core.pull_detail(repo(), 1).await.expect("detail");
     assert_eq!(detail.header.state, PullState::Open);
     assert_eq!(detail.header.head_sha, "sha1");
-    assert!(matches!(detail.timeline[0].kind, TimelineKind::Description { .. }));
-    assert!(matches!(detail.timeline[1].kind, TimelineKind::Comment { .. }));
+    assert!(matches!(
+        detail.timeline[0].kind,
+        TimelineKind::Description { .. }
+    ));
+    assert!(matches!(
+        detail.timeline[1].kind,
+        TimelineKind::Comment { .. }
+    ));
     assert_eq!(detail.threads[0].id, "RT_1");
     assert!(detail.threads[0].can_reply);
     assert_eq!(detail.checks[0].status_text, "success");
@@ -283,7 +304,11 @@ async fn detail_diff_review_and_mutations_send_what_github_expects() {
     assert_eq!(overview.files[0].threads, 1);
     core.files_overview(repo(), 1).await.expect("overview");
     let diff = core.file_diff(repo(), 1, 0).await.expect("diff");
-    assert_eq!(fake.rest_calls("GET", "/repos/octo/repo/pulls/1/files?per_page=100").len(), 1);
+    assert_eq!(
+        fake.rest_calls("GET", "/repos/octo/repo/pulls/1/files?per_page=100")
+            .len(),
+        1
+    );
     let FileDiffBody::Rows { rows } = diff.body else {
         panic!("rows");
     };
@@ -301,9 +326,15 @@ async fn detail_diff_review_and_mutations_send_what_github_expects() {
     core.add_draft(repo(), 1, added, None, "Why two?".into())
         .await
         .expect("draft");
-    core.submit_review(repo(), 1, ReviewEvent::RequestChanges, " Please fix ".into(), true)
-        .await
-        .expect("review");
+    core.submit_review(
+        repo(),
+        1,
+        ReviewEvent::RequestChanges,
+        " Please fix ".into(),
+        true,
+    )
+    .await
+    .expect("review");
     let review = body_of(
         fake.rest_calls("POST", "/repos/octo/repo/pulls/1/reviews")
             .last()
@@ -317,7 +348,13 @@ async fn detail_diff_review_and_mutations_send_what_github_expects() {
             "comments": [{"path": "src/lib.rs", "line": 11, "side": "RIGHT", "body": "Why two?"}]
         })
     );
-    assert!(core.pending_review(repo(), 1).await.expect("pending").drafts.is_empty());
+    assert!(
+        core.pending_review(repo(), 1)
+            .await
+            .expect("pending")
+            .drafts
+            .is_empty()
+    );
     core.submit_review(repo(), 1, ReviewEvent::Approve, String::new(), false)
         .await
         .expect("empty approval");
@@ -329,14 +366,17 @@ async fn detail_diff_review_and_mutations_send_what_github_expects() {
         )["event"],
         "APPROVE"
     );
-    let reviews_before = fake.rest_calls("POST", "/repos/octo/repo/pulls/1/reviews").len();
+    let reviews_before = fake
+        .rest_calls("POST", "/repos/octo/repo/pulls/1/reviews")
+        .len();
     assert!(matches!(
         core.submit_review(repo(), 1, ReviewEvent::Comment, " ".into(), true)
             .await,
         Err(RostrumError::InvalidInput { .. })
     ));
     assert_eq!(
-        fake.rest_calls("POST", "/repos/octo/repo/pulls/1/reviews").len(),
+        fake.rest_calls("POST", "/repos/octo/repo/pulls/1/reviews")
+            .len(),
         reviews_before
     );
 
@@ -345,9 +385,7 @@ async fn detail_diff_review_and_mutations_send_what_github_expects() {
         .await
         .expect("reply");
     assert_eq!(
-        body_of(
-            &fake.rest_calls("POST", "/repos/octo/repo/pulls/1/comments/555/replies")[0]
-        ),
+        body_of(&fake.rest_calls("POST", "/repos/octo/repo/pulls/1/comments/555/replies")[0]),
         json!({"body": "because"})
     );
     core.add_comment(repo(), 1, "Thanks!".into())
@@ -359,9 +397,16 @@ async fn detail_diff_review_and_mutations_send_what_github_expects() {
     );
 
     // Labels: the palette once, and a name that needs encoding in a path.
-    assert_eq!(core.repository_labels(repo()).await.expect("labels").len(), 2);
+    assert_eq!(
+        core.repository_labels(repo()).await.expect("labels").len(),
+        2
+    );
     core.repository_labels(repo()).await.expect("labels");
-    assert_eq!(fake.rest_calls("GET", "/repos/octo/repo/labels?per_page=100").len(), 1);
+    assert_eq!(
+        fake.rest_calls("GET", "/repos/octo/repo/labels?per_page=100")
+            .len(),
+        1
+    );
     core.add_label(repo(), 1, "help wanted".into())
         .await
         .expect("add label");
@@ -430,7 +475,10 @@ async fn detail_diff_review_and_mutations_send_what_github_expects() {
         .iter()
         .map(body_of)
         .collect();
-    assert_eq!(states, vec![json!({"state": "closed"}), json!({"state": "open"})]);
+    assert_eq!(
+        states,
+        vec![json!({"state": "closed"}), json!({"state": "open"})]
+    );
 
     // Every accepted mutation re-read the repository afterwards.
     assert!(fake.graphql_calls("pullRequests(states: OPEN").len() >= 12);

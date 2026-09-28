@@ -5,11 +5,15 @@
 
 mod support;
 
-use std::sync::Arc;
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
-use rostrum_core::RepoId;
+use rostrum_core::{LoginKey, RepoId};
 use rostrum_ffi::{
     RemoteErrorCode, RostrumCore, RostrumError,
+    feed::{FeedObserver, FeedSnapshot},
     remote::{JobOutcome, LocalOp, LocalStatus, RemoteStatus, SyncAllOp, SyncEntryState},
     session::GitHubStatus,
     types::ColorRole,
@@ -17,7 +21,7 @@ use rostrum_ffi::{
 use rostrum_remote::{
     CertFingerprint, DeviceId, DeviceToken, Endpoint, GitHubToken, PairingCode, PairingOffer,
     api::{
-        CloneInfo, JobOutcome as WireOutcome, JobRequest, LocalBranchStatus,
+        CloneInfo, DesktopConfig, JobOutcome as WireOutcome, JobRequest, LocalBranchStatus,
         LocalStatus as WireStatus, LocalStatusRequest, MachineInfo, SyncAllRequest, SyncEntry,
         SyncEntryState as WireEntryState, SyncRun,
     },
@@ -57,9 +61,31 @@ fn unauthorized() -> (u16, String) {
     )
 }
 
+/// The shareable part of the stand-in desktop's config.
+fn desktop_config() -> DesktopConfig {
+    DesktopConfig {
+        repos: vec![
+            RepoId::new("zed-industries", "zed"),
+            RepoId::new("octo", "repo"),
+        ],
+        prs_per_repo: 30,
+        hide_drafts: true,
+        hide_empty_repos: false,
+        authors: vec![LoginKey::new("Alice")],
+        include_involved: true,
+        autostash: true,
+    }
+}
+
 /// The desktop's side of the protocol, faithful enough to check what the
 /// phone sends: pairing checks the code, everything else the bearer token.
 fn desktop(api_version: u32) -> Handler {
+    desktop_serving(api_version, Arc::new(Mutex::new(desktop_config())))
+}
+
+/// [`desktop`], answering `/api/v1/config` with whatever `config` holds at
+/// the time of the request.
+fn desktop_serving(api_version: u32, config: Arc<Mutex<DesktopConfig>>) -> Handler {
     Arc::new(move |request: &Request| {
         match (request.method.as_str(), request.path.as_str()) {
             ("GET", "/api/v1/hello") => {
@@ -99,6 +125,7 @@ fn desktop(api_version: u32) -> Handler {
         }
         match (request.method.as_str(), request.path.as_str()) {
             ("GET", "/api/v1/machine") => (200, json(&machine())),
+            ("GET", "/api/v1/config") => (200, json(&*config.lock().expect("config"))),
             ("GET", "/api/v1/github-token") => (
                 200,
                 json(&GitHubHandover {
@@ -276,7 +303,9 @@ async fn pairing_by_link_then_every_desktop_call() {
     assert_eq!(core.sync_all_status().await.expect("sync status"), None);
     assert!(core.handoffs().await.expect("handoffs").is_empty());
 
-    core.abort_local("octo/repo".into(), 7).await.expect("abort");
+    core.abort_local("octo/repo".into(), 7)
+        .await
+        .expect("abort");
 
     let fresh = core
         .refresh_github_token_from_desktop()
@@ -326,10 +355,18 @@ async fn a_saved_pairing_reconnects_and_failures_are_typed() {
         .await
         .expect("set remote");
     assert_eq!(core.machine_info().await, Err(RostrumError::DeviceRevoked));
+    assert_eq!(
+        core.desktop_config().await,
+        Err(RostrumError::DeviceRevoked)
+    );
+    assert_eq!(
+        core.copy_desktop_config().await,
+        Err(RostrumError::DeviceRevoked)
+    );
 
     // The desktop answering with a different certificate than was paired.
-    let other = serde_json::to_string(&endpoint(port, CertFingerprint::of_der(b"another")))
-        .expect("json");
+    let other =
+        serde_json::to_string(&endpoint(port, CertFingerprint::of_der(b"another"))).expect("json");
     core.set_remote(other, issued_token().expose().to_string())
         .await
         .expect("set remote");
@@ -341,8 +378,11 @@ async fn a_saved_pairing_reconnects_and_failures_are_typed() {
     );
 
     assert!(matches!(
-        core.set_remote("not an endpoint".into(), issued_token().expose().to_string())
-            .await,
+        core.set_remote(
+            "not an endpoint".into(),
+            issued_token().expose().to_string()
+        )
+        .await,
         Err(RostrumError::InvalidInput { .. })
     ));
     assert!(matches!(
@@ -449,7 +489,8 @@ async fn an_unreachable_desktop_is_reported() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         listener.local_addr().expect("addr").port()
     };
-    let saved = serde_json::to_string(&endpoint(port, CertFingerprint::of_der(b"x"))).expect("json");
+    let saved =
+        serde_json::to_string(&endpoint(port, CertFingerprint::of_der(b"x"))).expect("json");
     core.set_remote(saved, issued_token().expose().to_string())
         .await
         .expect("set remote");
@@ -486,7 +527,142 @@ async fn local_calls_need_a_desktop_and_a_known_pull_request() {
         Err(RostrumError::InvalidInput { .. })
     ));
     assert!(matches!(
-        core.pair_with_link(link(port, fingerprint), "   ".into()).await,
+        core.pair_with_link(link(port, fingerprint), "   ".into())
+            .await,
         Err(RostrumError::InvalidInput { .. })
     ));
+}
+
+#[derive(Default)]
+struct Snapshots(Mutex<Vec<FeedSnapshot>>);
+
+impl FeedObserver for Snapshots {
+    fn feed_changed(&self, snapshot: FeedSnapshot) {
+        if let Ok(mut all) = self.0.lock() {
+            all.push(snapshot);
+        }
+    }
+}
+
+fn repo_names(snapshot: &FeedSnapshot) -> Vec<String> {
+    snapshot
+        .repos
+        .iter()
+        .map(|section| section.repo.clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn the_desktops_config_needs_a_paired_desktop() {
+    let scratch = Scratch::new("config-unpaired");
+    let core = core(&scratch).await;
+    assert_eq!(core.desktop_config().await, Err(RostrumError::NotPaired));
+    assert_eq!(
+        core.copy_desktop_config().await,
+        Err(RostrumError::NotPaired)
+    );
+    // Nothing changed on the phone.
+    assert_eq!(
+        core.settings().await.expect("settings").repos,
+        vec!["octo/repo"]
+    );
+}
+
+#[tokio::test]
+async fn copying_the_desktops_config_end_to_end() {
+    let scratch = Scratch::new("config-copy");
+    let core = core(&scratch).await;
+    // The phone's own habits, which copying must leave alone.
+    core.set_refresh_interval(600).await.expect("interval");
+    core.set_notifications(true, false)
+        .await
+        .expect("notifications");
+    core.add_repo("rust-lang/rust".into()).await.expect("add");
+    core.set_query("needle".into()).await.expect("query");
+
+    let served = Arc::new(Mutex::new(desktop_config()));
+    let (port, fingerprint, log) = serve(desktop_serving(1, served.clone())).await;
+    core.pair_with_link(link(port, fingerprint), "Pixel".into())
+        .await
+        .expect("pairs");
+    let observer = Arc::new(Snapshots::default());
+    core.set_feed_observer(Some(observer.clone()))
+        .await
+        .expect("observe");
+
+    let preview = core.desktop_config().await.expect("preview");
+    assert_eq!(preview.machine, "test-desk");
+    assert_eq!(preview.repos, vec!["zed-industries/zed", "octo/repo"]);
+    assert_eq!(preview.added, vec!["zed-industries/zed"]);
+    assert_eq!(preview.removed, vec!["rust-lang/rust"]);
+    assert_eq!(preview.prs_per_repo, 30);
+    assert!(preview.hide_drafts && !preview.hide_empty_repos);
+    assert_eq!(preview.authors, vec!["alice"]);
+    assert!(preview.include_involved && preview.autostash);
+    assert!(preview.changes_anything);
+
+    // The desktop changes after the preview: copying applies what it says
+    // now, not what the preview showed.
+    served.lock().expect("config").repos = vec![RepoId::new("zed-industries", "zed")];
+    let settings = core.copy_desktop_config().await.expect("copy");
+    assert_eq!(settings.repos, vec!["zed-industries/zed"]);
+    assert_eq!(settings.prs_per_repo, 30);
+    assert!(settings.feed.hide_drafts && !settings.feed.hide_empty_repos);
+    assert_eq!(settings.feed.authors, vec!["alice"]);
+    assert!(settings.feed.include_involved && settings.autostash);
+    assert_eq!(settings.refresh_interval_secs, 600);
+    assert!(settings.notify_new_pull_requests && !settings.notify_review_requests);
+    assert_eq!(
+        log.requests()
+            .iter()
+            .filter(|request| request.path == "/api/v1/config")
+            .count(),
+        2
+    );
+
+    // The feed follows: dropped repositories and their pull requests are
+    // gone, the search box is untouched.
+    let feed = core.cached_feed().await.expect("feed");
+    assert_eq!(repo_names(&feed), vec!["zed-industries/zed"]);
+    assert_eq!(feed.query, "needle");
+    assert!(feed.preferences.hide_drafts);
+    assert_eq!(
+        core.local_status("octo/repo".into(), 7).await,
+        Err(RostrumError::UnknownPullRequest {
+            repo: "octo/repo".into(),
+            number: 7
+        })
+    );
+    let mut notified = false;
+    for _ in 0..200 {
+        notified = observer
+            .0
+            .lock()
+            .expect("lock")
+            .iter()
+            .any(|snapshot| repo_names(snapshot) == vec!["zed-industries/zed"]);
+        if notified {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(notified, "the observer saw the copied feed");
+
+    // Copying again would change nothing.
+    let again = core.desktop_config().await.expect("preview");
+    assert!(again.added.is_empty() && again.removed.is_empty());
+    assert!(!again.changes_anything);
+    drop(core);
+
+    // The copy was written to disk.
+    let reopened = RostrumCore::open(scratch.path()).await.expect("reopen");
+    let settings = reopened.settings().await.expect("settings");
+    assert_eq!(settings.repos, vec!["zed-industries/zed"]);
+    assert_eq!(settings.prs_per_repo, 30);
+    assert_eq!(settings.feed.authors, vec!["alice"]);
+    assert!(settings.autostash);
+    assert_eq!(settings.refresh_interval_secs, 600);
+    let feed = reopened.cached_feed().await.expect("feed");
+    assert_eq!(repo_names(&feed), vec!["zed-industries/zed"]);
+    assert_eq!(feed.query, "");
 }

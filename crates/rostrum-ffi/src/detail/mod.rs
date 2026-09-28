@@ -56,7 +56,11 @@ impl RostrumCore {
                 .iter()
                 .map(|thread| thread_view(thread, &repo))
                 .collect(),
-            checks: conversation.checks.iter().map(timeline::check_view).collect(),
+            checks: conversation
+                .checks
+                .iter()
+                .map(timeline::check_view)
+                .collect(),
             unresolved_threads: count(conversation.unresolved_thread_count()),
             pending_review,
         })

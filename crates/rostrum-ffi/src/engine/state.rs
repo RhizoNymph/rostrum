@@ -124,12 +124,27 @@ impl CoreState {
 
     /// Change the settings and write them, keeping memory and disk in step:
     /// if the write fails, the change is not applied.
-    pub(crate) fn edit_config(&mut self, edit: impl FnOnce(&mut Config)) -> Result<(), RostrumError> {
+    pub(crate) fn edit_config(
+        &mut self,
+        edit: impl FnOnce(&mut Config),
+    ) -> Result<(), RostrumError> {
         let mut next = self.config.clone();
         edit(&mut next);
         next.save_to(&self.config_path)?;
         self.config = next;
         Ok(())
+    }
+
+    /// Forget everything held for a repository that is no longer watched:
+    /// its feed section and pull requests, merge-state re-checks, label
+    /// palette, and cached conversations and diffs. Pending review drafts are
+    /// kept — they are the user's unsent work, and SQLite still has them.
+    pub(crate) fn forget_repo(&mut self, id: &RepoId) {
+        self.feed.remove_repo(id);
+        self.probes.remove(id);
+        self.labels.remove(id);
+        self.conversations.retain(|key| &key.repo != id);
+        self.files.retain(|key| &key.repo != id);
     }
 
     /// The pull request as last seen in the feed. Kept after it leaves the

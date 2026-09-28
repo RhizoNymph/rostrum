@@ -376,9 +376,7 @@ mod tests {
 
     #[test]
     fn describe_is_the_display_text() {
-        let error = RostrumError::DuplicateRepo {
-            repo: "a/b".into(),
-        };
+        let error = RostrumError::DuplicateRepo { repo: "a/b".into() };
         assert_eq!(error.describe(), "a/b is already in the list");
     }
 }

@@ -87,7 +87,10 @@ mod tests {
         // The count replaces the plain chip.
         assert!(row.merge_chip.is_none());
         assert_eq!(row.behind_chip.map(|c| c.text), Some("↓2".to_string()));
-        assert_eq!(row.review_chip.map(|c| c.text), Some("approved".to_string()));
+        assert_eq!(
+            row.review_chip.map(|c| c.text),
+            Some("approved".to_string())
+        );
         assert_eq!(row.labels[0].color, Some(0xFFD7_3A4A));
         assert!(row.review_requested);
         assert!(!row.is_yours);

@@ -70,9 +70,14 @@ pub enum RepoLoad {
     /// Watched but never fetched.
     Idle,
     Loading,
-    Loaded { at: SystemTime },
+    Loaded {
+        at: SystemTime,
+    },
     /// The last fetch failed. Older pull requests may still be shown.
-    Failed { reason: String, at: SystemTime },
+    Failed {
+        reason: String,
+        at: SystemTime,
+    },
 }
 
 /// What a repository's container shows below its header.
@@ -82,10 +87,14 @@ pub enum RepoBody {
     /// First load in flight, nothing cached.
     Loading,
     /// The fetch failed and there is nothing cached to show instead.
-    Failed { reason: String },
+    Failed {
+        reason: String,
+    },
     /// Loaded; no open pull requests, or none the filter lets through.
     Empty,
-    Pulls { pulls: Vec<PrSummary> },
+    Pulls {
+        pulls: Vec<PrSummary>,
+    },
 }
 
 /// Everything a feed row shows for one pull request.

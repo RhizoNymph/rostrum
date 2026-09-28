@@ -17,12 +17,7 @@ use rostrum_github::{GitHubClient, GitHubError};
 use tokio::task::AbortHandle;
 
 use crate::{
-    engine::{
-        RostrumCore,
-        actor::WeakActor,
-        state::CoreState,
-        writer::Write,
-    },
+    engine::{RostrumCore, actor::WeakActor, state::CoreState, writer::Write},
     error::RostrumError,
     feed::{
         FeedSnapshot,

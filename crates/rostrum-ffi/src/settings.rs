@@ -20,7 +20,7 @@ use crate::{
 /// a pathological value must not become a request storm.
 const REFRESH_SECS: std::ops::RangeInclusive<u64> = 10..=3600;
 /// GitHub's page size caps a single query at 100.
-const PRS_PER_REPO: std::ops::RangeInclusive<u32> = 1..=100;
+pub(crate) const PRS_PER_REPO: std::ops::RangeInclusive<u32> = 1..=100;
 
 /// Everything on the settings screen.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -98,7 +98,8 @@ impl RostrumCore {
                 if let Some(error) = failure {
                     return Err(add_repo_error(&input, error));
                 }
-                let id = added.ok_or_else(|| RostrumError::internal("add_repo reported nothing"))?;
+                let id =
+                    added.ok_or_else(|| RostrumError::internal("add_repo reported nothing"))?;
                 let order = state.config.repos.clone();
                 state.feed.add_repo(id.clone(), &order);
                 state.publish();
@@ -117,11 +118,7 @@ impl RostrumCore {
                 let mut removed = false;
                 state.edit_config(|config| removed = config.remove_repo(&id))?;
                 if removed {
-                    state.feed.remove_repo(&id);
-                    state.probes.remove(&id);
-                    state.labels.remove(&id);
-                    state.conversations.retain(|key| key.repo != id);
-                    state.files.retain(|key| key.repo != id);
+                    state.forget_repo(&id);
                     state.publish();
                     tracing::info!(repo = %id, "repository removed");
                 }
@@ -188,12 +185,15 @@ mod tests {
             prs_per_repo: 500,
             ..Default::default()
         };
-        let settings = settings_of(&config, FeedPreferences {
-            hide_drafts: false,
-            hide_empty_repos: true,
-            authors: vec![],
-            include_involved: false,
-        });
+        let settings = settings_of(
+            &config,
+            FeedPreferences {
+                hide_drafts: false,
+                hide_empty_repos: true,
+                authors: vec![],
+                include_involved: false,
+            },
+        );
         assert_eq!(settings.refresh_interval_secs, 10);
         assert_eq!(settings.prs_per_repo, 100);
     }

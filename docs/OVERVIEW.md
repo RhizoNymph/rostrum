@@ -183,8 +183,9 @@ Features Index:
   android_core:
     description: >
       The Android app's Rust core behind UniFFI — one RostrumCore object serving
-      the feed, detail, diff rows, pending review, desktop pairing and jobs, and
-      background notifications, all render-ready for Compose.
+      the feed, detail, diff rows, pending review, desktop pairing and jobs,
+      copying the desktop's config, and background notifications, all
+      render-ready for Compose.
     entry_points: [crates/rostrum-ffi/src/lib.rs, crates/rostrum-ffi/src/engine/mod.rs]
     depends_on: [repo_feed, pr_detail, diff_review, diff_overview, author_filter, github_sync, remote_protocol]
     doc: docs/features/android_core.md
@@ -340,8 +341,8 @@ Each phase leaves a usable application.
 
 ## Status
 
-All five phases are complete and verified against the live API. 868 tests pass
-(124 of them in `rostrum-ffi`); clippy is clean across the workspace.
+All five phases are complete and verified against the live API. 882 tests pass
+(136 of them in `rostrum-ffi`); clippy is clean across the workspace.
 
 The Android app's core, `rostrum-ffi`, exposes the same feed, detail, diff,
 review, desktop and notification behaviour to Kotlin through UniFFI; see

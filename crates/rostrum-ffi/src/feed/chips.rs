@@ -49,10 +49,7 @@ pub(crate) fn behind_chip(divergence: Option<Divergence>, base_ref: &str) -> Opt
     Some(Chip {
         text: format!("↓{}", divergence.behind),
         role: ColorRole::Warning,
-        tooltip: Some(format!(
-            "{} commit(s) behind {base_ref}",
-            divergence.behind
-        )),
+        tooltip: Some(format!("{} commit(s) behind {base_ref}", divergence.behind)),
     })
 }
 

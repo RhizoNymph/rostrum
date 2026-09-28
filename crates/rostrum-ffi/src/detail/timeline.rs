@@ -177,7 +177,9 @@ pub(crate) fn check_view(check: &CheckRun) -> CheckRunView {
 #[cfg(test)]
 mod tests {
     use chrono::DateTime;
-    use rostrum_core::{CheckState, CommentId, ReviewId, ReviewState, Side, ThreadComment, ThreadId};
+    use rostrum_core::{
+        CheckState, CommentId, ReviewId, ReviewState, Side, ThreadComment, ThreadId,
+    };
 
     use super::*;
     use crate::types::ColorRole;
@@ -228,7 +230,10 @@ mod tests {
     fn items_keep_their_order_ids_and_rendering() {
         let entries = timeline(&conversation(), &repo());
         assert_eq!(
-            entries.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(),
+            entries
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
             vec!["description", "R1", "event-2"]
         );
         let TimelineKind::Description { body, source } = &entries[0].kind else {
@@ -239,7 +244,10 @@ mod tests {
             body[0].spans[1].link.as_deref(),
             Some("https://github.com/octo/repo/issues/3")
         );
-        let TimelineKind::Review { chip, thread_ids, .. } = &entries[1].kind else {
+        let TimelineKind::Review {
+            chip, thread_ids, ..
+        } = &entries[1].kind
+        else {
             panic!("review");
         };
         assert_eq!(chip.text, "requested changes");

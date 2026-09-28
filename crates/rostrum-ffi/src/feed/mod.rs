@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use rostrum_core::{FeedFilter, LoginKey, authors::visible, roster};
 
-pub(crate) use refresh::{Probes, ProbeSlot, Scope};
+pub(crate) use refresh::{ProbeSlot, Probes, Scope};
 pub(crate) use state::{FeedState, count};
 pub use types::{
     AuthorChip, AuthorRoster, BaseDivergence, FeedObserver, FeedPreferences, FeedSnapshot,

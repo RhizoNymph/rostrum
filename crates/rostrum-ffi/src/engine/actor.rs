@@ -37,9 +37,7 @@ impl Actor {
     /// that reports back.
     pub(crate) fn spawn(build: impl FnOnce(WeakActor) -> CoreState) -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel::<Job>();
-        let mut state = build(WeakActor {
-            tx: tx.downgrade(),
-        });
+        let mut state = build(WeakActor { tx: tx.downgrade() });
         tokio::spawn(async move {
             while let Some(job) = rx.recv().await {
                 // A panicking closure drops its reply, so its caller gets an

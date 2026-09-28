@@ -223,7 +223,10 @@ mod tests {
         let offer = PairingOffer {
             machine: "desk".into(),
             endpoint: Endpoint::new(
-                vec!["192.168.1.20".parse().expect("host"), "desk.ts.net".parse().expect("host")],
+                vec![
+                    "192.168.1.20".parse().expect("host"),
+                    "desk.ts.net".parse().expect("host"),
+                ],
                 8485,
                 CertFingerprint::from_bytes([0x4F; 32]),
             )
@@ -270,7 +273,10 @@ mod tests {
         let handed = job_result(api::JobOutcome::HandedOff {
             session: "s".into(),
         });
-        assert_eq!(handed.chip.as_ref().map(|c| c.role), Some(ColorRole::Accent));
+        assert_eq!(
+            handed.chip.as_ref().map(|c| c.role),
+            Some(ColorRole::Accent)
+        );
         assert_eq!(
             handed.outcome,
             JobOutcome::HandedOff {
@@ -281,7 +287,10 @@ mod tests {
         let conflicted = job_result(api::JobOutcome::Conflicted {
             reason: "conflict in a.rs".into(),
         });
-        assert_eq!(conflicted.chip.as_ref().map(|c| c.role), Some(ColorRole::Danger));
+        assert_eq!(
+            conflicted.chip.as_ref().map(|c| c.role),
+            Some(ColorRole::Danger)
+        );
         assert_eq!(conflicted.detail, "conflict in a.rs");
         let refused = job_result(api::JobOutcome::Refused {
             reason: "dirty".into(),

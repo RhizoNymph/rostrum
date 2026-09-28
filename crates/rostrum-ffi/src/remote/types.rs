@@ -122,7 +122,9 @@ pub enum LocalStatus {
     NotConfigured,
     /// A clone exists, but no worktree has the branch checked out.
     NotCheckedOut,
-    CheckedOut { branch: LocalBranch },
+    CheckedOut {
+        branch: LocalBranch,
+    },
 }
 
 /// A checked-out branch on the desktop.
@@ -205,15 +207,21 @@ pub enum JobOutcome {
     UpToDate,
     Completed,
     /// Git would not start (dirty worktree, operation in progress, …).
-    Refused { reason: String },
+    Refused {
+        reason: String,
+    },
     /// Stopped on conflicts and aborted; the worktree is as it was.
-    Conflicted { reason: String },
+    Conflicted {
+        reason: String,
+    },
     /// Stopped on conflicts and handed to a tmux session on the desktop.
     HandedOff {
         session: String,
         attach_command: String,
     },
-    Failed { reason: String },
+    Failed {
+        reason: String,
+    },
 }
 
 /// A job's outcome with its render-ready description.

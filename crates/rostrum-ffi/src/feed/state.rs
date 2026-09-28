@@ -9,16 +9,14 @@ use std::collections::HashMap;
 
 use chrono::Utc;
 use rostrum_core::{
-    FeedFilter, FeedRow, LoadState, PullRequest, RepoId, RepoState, User,
-    carry_forward_divergence, flatten,
+    FeedFilter, FeedRow, LoadState, PullRequest, RepoId, RepoState, User, carry_forward_divergence,
+    flatten,
 };
 use rostrum_github::GitHubError;
 
 use crate::{
     engine::state::PullKey,
-    feed::{
-        FeedPreferences, FeedSnapshot, RepoBody, RepoLoad, RepoSection, summary::summarize,
-    },
+    feed::{FeedPreferences, FeedSnapshot, RepoBody, RepoLoad, RepoSection, summary::summarize},
     types::UserRef,
 };
 
@@ -158,7 +156,10 @@ impl FeedState {
         self.repos.push(RepoState::new(id));
         let position = |repo: &RepoState| {
             let name = repo.id.to_string();
-            order.iter().position(|entry| entry == &name).unwrap_or(usize::MAX)
+            order
+                .iter()
+                .position(|entry| entry == &name)
+                .unwrap_or(usize::MAX)
         };
         self.repos.sort_by_key(position);
     }
@@ -168,6 +169,31 @@ impl FeedState {
         self.repos.retain(|repo| &repo.id != id);
         self.known.retain(|key, _| &key.repo != id);
         self.applied.remove(id);
+    }
+
+    /// Watch exactly `ids`, in that order: repositories kept keep their
+    /// state (pull requests, load state, collapse), new ones start idle, and
+    /// the rest are forgotten as `remove_repo` forgets them. Returns the
+    /// repositories that were dropped.
+    pub(crate) fn set_repos(&mut self, ids: Vec<RepoId>) -> Vec<RepoId> {
+        let mut previous: HashMap<RepoId, RepoState> = HashMap::new();
+        let mut removed = Vec::new();
+        for repo in std::mem::take(&mut self.repos) {
+            if ids.contains(&repo.id) {
+                previous.insert(repo.id.clone(), repo);
+            } else {
+                removed.push(repo.id);
+            }
+        }
+        self.repos = ids
+            .into_iter()
+            .map(|id| previous.remove(&id).unwrap_or_else(|| RepoState::new(id)))
+            .collect();
+        for id in &removed {
+            self.known.retain(|key, _| &key.repo != id);
+            self.applied.remove(id);
+        }
+        removed
     }
 
     pub(crate) fn toggle_collapsed(&mut self, id: &RepoId) -> bool {
@@ -210,7 +236,8 @@ impl FeedState {
                     building = Some(Building::new(repo.0));
                 }
                 FeedRow::PrRow { repo, pr } => {
-                    if let (Some(current), Some(state)) = (building.as_mut(), self.repos.get(repo.0))
+                    if let (Some(current), Some(state)) =
+                        (building.as_mut(), self.repos.get(repo.0))
                         && let Some(pull) = state.prs.get(pr.0)
                     {
                         current
@@ -435,8 +462,14 @@ mod tests {
             prs: numbers.iter().copied().map(pull).collect(),
             viewer: None,
         };
-        assert_eq!(state.apply_fetch(&id, newer, Ok(fetched(&[2]))), Applied::Loaded);
-        assert_eq!(state.apply_fetch(&id, older, Ok(fetched(&[1]))), Applied::Stale);
+        assert_eq!(
+            state.apply_fetch(&id, newer, Ok(fetched(&[2]))),
+            Applied::Loaded
+        );
+        assert_eq!(
+            state.apply_fetch(&id, older, Ok(fetched(&[1]))),
+            Applied::Stale
+        );
         assert_eq!(pulls(&state.snapshot(None, false).repos[0]), vec![2]);
     }
 
@@ -459,7 +492,11 @@ mod tests {
         let mut state = feed(&["a/b"]);
         let mut draft = pull(2);
         draft.is_draft = true;
-        load(&mut state, "a/b", vec![pull_by(1, "alice"), draft, pull_by(3, "bob")]);
+        load(
+            &mut state,
+            "a/b",
+            vec![pull_by(1, "alice"), draft, pull_by(3, "bob")],
+        );
 
         state.filter.hide_drafts = true;
         state.filter.authors = BTreeSet::from([LoginKey::new("Alice")]);
@@ -523,20 +560,59 @@ mod tests {
     }
 
     #[test]
+    fn setting_the_repositories_keeps_reorders_adds_and_forgets() {
+        let mut state = feed(&["a/b", "c/d", "e/f"]);
+        load(&mut state, "a/b", vec![pull(1)]);
+        load(&mut state, "c/d", vec![pull(2)]);
+        assert!(state.toggle_collapsed(&repo_id("c/d")));
+
+        let removed = state.set_repos(vec![repo_id("g/h"), repo_id("c/d"), repo_id("a/b")]);
+        assert_eq!(removed, vec![repo_id("e/f")]);
+        assert_eq!(
+            state.repo_ids(),
+            vec![repo_id("g/h"), repo_id("c/d"), repo_id("a/b")]
+        );
+        // Kept repositories keep what they had; the new one starts idle.
+        let snapshot = state.snapshot(None, false);
+        assert_eq!(snapshot.repos[0].load, RepoLoad::Idle);
+        assert_eq!(snapshot.repos[1].body, RepoBody::Collapsed);
+        assert_eq!(pulls(&snapshot.repos[2]), vec![1]);
+
+        // Dropping a repository forgets its pull requests and its fetch order.
+        let removed = state.set_repos(vec![repo_id("g/h")]);
+        assert_eq!(removed, vec![repo_id("c/d"), repo_id("a/b")]);
+        assert!(state.known.is_empty());
+        let snapshot = state.snapshot(None, false);
+        assert_eq!(
+            snapshot
+                .repos
+                .iter()
+                .map(|section| section.repo.as_str())
+                .collect::<Vec<_>>(),
+            vec!["g/h"]
+        );
+        // A re-added repository fetches afresh rather than being taken for
+        // one whose newer fetch already landed.
+        state.set_repos(vec![repo_id("g/h"), repo_id("a/b")]);
+        load(&mut state, "a/b", vec![pull(5)]);
+    }
+
+    #[test]
     fn added_repositories_follow_settings_order() {
         let mut state = feed(&["c/d"]);
         state.add_repo(repo_id("a/b"), &["a/b".into(), "c/d".into()]);
         state.add_repo(repo_id("a/b"), &["a/b".into(), "c/d".into()]);
-        assert_eq!(
-            state.repo_ids(),
-            vec![repo_id("a/b"), repo_id("c/d")]
-        );
+        assert_eq!(state.repo_ids(), vec![repo_id("a/b"), repo_id("c/d")]);
     }
 
     #[test]
     fn the_viewer_marks_their_rows() {
         let mut state = feed(&["a/b"]);
-        load(&mut state, "a/b", vec![pull_by(1, "Me"), pull_by(2, "other")]);
+        load(
+            &mut state,
+            "a/b",
+            vec![pull_by(1, "Me"), pull_by(2, "other")],
+        );
         let me = User {
             login: "me".into(),
             avatar_url: None,

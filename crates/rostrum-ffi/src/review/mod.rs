@@ -126,9 +126,7 @@ impl RostrumCore {
     async fn change_drafts(
         &self,
         key: PullKey,
-        change: impl FnOnce(&mut DraftBook, &str, &mut u64) -> Result<(), RostrumError>
-        + Send
-        + 'static,
+        change: impl FnOnce(&mut DraftBook, &str, &mut u64) -> Result<(), RostrumError> + Send + 'static,
     ) -> Result<PendingReview, RostrumError> {
         self.ensure_hydrated().await?;
         self.ensure_book(&key).await?;
@@ -293,11 +291,17 @@ mod tests {
 
     #[test]
     fn review_events_map_onto_githubs() {
-        assert_eq!(GitHubEvent::from(ReviewEvent::Approve), GitHubEvent::Approve);
+        assert_eq!(
+            GitHubEvent::from(ReviewEvent::Approve),
+            GitHubEvent::Approve
+        );
         assert_eq!(
             GitHubEvent::from(ReviewEvent::RequestChanges),
             GitHubEvent::RequestChanges
         );
-        assert_eq!(GitHubEvent::from(ReviewEvent::Comment), GitHubEvent::Comment);
+        assert_eq!(
+            GitHubEvent::from(ReviewEvent::Comment),
+            GitHubEvent::Comment
+        );
     }
 }

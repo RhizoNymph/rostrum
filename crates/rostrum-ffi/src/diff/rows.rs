@@ -98,7 +98,9 @@ pub(crate) fn build_rows(
 
 #[cfg(test)]
 mod tests {
-    use rostrum_core::{CommentId, DraftAnchor as CoreAnchor, Side as CoreSide, ThreadComment, ThreadId};
+    use rostrum_core::{
+        CommentId, DraftAnchor as CoreAnchor, Side as CoreSide, ThreadComment, ThreadId,
+    };
     use rostrum_diff::{FileStatus, PatchAvailability, parse_patch};
     use rostrum_github::DraftComment;
 
@@ -114,8 +116,10 @@ mod tests {
             status: FileStatus::Modified,
             additions: 1,
             deletions: 1,
-            hunks: parse_patch("@@ -10,3 +10,3 @@ fn main() {\n ctx\n-let a = 1;\n+let a = 2;\n end\n")
-                .expect("patch"),
+            hunks: parse_patch(
+                "@@ -10,3 +10,3 @@ fn main() {\n ctx\n-let a = 1;\n+let a = 2;\n end\n",
+            )
+            .expect("patch"),
             availability: PatchAvailability::Present,
         }
     }
@@ -185,7 +189,10 @@ mod tests {
     #[test]
     fn every_line_carries_the_anchor_github_expects() {
         let rows = build_rows(&file(), &[], &[], &repo());
-        assert_eq!(shape(&rows), vec!["H", "L10/10", "L11/-", "L-/11", "L12/12"]);
+        assert_eq!(
+            shape(&rows),
+            vec!["H", "L10/10", "L11/-", "L-/11", "L12/12"]
+        );
         assert_eq!(
             anchors(&rows),
             vec![
@@ -201,7 +208,10 @@ mod tests {
         let DiffRow::Line { line } = &rows[1] else {
             panic!("line");
         };
-        assert_eq!(line.anchor.as_ref().map(|a| a.path.as_str()), Some("src/main.rs"));
+        assert_eq!(
+            line.anchor.as_ref().map(|a| a.path.as_str()),
+            Some("src/main.rs")
+        );
     }
 
     #[test]
@@ -230,7 +240,8 @@ mod tests {
             // A range attaches after its last line.
             draft(
                 2,
-                CoreAnchor::single("src/main.rs", 10, CoreSide::Right).extended_to(12, CoreSide::Right),
+                CoreAnchor::single("src/main.rs", 10, CoreSide::Right)
+                    .extended_to(12, CoreSide::Right),
             ),
             draft(3, CoreAnchor::single("src/main.rs", 11, CoreSide::Left)),
         ];
@@ -253,7 +264,12 @@ mod tests {
         let DiffRow::Thread { thread } = &rows[4] else {
             panic!("thread row");
         };
-        assert!(thread.comments[0].body[0].spans.iter().any(|span| span.bold));
+        assert!(
+            thread.comments[0].body[0]
+                .spans
+                .iter()
+                .any(|span| span.bold)
+        );
     }
 
     #[test]
@@ -281,11 +297,17 @@ mod tests {
         let texts: Vec<String> = rows
             .iter()
             .filter_map(|row| match row {
-                DiffRow::Line { line } => Some(line.segments.iter().map(|s| s.text.as_str()).collect()),
+                DiffRow::Line { line } => {
+                    Some(line.segments.iter().map(|s| s.text.as_str()).collect())
+                }
                 _ => None,
             })
             .collect();
-        let expected: Vec<String> = diff.hunks[0].lines.iter().map(|l| l.content.clone()).collect();
+        let expected: Vec<String> = diff.hunks[0]
+            .lines
+            .iter()
+            .map(|l| l.content.clone())
+            .collect();
         assert_eq!(texts, expected);
     }
 }
