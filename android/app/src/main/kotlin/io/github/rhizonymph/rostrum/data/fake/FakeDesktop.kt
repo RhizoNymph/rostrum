@@ -66,13 +66,15 @@ internal class FakeDesktop(
             val (k, v) = it.split('=', limit = 2)
             k to URLDecoder.decode(v, Charsets.UTF_8)
         }
-        val code = params["code"]?.takeIf { it.isNotBlank() }
+        // The core's keys (v, m, h, p, c, fp), or the fake's longer spellings.
+        fun param(short: String, long: String) = params[short] ?: params[long]
+        val code = param("c", "code")?.takeIf { it.isNotBlank() }
             ?: return Outcome.Err(BackendError.InvalidInput("The link has no pairing code"))
         return Outcome.Ok(
             PairingPreview(
-                machine = params["name"] ?: SampleDesktop.MACHINE,
-                hosts = params["hosts"]?.split(',')?.filter { it.isNotBlank() } ?: SampleDesktop.hosts,
-                port = params["port"]?.toIntOrNull() ?: SampleDesktop.PORT,
+                machine = param("m", "name") ?: SampleDesktop.MACHINE,
+                hosts = param("h", "hosts")?.split(',')?.filter { it.isNotBlank() } ?: SampleDesktop.hosts,
+                port = param("p", "port")?.toIntOrNull() ?: SampleDesktop.PORT,
                 fingerprintShort = params["fp"]?.let(FakeRostrumBackend::shortFingerprint) ?: SampleDesktop.FINGERPRINT_SHORT,
                 code = code,
             ),

@@ -50,6 +50,48 @@ val uniffiBindgen = tasks.register<UniffiBindgen>("uniffiBindgen") {
 
 tasks.named("preBuild") { dependsOn(cargoNdkBuild, uniffiBindgen) }
 
+// --- Host smoke tests -----------------------------------------------------------
+// JVM tests that drive the real generated bindings, loading librostrum_ffi.so
+// built for this machine (target/debug) through JNA's desktop jar. Tagged, so
+// the normal unit test run skips them; see docs/features/android_app.md.
+val hostLibraryDir: Directory = rustWorkspace.dir("target/debug")
+
+val cargoHostBuild = tasks.register<Exec>("cargoHostBuild") {
+    group = "rust"
+    description = "Builds $ffiLibrary for the build machine, for the host smoke tests."
+    workingDir = rustWorkspace.asFile
+    commandLine(providers.cargoExecutable().get(), "build", "--locked", "--lib", "-p", ffiPackage)
+    // cargo's own fingerprinting decides what to rebuild.
+    outputs.upToDateWhen { false }
+}
+
+/** A Test task over the debug unit tests' classes, running only [tag]. */
+fun registerHostTests(name: String, tag: String, summary: String) = tasks.register<Test>(name) {
+    group = "verification"
+    description = summary
+    val unitTests = tasks.getByName<Test>("testDebugUnitTest")
+    testClassesDirs = unitTests.testClassesDirs
+    classpath = unitTests.classpath
+    useJUnitPlatform { includeTags(tag) }
+    systemProperty("jna.library.path", hostLibraryDir.asFile.absolutePath)
+    systemProperty("rostrum.hostTests", "true")
+    dependsOn(cargoHostBuild)
+    outputs.upToDateWhen { false }
+    testLogging {
+        events("passed", "skipped", "failed")
+        showStandardStreams = true
+    }
+}
+
+registerHostTests(
+    "hostSmokeTest", "host-smoke",
+    "Drives FfiRostrumBackend over the real core built for this machine (no network).",
+)
+registerHostTests(
+    "liveDesktopCheck", "live-desktop",
+    "Pairs with the rostrumd on this machine (ROSTRUM_LIVE_PAIR_URI_FILE) and unpairs. Run by hand, never in CI.",
+)
+
 // --- Signing ----------------------------------------------------------------
 val releaseSigning = ReleaseSigning.load(rootProject.file(".env")) { providers.environmentVariable(it).orNull }
 
@@ -115,7 +157,9 @@ android {
             // android.util.Log and friends return defaults instead of throwing,
             // so ViewModels and the data layer run on the plain JVM.
             isReturnDefaultValues = true
-            all { it.useJUnitPlatform() }
+            // Host smoke and live-desktop tests need the host library; they
+            // run from their own tasks (see "Host smoke tests" above).
+            all { it.useJUnitPlatform { excludeTags("host-smoke", "live-desktop") } }
         }
     }
 }
@@ -150,6 +194,9 @@ dependencies {
         artifact { type = "aar" }
     }
 
+    // The JAR, for the host smoke tests: it carries libjnidispatch for the
+    // build machine (the AAR above only has Android's).
+    testImplementation(libs.jna)
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotlinx.coroutines.test)
