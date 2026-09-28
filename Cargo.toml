@@ -92,6 +92,12 @@ tokio = { version = "1.48.0", features = [
 ] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+# The Android core's Kotlin bindings. Pinned exactly: the generated Kotlin and
+# the scaffolding in the cdylib must come from the same UniFFI release, and a
+# silent minor bump would regenerate bindings the app was not built against.
+# Features are chosen per use in `crates/rostrum-ffi/Cargo.toml`: `tokio`
+# everywhere, `cli` (the bindgen) only on the host, never inside the `.so`.
+uniffi = "=0.32.1"
 unicode-segmentation = "1.12.0"
 
 # Zed patches these to its own forks. Building gpui outside Zed's workspace

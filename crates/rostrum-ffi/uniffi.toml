@@ -1,0 +1,4 @@
+# UniFFI binding configuration, read in library mode from the crate root.
+[bindings.kotlin]
+# Use the Android object cleaner and Android-friendly runtime helpers.
+android = true

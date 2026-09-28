@@ -42,6 +42,10 @@ Overview:
       The contract between a paired phone and `rostrumd`: pairing codes and
       links, device tokens, certificate pinning, and the authenticated API for
       local state, local jobs, sync-all and handoff sessions.
+    android_core: >
+      The phone app's Rust half. Wraps the gpui-free crates behind one UniFFI
+      object, so Kotlin renders snapshots and rows the core has already
+      filtered, highlighted and anchored, and never stores a secret in Rust.
     conflict_handoff: >
       When a local rebase or merge stops on conflicts and a handler is
       configured, leaves the worktree in place and spawns the handler in a
@@ -134,6 +138,14 @@ Features Index:
     entry_points: [crates/rostrum-remote/src/lib.rs, crates/rostrum-remote/src/client.rs]
     depends_on: [local_git]
     doc: docs/features/remote_protocol.md
+  android_core:
+    description: >
+      The Android app's Rust core behind UniFFI — one RostrumCore object serving
+      the feed, detail, diff rows, pending review, desktop pairing and jobs, and
+      background notifications, all render-ready for Compose.
+    entry_points: [crates/rostrum-ffi/src/lib.rs, crates/rostrum-ffi/src/engine/mod.rs]
+    depends_on: [repo_feed, pr_detail, diff_review, diff_overview, author_filter, github_sync, remote_protocol]
+    doc: docs/features/android_core.md
 ```
 
 ## Workspace layout
@@ -154,6 +166,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 | `rostrum-remote` | no | Phone ↔ desktop protocol: pairing, device tokens, API types, and (feature `client`) the pinned HTTPS client |
 | `rostrum-config` | no | `config.json`: watched repositories, clones, feed preferences, conflict handler |
 | `rostrum-md` | no | `pulldown-cmark` → renderable markdown model |
+| `rostrum-ffi` | no | The Android app's core: `RostrumCore` over UniFFI (`cdylib`), plus the `uniffi-bindgen` binary |
 | `rostrum-ui` | yes | Theme, components, text/selection, markdown element |
 | `rostrum` | yes | Bootstrap, window, root views, `SyncEngine` |
 
