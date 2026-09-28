@@ -9,7 +9,7 @@ mod conversation;
 mod files;
 mod overview;
 
-use std::{collections::HashSet, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
+use std::{collections::HashSet, rc::Rc, sync::Arc};
 
 use futures::future::BoxFuture;
 use gpui::{
@@ -23,7 +23,7 @@ use rostrum_core::{
 };
 use rostrum_db::Db;
 use rostrum_diff::{DiffFile, FileStatus, Highlighter, PatchAvailability, parse_patch};
-use rostrum_git::{Autostash, BranchName, GitError, InProgress, Operation, RemoteRef, Repo, Rev};
+use rostrum_git::{Autostash, BranchName};
 use rostrum_github::{
     BranchUpdateMethod, DraftComment, DraftState, GitHubClient, GitHubError, IssueState,
     MergeMethod, PullRequestFile, ReviewEvent, SubmitReview,
@@ -36,12 +36,14 @@ use rostrum_ui::{
     },
 };
 
-use rostrum_handoff::{PrMeta, session_exists, session_name};
+use rostrum_handoff::{PrMeta, session_name};
 
-use crate::{
-    localops::{LocalJob, LocalOp, LocalResult, run_local_job},
-    sync::Store,
+use rostrum_local::{
+    HandoffState, LocalJob, LocalOp, LocalResult, LocalState, abort_in_progress, local_state,
+    run_local_job,
 };
+
+use crate::sync::Store;
 
 gpui::actions!(detail, [CopySelection]);
 
@@ -181,55 +183,6 @@ impl DraftAnchor {
     }
 }
 
-/// What the local clone says about this pull request's branch.
-///
-/// Absent for the great majority of pull requests: the feed is built for
-/// reading other people's work, and only a repository the user has configured a
-/// clone for can answer any of this. `Loadable::Idle` is therefore the ordinary
-/// resting state, not a sign that anything went wrong.
-pub(crate) enum LocalState {
-    /// The clone exists but no worktree has this branch checked out. Common
-    /// in a one-worktree-per-branch layout for pull requests the user is not
-    /// working on, so it is a quiet line rather than a failure.
-    NotCheckedOut,
-    CheckedOut(LocalBranch),
-}
-
-pub(crate) struct LocalBranch {
-    /// The worktree this branch is checked out in — not necessarily the
-    /// configured clone path, which may be any worktree of the repository.
-    worktree: PathBuf,
-    branch: BranchName,
-    remote: RemoteRef,
-    /// The local branch measured against its remote counterpart: `ahead` is
-    /// work not pushed yet, `behind` is work not pulled yet.
-    divergence: Divergence,
-    /// Whether the refs these counts came from were refreshed just now. A fetch
-    /// that failed leaves real numbers computed from stale refs, which is worth
-    /// saying out loud rather than presenting as current.
-    fetched: bool,
-    /// Why a local action cannot run, if anything is in the way.
-    blocker: Option<String>,
-    /// A rebase or merge git has started and not finished in this worktree.
-    in_progress: Option<InProgress>,
-    /// When something is in progress and a handler is configured: whether the
-    /// tmux session that was (or would have been) handed the conflict exists.
-    handoff: Option<HandoffState>,
-}
-
-/// Whether a handed-off conflict still has someone working on it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum HandoffState {
-    Running {
-        session: String,
-    },
-    /// The worktree is mid-operation but no session by the expected name
-    /// exists — the harness finished without continuing, or was killed.
-    Gone {
-        session: String,
-    },
-}
-
 pub struct PrDetail {
     pub(crate) store: Entity<Store>,
     pub(crate) repo: RepoId,
@@ -241,6 +194,13 @@ pub struct PrDetail {
     /// labels on this pull request. Fetched on first open of the picker.
     pub(crate) repo_labels: Loadable<Vec<Label>>,
     /// The local clone's view of this branch, when a clone is configured.
+    /// What the local clone says about this pull request's branch.
+    ///
+    /// Absent for the great majority of pull requests: the feed is built for
+    /// reading other people's work, and only a repository the user has
+    /// configured a clone for can answer any of this. `Loadable::Idle` is
+    /// therefore the ordinary resting state, not a sign that anything went
+    /// wrong.
     pub(crate) local: Loadable<LocalState>,
     /// Whether the label picker panel is showing.
     label_picker_open: bool,
@@ -579,8 +539,10 @@ impl PrDetail {
         } else {
             Autostash::Disabled
         };
-        let handler_configured = store.conflict_handler().is_some();
-        let session = session_name(&self.repo, self.number);
+        let handoff_session = store
+            .conflict_handler()
+            .is_some()
+            .then(|| session_name(&self.repo, self.number));
 
         self.local = Loadable::Loading;
         cx.notify();
@@ -588,65 +550,7 @@ impl PrDetail {
         self.tasks.push(cx.spawn(async move |this, cx| {
             let result = Tokio::spawn(&*cx, async move {
                 let branch = BranchName::new(head_ref)?;
-                let clone = Repo::open(&path).await?;
-                let Some(repo) = clone.worktree_for(&branch).await? else {
-                    return Ok::<_, GitError>(LocalState::NotCheckedOut);
-                };
-                let remote = RemoteRef::origin(branch.clone());
-
-                let fetched = match repo.fetch(&remote).await {
-                    Ok(outcome) => {
-                        tracing::debug!(?outcome, "fetched the pull request branch");
-                        true
-                    }
-                    Err(error) => {
-                        // Offline is an ordinary state for a desktop app, and
-                        // the whole point of the local panel is that it still
-                        // answers. Say so in the panel, not in an error banner.
-                        tracing::debug!(%error, "could not fetch; using the refs already on disk");
-                        false
-                    }
-                };
-
-                let divergence = repo
-                    .divergence(&Rev::Local(branch.clone()), &Rev::Remote(remote.clone()))
-                    .await?;
-
-                let status = repo.status().await?;
-                let in_progress = status.in_progress;
-
-                let blocker = repo
-                    .preflight(Operation::PullRebase, Some(&branch), autostash)
-                    .await?
-                    .reason();
-
-                // Only worth asking tmux when there is something a session
-                // could be working on. An error here degrades to "unknown"
-                // rather than failing a panel that is otherwise fine.
-                let handoff = match (in_progress, handler_configured) {
-                    (Some(_), true) => {
-                        match session_exists(&session, Duration::from_secs(5)).await {
-                            Ok(true) => Some(HandoffState::Running { session }),
-                            Ok(false) => Some(HandoffState::Gone { session }),
-                            Err(error) => {
-                                tracing::warn!(%error, "could not ask tmux about the handoff session");
-                                None
-                            }
-                        }
-                    }
-                    _ => None,
-                };
-
-                Ok(LocalState::CheckedOut(LocalBranch {
-                    worktree: repo.root().to_path_buf(),
-                    branch,
-                    remote,
-                    divergence,
-                    fetched,
-                    blocker,
-                    in_progress,
-                    handoff,
-                }))
+                local_state(&path, branch, autostash, handoff_session).await
             })
             .await;
 
@@ -773,17 +677,8 @@ impl PrDetail {
         cx.notify();
 
         self.tasks.push(cx.spawn(async move |this, cx| {
-            let result = Tokio::spawn(&*cx, async move {
-                let repo = Repo::open(&worktree).await?;
-                let status = repo.status().await?;
-                let Some(target) = status.in_progress.and_then(InProgress::abort_target) else {
-                    return Err(GitError::NothingToDescribe {
-                        in_progress: status.in_progress,
-                    });
-                };
-                repo.abort(target).await
-            })
-            .await;
+            let result =
+                Tokio::spawn(&*cx, async move { abort_in_progress(&worktree).await }).await;
 
             this.update(cx, |this, cx| {
                 this.busy = None;

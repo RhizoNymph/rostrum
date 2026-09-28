@@ -39,7 +39,7 @@ behaviour `local_git` documents. Present, three things change:
 
 1. `Repo` is opened with `ConflictPolicy::Leave`, so `on_conflict` returns the
    conflict untouched and the worktree stays mid-operation.
-2. On `Outcome::Conflicted`, `localops::run_local_job` gathers a
+2. On `Outcome::Conflicted`, `rostrum_local::run_local_job` gathers a
    `ConflictContext`, writes the bundle, and spawns the session.
 3. If any of that fails before the session exists, the operation is aborted
    after all. The guarantee "either someone is finishing this, or the clone is
@@ -201,5 +201,5 @@ and the next handoff for the same pull request replaces it.
 | `crates/rostrum-git/src/context.rs` | `ConflictContext` and its pure parsers |
 | `crates/rostrum-git/src/context/regions.rs` | `extract_conflict_regions`, the marker parser |
 | `crates/rostrum-git/src/repo/describe.rs` | `Repo::conflict_context` — the I/O |
-| `crates/rostrum/src/localops.rs` | `run_local_job` — where the handoff is invoked |
-| `crates/rostrum/src/config.rs` | `ConflictHandler` |
+| `crates/rostrum-local/src/jobs.rs` | `run_local_job` — where the handoff is invoked |
+| `crates/rostrum-config/src/lib.rs` | `ConflictHandler` |

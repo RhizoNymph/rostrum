@@ -4830,12 +4830,14 @@ dependencies = [
  "gpui_platform",
  "gpui_tokio",
  "notify-rust",
+ "rostrum-config",
  "rostrum-core",
  "rostrum-db",
  "rostrum-diff",
  "rostrum-git",
  "rostrum-github",
  "rostrum-handoff",
+ "rostrum-local",
  "rostrum-md",
  "rostrum-ui",
  "serde",
@@ -4843,6 +4845,17 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "rostrum-config"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "rostrum-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -4920,6 +4933,18 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "rostrum-local"
+version = "0.1.0"
+dependencies = [
+ "rostrum-config",
+ "rostrum-core",
+ "rostrum-git",
+ "rostrum-handoff",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

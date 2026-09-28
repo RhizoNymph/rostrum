@@ -1,7 +1,8 @@
 //! One local git operation on one pull request, from clone path to verdict.
 //!
-//! The detail pane's buttons and the feed's "sync all" run the same thing on
-//! the same terms, so the whole sequence lives here rather than in either view:
+//! The desktop detail pane's buttons, its feed's "sync all", and `rostrumd`'s
+//! remote API run the same thing on the same terms, so the whole sequence lives
+//! here rather than in any of them:
 //! find the worktree the branch is checked out in, run the operation, and —
 //! when the user has configured a conflict handler — hand a stopped rebase or
 //! merge to it instead of aborting.
@@ -14,7 +15,7 @@ use std::{path::PathBuf, time::Duration};
 use rostrum_git::{Autostash, BranchName, ConflictPolicy, GitError, Outcome, RemoteRef, Repo};
 use rostrum_handoff::{HandoffError, PrMeta, Spawned, hand_off, session_exists, session_name};
 
-use crate::config::ConflictHandler;
+use rostrum_config::ConflictHandler;
 
 /// How long to give the tmux client. It relays argv to a server and exits;
 /// anything slower than this is a wedged server, not a slow one.
@@ -153,6 +154,15 @@ async fn run(job: LocalJob) -> Result<LocalResult, GitError> {
     } else {
         RemoteRef::origin(job.branch.clone())
     };
+
+    // `pull_rebase` fetches for itself; the others work from the tracking ref
+    // on disk, which may be arbitrarily old. Merging or rebasing onto a stale
+    // `origin/<base>` would report "up to date" against a base that has moved,
+    // so the target is refreshed first — and, as with `pull_rebase`, a fetch
+    // that fails fails the job rather than quietly using old refs.
+    if job.op != LocalOp::PullRebase {
+        repo.fetch(&target).await?;
+    }
 
     let outcome = match job.op {
         LocalOp::PullRebase => repo.pull_rebase(&target, job.autostash).await,

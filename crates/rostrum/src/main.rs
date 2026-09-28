@@ -1,9 +1,7 @@
 //! rostrum — open pull requests across many repositories, in one feed.
 
-mod config;
 mod detail;
 mod feed;
-mod localops;
 mod nav;
 mod notify;
 mod sync;
