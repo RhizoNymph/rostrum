@@ -1,26 +1,44 @@
-//! The Rust surface the Android app calls through UniFFI.
+//! The Rust core of rostrum's Android app, exposed to Kotlin through UniFFI.
 //!
-//! This is a placeholder that only proves the build pipeline links end to end:
-//! Gradle → cargo-ndk → `librostrum_ffi.so` → uniffi-bindgen → Kotlin → APK.
-//! The real crate replaces the exports below; the crate name (`rostrum_ffi`,
-//! which is also the Kotlin package `uniffi.rostrum_ffi` and the `.so` name)
-//! and the `uniffi-bindgen` binary must stay as they are, because the Gradle
-//! build refers to both. See `docs/features/android_build.md`.
+//! One object, [`RostrumCore`], owns everything: the settings file, the
+//! SQLite cache and drafts, the GitHub session, and the paired desktop. Its
+//! methods are grouped by the screen they serve, one module each:
+//!
+//! | Module | Serves |
+//! |---|---|
+//! | [`session`] | the GitHub token and who it belongs to |
+//! | [`settings`] | repositories, cadence, notification toggles |
+//! | [`feed`] | the multi-repository feed, its filter, the author roster |
+//! | [`detail`] | a pull request's header, conversation, checks, actions |
+//! | [`diff`] | the Files tab: overview and one file's diff |
+//! | [`review`] | the pending review and its submission |
+//! | [`remote`] | pairing with the desktop and its local worktree jobs |
+//! | [`notifications`] | the background notification check |
+//!
+//! Everything returned is render-ready: markdown is flattened into blocks,
+//! diffs into highlighted rows with their comment anchors, chips carry text
+//! and a colour role. Kotlin should not need to re-derive anything.
+//!
+//! See `docs/features/android_core.md`.
 
 uniffi::setup_scaffolding!();
 
-/// The version of this crate, as declared in its manifest.
-#[uniffi::export]
-pub fn ffi_version() -> String {
-    env!("CARGO_PKG_VERSION").to_owned()
-}
+pub mod detail;
+pub mod diff;
+pub mod engine;
+pub mod error;
+pub mod feed;
+pub mod logging;
+pub mod markdown;
+pub mod notifications;
+pub mod remote;
+pub mod review;
+pub mod session;
+pub mod settings;
+pub mod types;
 
 #[cfg(test)]
-mod tests {
-    use super::ffi_version;
+pub(crate) mod test_support;
 
-    #[test]
-    fn ffi_version_is_the_workspace_version() {
-        assert_eq!(ffi_version(), "0.1.0");
-    }
-}
+pub use engine::RostrumCore;
+pub use error::{RemoteErrorCode, RostrumError};

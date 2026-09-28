@@ -37,9 +37,14 @@ pub mod highlight;
 pub mod model;
 pub mod overview;
 pub mod parse;
+pub mod word_diff;
 
 pub use highlight::{HighlightSpan, Highlighter, SpanStyle, SyntaxRef};
 pub use model::{CommentAnchor, DiffFile, DiffLine, FileStatus, Hunk, LineKind, PatchAvailability};
-pub use overview::{DirGroup, OverviewStats, Tile, change_map, overview_stats, ranked_files};
+pub use overview::{
+    DirGroup, OverviewStats, Tile, TileHeat, change_map, max_churn, overview_stats, ranked_files,
+    tile_heat,
+};
 pub use parse::{DiffParseError, parse_patch};
+pub use word_diff::{WordChanges, hunk_word_changes, word_changes};
 pub use rostrum_core::Side;

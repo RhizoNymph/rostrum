@@ -23,6 +23,11 @@ pub struct Config {
     /// was not there before. Off by default: the feed already shows arrivals,
     /// and interrupting the desktop should be a deliberate opt-in.
     pub notifications: bool,
+    /// Notify when the viewer's review is newly requested on a pull request.
+    /// Off by default for the same reason as `notifications`. Read by the
+    /// phone's background check; the desktop does not post these.
+    #[serde(default)]
+    pub notify_review_requests: bool,
     /// Hide repositories that loaded successfully with nothing to show. On by
     /// default; a feed of a dozen repositories is mostly empty headers.
     pub hide_empty_repos: bool,
@@ -84,6 +89,7 @@ impl Default for Config {
             refresh_secs: 60,
             prs_per_repo: 25,
             notifications: false,
+            notify_review_requests: false,
             hide_empty_repos: true,
             clones: BTreeMap::new(),
             autostash: false,
@@ -121,6 +127,17 @@ pub enum ConfigError {
     },
     #[error("could not serialise the config: {0}")]
     Serialize(#[source] serde_json::Error),
+}
+
+/// Why a repository could not be added.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum AddRepoError {
+    /// The input is neither `owner/name` nor a GitHub URL.
+    #[error(transparent)]
+    Malformed(#[from] ParseRepoIdError),
+    /// The repository is already watched.
+    #[error("{0} is already in the list")]
+    Duplicate(RepoId),
 }
 
 /// Anything the user should know about but that should not stop startup.
@@ -263,12 +280,16 @@ impl Config {
     ///
     /// Returns the parsed id, or an error suitable for showing to the user.
     pub fn add_repo(&mut self, input: &str) -> Result<RepoId, String> {
-        let id: RepoId = input
-            .parse()
-            .map_err(|err: ParseRepoIdError| err.to_string())?;
+        self.try_add_repo(input).map_err(|err| err.to_string())
+    }
+
+    /// [`Config::add_repo`] with a typed error, for a caller that reacts
+    /// differently to malformed input and to a duplicate.
+    pub fn try_add_repo(&mut self, input: &str) -> Result<RepoId, AddRepoError> {
+        let id: RepoId = input.parse()?;
         let name = id.to_string();
         if self.repos.iter().any(|existing| existing == &name) {
-            return Err(format!("{name} is already in the list"));
+            return Err(AddRepoError::Duplicate(id));
         }
         self.repos.push(name);
         self.repos.sort();
@@ -674,5 +695,38 @@ mod tests {
         let opted_in: Config =
             serde_json::from_str(r#"{"notifications":true}"#).expect("partial config should load");
         assert!(opted_in.notifications);
+    }
+
+    #[test]
+    fn a_typed_add_tells_malformed_from_duplicate() {
+        let mut config = Config {
+            repos: vec!["a/b".into()],
+            ..Default::default()
+        };
+        assert!(matches!(
+            config.try_add_repo("not-a-repo"),
+            Err(AddRepoError::Malformed(_))
+        ));
+        assert_eq!(
+            config.try_add_repo("https://github.com/a/b"),
+            Err(AddRepoError::Duplicate(RepoId::new("a", "b")))
+        );
+        assert_eq!(config.try_add_repo("c/d"), Ok(RepoId::new("c", "d")));
+        assert_eq!(config.repos, ["a/b", "c/d"]);
+    }
+
+    #[test]
+    fn review_request_notifications_are_off_unless_opted_in_and_persist() {
+        assert!(!Config::default().notify_review_requests);
+        let absent: Config =
+            serde_json::from_str(r#"{"notifications":true}"#).expect("partial config should load");
+        assert!(!absent.notify_review_requests);
+
+        let temp = TempConfig::new("review-requests");
+        let loaded = temp.round_trip(&Config {
+            notify_review_requests: true,
+            ..Default::default()
+        });
+        assert!(loaded.notify_review_requests);
     }
 }

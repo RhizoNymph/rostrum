@@ -199,10 +199,7 @@ pub fn flatten(
 
                 // Existing threads anchored to this line.
                 for (thread_ix, thread) in threads.iter().enumerate() {
-                    if thread.path == anchor.path
-                        && thread.side == anchor.side
-                        && thread.line == Some(anchor.line)
-                    {
+                    if thread.is_anchored_at(&anchor.path, anchor.line, anchor.side) {
                         rows.push(DiffRow::Thread {
                             file: file_ix,
                             thread: thread_ix,
@@ -1006,44 +1003,6 @@ mod tests {
         let rows = rows(&[], &[], None);
         // Row 0 is the file header.
         assert!(selected_text(&rows, &files, LineSelection::new(0)).is_empty());
-    }
-
-    #[test]
-    fn extending_an_anchor_orders_the_range() {
-        let anchor = DraftAnchor::single("src/main.rs", 20, Side::Right);
-
-        let downwards = anchor.extended_to(24, Side::Right);
-        assert_eq!((downwards.start_line, downwards.line), (Some(20), 24));
-
-        // Shift-clicking *above* the original line still yields start <= line.
-        let upwards = anchor.extended_to(16, Side::Right);
-        assert_eq!((upwards.start_line, upwards.line), (Some(16), 20));
-    }
-
-    #[test]
-    fn extending_onto_the_same_line_stays_single_line() {
-        let anchor =
-            DraftAnchor::single("src/main.rs", 20, Side::Right).extended_to(20, Side::Right);
-        assert_eq!(anchor.start_line, None);
-        assert_eq!(anchor.start_side, None);
-        assert_eq!(anchor.line, 20);
-    }
-
-    #[test]
-    fn covers_reports_every_line_in_the_range() {
-        let anchor =
-            DraftAnchor::single("src/main.rs", 20, Side::Right).extended_to(24, Side::Right);
-        for line in 20..=24 {
-            assert!(
-                anchor.covers("src/main.rs", line, Side::Right),
-                "line {line}"
-            );
-        }
-        assert!(!anchor.covers("src/main.rs", 19, Side::Right));
-        assert!(!anchor.covers("src/main.rs", 25, Side::Right));
-        // Same numbers on the other side are a different anchor entirely.
-        assert!(!anchor.covers("src/main.rs", 22, Side::Left));
-        assert!(!anchor.covers("other.rs", 22, Side::Right));
     }
 
     #[test]

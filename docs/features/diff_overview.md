@@ -57,7 +57,7 @@ shares still sum to 1 and nothing visually disappears.
 
 | File | Role |
 |---|---|
-| `crates/rostrum-diff/src/overview.rs` | Pure aggregation and proportional layout: `OverviewStats`, `DirGroup`, `Tile`, `change_map`, `ranked_files`, `churn` |
+| `crates/rostrum-diff/src/overview.rs` | Pure aggregation and proportional layout: `OverviewStats`, `DirGroup`, `Tile`, `change_map`, `ranked_files`, `churn`, and tile colouring (`tile_heat`, `max_churn`) shared with the Android core |
 | `crates/rostrum/src/detail/overview.rs` | Rendering: summary strip, change map, ranked list, tile colour blend |
 | `crates/rostrum/src/detail/files.rs` | `FilesView` toggle bar, `file_header_row` lookup, dispatch to overview |
 | `crates/rostrum/src/detail.rs` | `FilesView` state, `set_files_view`, `jump_to_file` |
@@ -82,6 +82,9 @@ shares still sum to 1 and nothing visually disappears.
 - Tiles need `.id()` (they carry tooltips and click handlers); ids are
   namespaced `("map-tile", …)` / `("ranked-file", …)` to stay unique within
   the pane.
+- The blend ratio and opacity come from `rostrum_diff::tile_heat` (removed
+  share of the tile's churn; `0.16 + 0.42·√(churn / largest)`, capped for an
+  aggregate tile larger than any one file), so the Android map matches.
 - Colour blending is a naive HSLA lerp between `theme.added` and
   `theme.removed`; both are theme-supplied, so the overview holds no colour
   constants of its own.
