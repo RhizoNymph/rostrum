@@ -144,8 +144,7 @@ class DesktopViewModel(
             when (val result = backend.abortLocal(pr)) {
                 is Outcome.Ok -> {
                     RostrumLog.i(TAG, "handoff_aborted", "pr" to pr, "session" to session.session)
-                    val what = session.abortLabel ?: "operation"
-                    messages.send("Aborted the $what in ${session.headRef ?: pr.toString()}")
+                    messages.send("Aborted the stopped operation in ${session.headRef ?: pr.toString()}")
                     reloadHandoffs()
                 }
                 is Outcome.Err -> {

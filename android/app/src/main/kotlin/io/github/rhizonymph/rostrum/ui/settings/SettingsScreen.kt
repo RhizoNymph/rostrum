@@ -158,7 +158,7 @@ private fun RefreshIntervalDialog(current: Long, onChoose: (Long) -> Unit, onDis
 private val previewMachine = MachineInfo(
     name = "nymph-desk", version = "0.1.0", apiVersion = 1,
     clones = listOf(CloneInfo("RhizoNymph/rostrum", "~/Code/devtools/rostrum"), CloneInfo("zed-industries/zed", "~/Code/zed")),
-    handlerConfigured = true, autostash = false, worktrees = 9,
+    handlerConfigured = true, autostash = false,
 )
 
 private val previewContent = SettingsContent(

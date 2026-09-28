@@ -47,10 +47,10 @@ class DesktopMappingTest {
         val machine = MachineInfo(
             "nymph-desk", "0.1.0", 1,
             listOf(CloneInfo("a/b", "~/a"), CloneInfo("c/d", "~/c")),
-            handlerConfigured = true, autostash = false, worktrees = 9,
+            handlerConfigured = true, autostash = false,
         )
-        assertEquals("Connected · 2 clones · 9 worktrees", machineSummary(machine))
-        assertEquals("Connected · 1 clone · 1 worktree", machineSummary(machine.copy(clones = machine.clones.take(1), worktrees = 1)))
+        assertEquals("Connected · 2 clones", machineSummary(machine))
+        assertEquals("Connected · 1 clone", machineSummary(machine.copy(clones = machine.clones.take(1))))
     }
 
     @Test
@@ -58,7 +58,6 @@ class DesktopMappingTest {
         val session = HandoffSession(
             session = "s", repo = "RhizoNymph/rostrum", number = 10, headRef = "feat/diff-overview",
             worktree = "~/w", startedAt = TEST_NOW.minusSeconds(180), attachCommand = "tmux attach -t =s",
-            description = "d", abortLabel = "rebase",
         )
         assertEquals("#10 feat/diff-overview · started 3m ago", handoffMeta(session, TEST_NOW))
         val bare = session.copy(repo = null, number = null, headRef = null, startedAt = null)

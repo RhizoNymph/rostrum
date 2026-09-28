@@ -32,12 +32,11 @@ class SignInViewModelTest {
         SessionRepository(backend, InMemorySecretStore(), "Pixel").also { it.restore() }
 
     @Test
-    fun `starts with the token form closed and github dot com`() = runTest(main.dispatcher) {
+    fun `starts with the token form closed and empty`() = runTest(main.dispatcher) {
         val vm = SignInViewModel(session())
         advanceUntilIdle()
         val state = vm.state.value
         assertFalse(state.tokenFormOpen)
-        assertEquals("github.com", state.host)
         assertEquals("", state.token)
         assertNull(state.notice)
         assertFalse(state.canSubmit)
@@ -70,19 +69,8 @@ class SignInViewModelTest {
         vm.signIn()
         runCurrent()
         advanceUntilIdle()
-        assertEquals(GitHubAuth.SignedIn("github.com"), (session.state.value as SessionState.Ready).github)
+        assertEquals(GitHubAuth.SignedIn, (session.state.value as SessionState.Ready).github)
         assertEquals(ActionState.Idle, vm.state.value.submit)
-    }
-
-    @Test
-    fun `an enterprise host is kept`() = runTest(main.dispatcher) {
-        val session = session()
-        val vm = SignInViewModel(session)
-        vm.onTokenChange(TEST_TOKEN)
-        vm.onHostChange("ghe.example.com")
-        vm.signIn()
-        advanceUntilIdle()
-        assertEquals(GitHubAuth.SignedIn("ghe.example.com"), (session.state.value as SessionState.Ready).github)
     }
 
     @Test

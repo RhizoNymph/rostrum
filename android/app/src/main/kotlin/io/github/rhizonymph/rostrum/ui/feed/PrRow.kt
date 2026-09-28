@@ -77,7 +77,6 @@ fun PrRow(
                             mono = chip.mono,
                             leadingIcon = when (chip.icon) {
                                 ChipIcon.Check -> RostrumIcons.CheckBold
-                                ChipIcon.Desktop -> RostrumIcons.Desktop
                                 null -> null
                             },
                             description = chip.description?.let { "${chip.text}: $it" },

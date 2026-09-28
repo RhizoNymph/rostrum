@@ -81,9 +81,9 @@ fun runTitle(op: LocalOp): String = when (op) {
     LocalOp.RebaseBase -> "Rebase all onto base"
 }
 
-/** `Connected · 2 clones · 9 worktrees`. */
+/** `Connected · 2 clones`. */
 fun machineSummary(machine: MachineInfo): String =
-    "Connected · ${countLabel(machine.clones.size, "clone")} · ${countLabel(machine.worktrees, "worktree")}"
+    "Connected · ${countLabel(machine.clones.size, "clone")}"
 
 /** `#10 feat/diff-overview · started 3m ago`; parts the desktop did not report are left out. */
 fun handoffMeta(session: HandoffSession, now: Instant): String {

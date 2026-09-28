@@ -24,6 +24,7 @@ import io.github.rhizonymph.rostrum.data.model.PairingPreview
 import io.github.rhizonymph.rostrum.ui.common.ActionState
 import io.github.rhizonymph.rostrum.ui.components.BackTopBar
 import io.github.rhizonymph.rostrum.ui.components.ErrorView
+import io.github.rhizonymph.rostrum.ui.components.LoadingView
 import io.github.rhizonymph.rostrum.ui.components.TextPillButton
 import io.github.rhizonymph.rostrum.ui.theme.RostrumText
 import io.github.rhizonymph.rostrum.ui.theme.RostrumTheme
@@ -49,6 +50,7 @@ fun PairScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             when (val link = state.link) {
+                LinkState.Reading -> LoadingView(label = "Reading the pairing link…")
                 is LinkState.Preview -> LinkPreviewSection(link.preview, link.pairing, actions::pairWithLink)
                 is LinkState.Invalid -> ErrorView(link.error, title = "This pairing link can't be used")
                 null -> PairInstructions()

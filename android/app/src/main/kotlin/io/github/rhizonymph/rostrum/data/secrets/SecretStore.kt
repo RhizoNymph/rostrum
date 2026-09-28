@@ -5,9 +5,6 @@ enum class SecretKey(val fileName: String) {
     /** The GitHub token: pasted, or handed over by the desktop. */
     GitHubToken("github_token"),
 
-    /** The GitHub host the token belongs to (github.com, or an Enterprise host). */
-    GitHubHost("github_host"),
-
     /** The paired desktop's bearer credential for this device. */
     DeviceToken("device_token"),
 

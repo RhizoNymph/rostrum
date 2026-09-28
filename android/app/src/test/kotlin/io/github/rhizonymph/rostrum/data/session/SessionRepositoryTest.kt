@@ -33,12 +33,12 @@ class SessionRepositoryTest {
     }
 
     @Test
-    fun `restore hands the saved token and host to the backend`() = runTest {
+    fun `restore hands the saved token to the backend`() = runTest {
         val backend = testBackend(signedIn = false, paired = false)
-        val secrets = InMemorySecretStore(mapOf(SecretKey.GitHubToken to goodToken, SecretKey.GitHubHost to "ghe.example.com"))
+        val secrets = InMemorySecretStore(mapOf(SecretKey.GitHubToken to goodToken))
         val repo = SessionRepository(backend, secrets, "Pixel")
         repo.restore()
-        assertEquals(GitHubAuth.SignedIn("ghe.example.com"), ready(repo).github)
+        assertEquals(GitHubAuth.SignedIn, ready(repo).github)
         assertEquals(GitHubStatus.Unverified, backend.githubStatus())
     }
 
@@ -86,15 +86,14 @@ class SessionRepositoryTest {
     }
 
     @Test
-    fun `signing in verifies with GitHub, then persists token and host`() = runTest {
+    fun `signing in verifies with GitHub, then persists the token`() = runTest {
         val secrets = InMemorySecretStore()
         val repo = SessionRepository(testBackend(signedIn = false, paired = false), secrets, "Pixel")
         repo.restore()
-        val viewer = repo.signInWithToken("  $goodToken  ", "https://github.com/").orFail()
+        val viewer = repo.signInWithToken("  $goodToken  ").orFail()
         assertEquals("RhizoNymph", viewer.login)
         assertEquals(goodToken, secrets.values[SecretKey.GitHubToken])
-        assertEquals("github.com", secrets.values[SecretKey.GitHubHost])
-        assertEquals(GitHubAuth.SignedIn("github.com"), ready(repo).github)
+        assertEquals(GitHubAuth.SignedIn, ready(repo).github)
     }
 
     @Test
@@ -103,7 +102,7 @@ class SessionRepositoryTest {
         val secrets = InMemorySecretStore()
         val repo = SessionRepository(backend, secrets, "Pixel")
         repo.restore()
-        val result = repo.signInWithToken("not-a-token", "github.com")
+        val result = repo.signInWithToken("not-a-token")
         assertInstanceOf(BackendError.GitHubAuthFailed::class.java, (result as Outcome.Err).error)
         assertTrue(secrets.values.isEmpty())
         assertEquals(GitHubStatus.NoToken, backend.githubStatus())
@@ -116,7 +115,7 @@ class SessionRepositoryTest {
         backend.failNext(FakeCall.SetGitHubToken, BackendError.Internal("should not be called"))
         val repo = SessionRepository(backend, InMemorySecretStore(), "Pixel")
         repo.restore()
-        assertInstanceOf(BackendError.InvalidInput::class.java, (repo.signInWithToken("  ", "github.com") as Outcome.Err).error)
+        assertInstanceOf(BackendError.InvalidInput::class.java, (repo.signInWithToken("  ") as Outcome.Err).error)
     }
 
     @Test
@@ -125,7 +124,7 @@ class SessionRepositoryTest {
         secrets.failWrites[SecretKey.GitHubToken] = SecretStoreError.KeystoreUnavailable("no keystore")
         val repo = SessionRepository(testBackend(signedIn = false, paired = false), secrets, "Pixel")
         repo.restore()
-        val result = repo.signInWithToken(goodToken, "github.com")
+        val result = repo.signInWithToken(goodToken)
         assertInstanceOf(BackendError.Storage::class.java, (result as Outcome.Err).error)
         assertInstanceOf(GitHubAuth.SignedOut::class.java, ready(repo).github)
     }
@@ -140,7 +139,20 @@ class SessionRepositoryTest {
         assertEquals(result.deviceToken, secrets.values[SecretKey.DeviceToken])
         assertEquals(result.endpoint, secrets.values[SecretKey.DesktopEndpoint])
         assertEquals(result.github!!.token, secrets.values[SecretKey.GitHubToken])
-        assertEquals(GitHubAuth.SignedIn("github.com"), ready(repo).github)
+        assertEquals(GitHubAuth.SignedIn, ready(repo).github)
+        assertInstanceOf(DesktopLink.Paired::class.java, ready(repo).desktop)
+    }
+
+    @Test
+    fun `a handed-over token for another host is refused with a notice`() = runTest {
+        val secrets = InMemorySecretStore()
+        val backend = FakeRostrumBackend(signedIn = false, paired = false, desktopGitHubHost = "ghe.example.com")
+        val repo = SessionRepository(backend, secrets, "Pixel")
+        repo.restore()
+        repo.pairWithLink("rostrum://pair?code=WDJB-MJHT").orFail()
+        val github = ready(repo).github as GitHubAuth.SignedOut
+        assertTrue(github.notice!!.contains("github.com only"))
+        assertNull(secrets.values[SecretKey.GitHubToken])
         assertInstanceOf(DesktopLink.Paired::class.java, ready(repo).desktop)
     }
 
@@ -167,7 +179,7 @@ class SessionRepositoryTest {
     @Test
     fun `signing out forgets the token everywhere`() = runTest {
         val backend = testBackend(signedIn = false, paired = false)
-        val secrets = InMemorySecretStore(mapOf(SecretKey.GitHubToken to goodToken, SecretKey.GitHubHost to "github.com"))
+        val secrets = InMemorySecretStore(mapOf(SecretKey.GitHubToken to goodToken))
         val repo = SessionRepository(backend, secrets, "Pixel")
         repo.restore()
         repo.signOut()

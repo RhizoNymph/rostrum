@@ -37,6 +37,8 @@ class PairViewModelTest {
     @Test
     fun `a link is previewed without contacting the desktop`() = runTest(main.dispatcher) {
         val vm = PairViewModel(backend, session(), link)
+        assertEquals(LinkState.Reading, vm.state.value.link)
+        advanceUntilIdle()
         val preview = vm.state.value.link as LinkState.Preview
         assertEquals("nymph-desk", preview.preview.machine)
         assertEquals("4F2A · 91C0 · 7E3B", preview.preview.fingerprintShort)
@@ -48,6 +50,7 @@ class PairViewModelTest {
     fun `pairing from the link pairs, adopts the token and finishes`() = runTest(main.dispatcher) {
         val session = session()
         val vm = PairViewModel(backend, session, link)
+        advanceUntilIdle()
         vm.pairWithLink()
         advanceUntilIdle()
         assertTrue(vm.state.value.paired)
@@ -58,6 +61,7 @@ class PairViewModelTest {
     @Test
     fun `a failed link pairing shows the error and can be retried`() = runTest(main.dispatcher) {
         val vm = PairViewModel(backend, session(), link)
+        advanceUntilIdle()
         backend.failNext(FakeCall.PairWithLink, BackendError.RemoteApi(RemoteErrorCode.PairingCodeExpired, "expired"))
         vm.pairWithLink()
         advanceUntilIdle()
@@ -72,6 +76,7 @@ class PairViewModelTest {
     @Test
     fun `an invalid link opens the manual form`() = runTest(main.dispatcher) {
         val vm = PairViewModel(backend, session(), "rostrum://pair?name=x")
+        advanceUntilIdle()
         assertInstanceOf(LinkState.Invalid::class.java, vm.state.value.link)
         assertTrue(vm.state.value.manualOpen)
     }

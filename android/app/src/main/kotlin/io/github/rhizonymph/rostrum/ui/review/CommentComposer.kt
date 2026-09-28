@@ -37,6 +37,8 @@ data class ComposerState(
     val tab: EditorTab = EditorTab.Write,
     /** The text rendered by the core, refreshed when Preview is opened. */
     val preview: List<MdBlock> = emptyList(),
+    /** Why the core could not render the Preview, if it could not. */
+    val previewError: String? = null,
     /** Pending drafts other than this one. */
     val otherPending: Int,
     /** The pending review's head moved; new drafts are refused. */
@@ -65,15 +67,20 @@ data class ComposerState(
             null
         }
 
-    /** "Comment now" goes out as a review, so it takes the other drafts with it. */
+    /**
+     * "Comment now" goes out as a review, which would take the other pending
+     * drafts with it, so it is offered only when there are none.
+     */
     val commentNowNote: String?
         get() = if (mode is ComposerMode.New && otherPending > 0) {
-            "Comment now also sends your ${ReviewLabels.pendingCount(otherPending)}."
+            "Comment now is off while your ${ReviewLabels.pendingCount(otherPending)} wait: it would send them too."
         } else {
             null
         }
 
     val canSend: Boolean get() = text.isNotBlank() && !action.running && blockedReason == null
+
+    val canCommentNow: Boolean get() = canSend && mode is ComposerMode.New && otherPending == 0
 }
 
 /**
@@ -115,7 +122,17 @@ class CommentComposer(
     fun setText(text: String) = _state.update { it?.copy(text = text, action = ActionState.Idle) }
 
     fun setTab(tab: EditorTab) = _state.update { current ->
-        current?.copy(tab = tab, preview = if (tab == EditorTab.Preview) backend.renderMarkdown(current.text) else current.preview)
+        when {
+            current == null -> null
+            tab != EditorTab.Preview -> current.copy(tab = tab)
+            else -> when (val rendered = backend.renderMarkdown(current.text, pr.repo)) {
+                is Outcome.Ok -> current.copy(tab = tab, preview = rendered.value, previewError = null)
+                is Outcome.Err -> {
+                    RostrumLog.w(TAG, "preview_failed", "pr" to pr, "error" to rendered.error::class.simpleName)
+                    current.copy(tab = tab, preview = emptyList(), previewError = rendered.error.describe())
+                }
+            }
+        }
     }
 
     fun dismiss() = close()
@@ -141,13 +158,14 @@ class CommentComposer(
 
     /**
      * Post the comment at once. The core only posts inline comments as part
-     * of a review, so this adds the draft and submits a Comment review with
-     * every pending draft. If the submit fails the draft stays pending.
+     * of a review, so this adds the draft and submits a Comment review; it is
+     * refused while other drafts are pending, which would go out with it. If
+     * the submit fails the draft stays pending.
      */
     fun commentNow() {
         val current = _state.value ?: return
         val mode = current.mode as? ComposerMode.New ?: return
-        if (!current.canSend) return
+        if (!current.canCommentNow) return
         running()
         scope.launch {
             val added = when (val outcome = backend.addDraft(pr, mode.target.anchor, mode.target.rangeStart, current.text.trim())) {

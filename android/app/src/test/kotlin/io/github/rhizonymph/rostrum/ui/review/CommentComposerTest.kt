@@ -111,21 +111,40 @@ class CommentComposerTest {
     }
 
     @Test
-    fun `comment now submits the comment with the pending drafts`() = runTest {
+    fun `comment now is off while other drafts are pending`() = runTest {
         val h = harness()
         h.composer.openNew(range, h.backend.pendingReview(pr).orFail())
         h.composer.setText("Methods on DiffFile?")
+        val state = h.composer.state.value!!
+        assertTrue(state.canSend)
+        assertFalse(state.canCommentNow)
+        h.composer.commentNow()
+        advanceUntilIdle()
+        assertEquals(0, h.posted)
+        assertEquals(2, h.backend.pendingReview(pr).orFail().drafts.size)
+        assertNotNull(h.composer.state.value)
+    }
+
+    @Test
+    fun `comment now posts a lone comment at once`() = runTest {
+        val h = harness()
+        h.backend.discardDrafts(pr).orFail()
+        h.composer.openNew(range, h.backend.pendingReview(pr).orFail())
+        h.composer.setText("Methods on DiffFile?")
+        assertTrue(h.composer.state.value!!.canCommentNow)
+        assertNull(h.composer.state.value!!.commentNowNote)
         h.composer.commentNow()
         advanceUntilIdle()
         assertNull(h.composer.state.value)
         assertEquals(1, h.posted)
         assertTrue(h.pending!!.drafts.isEmpty())
-        assertEquals(4, h.backend.pullDetail(pr).orFail().threads.size)
+        assertEquals(2, h.backend.pullDetail(pr).orFail().threads.size)
     }
 
     @Test
     fun `when sending fails after saving, the draft stays pending`() = runTest {
         val h = harness()
+        h.backend.discardDrafts(pr).orFail()
         h.composer.openNew(range, h.backend.pendingReview(pr).orFail())
         h.composer.setText("x")
         h.backend.failNext(FakeCall.SubmitReview, BackendError.Network("offline"))
@@ -133,7 +152,7 @@ class CommentComposerTest {
         advanceUntilIdle()
         assertNull(h.composer.state.value)
         assertEquals(0, h.posted)
-        assertEquals(3, h.pending!!.drafts.size)
+        assertEquals(1, h.pending!!.drafts.size)
     }
 
     @Test

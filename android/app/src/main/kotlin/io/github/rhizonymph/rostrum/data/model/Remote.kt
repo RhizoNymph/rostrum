@@ -79,8 +79,6 @@ data class MachineInfo(
     val handlerConfigured: Boolean,
     /** The desktop's own stash preference. */
     val autostash: Boolean,
-    /** Worktrees across every clone, for "9 worktrees". */
-    val worktrees: Int,
 )
 
 data class CloneInfo(val repo: String, val path: String)
@@ -112,8 +110,6 @@ data class LocalBranch(
     val inProgress: InProgress?,
     /** The tmux session a stopped operation was handed to. */
     val handoff: HandoffState?,
-    /** Files with conflicts while [inProgress] is set. */
-    val conflictedFiles: List<String>,
 )
 
 data class InProgress(
@@ -228,10 +224,6 @@ data class HandoffSession(
     val worktree: String?,
     val startedAt: Instant?,
     val attachCommand: String,
-    /** "Rebase onto main stopped · 3 conflicted files". */
-    val description: String,
-    /** What aborting stops: `rebase` or `merge`; `null` when not abortable. */
-    val abortLabel: String?,
 ) {
     val pr: PrRef? get() = if (repo != null && number != null) PrRef(repo, number) else null
 }

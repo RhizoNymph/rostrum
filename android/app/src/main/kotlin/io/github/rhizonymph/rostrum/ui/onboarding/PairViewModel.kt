@@ -18,6 +18,9 @@ import kotlinx.coroutines.launch
 
 /** A `rostrum://pair?…` link, read before anything is contacted. */
 sealed interface LinkState {
+    /** The core is reading the link. */
+    data object Reading : LinkState
+
     data class Preview(val preview: PairingPreview, val pairing: ActionState) : LinkState
 
     data class Invalid(val error: BackendError) : LinkState
@@ -100,18 +103,24 @@ class PairViewModel(
     private val session: SessionRepository,
     private val link: String?,
 ) : ViewModel(), PairActions {
-    private val _state = MutableStateFlow(initialState())
+    private val _state = MutableStateFlow(
+        PairUiState(link = if (link == null) null else LinkState.Reading, manualOpen = false),
+    )
     val state: StateFlow<PairUiState> = _state.asStateFlow()
 
-    private fun initialState(): PairUiState {
-        val uri = link ?: return PairUiState(link = null, manualOpen = false)
-        return when (val parsed = backend.parsePairingLink(uri)) {
+    init {
+        if (link != null) viewModelScope.launch { readLink(link) }
+    }
+
+    private suspend fun readLink(uri: String) {
+        val next = when (val parsed = backend.parsePairingLink(uri)) {
             is Outcome.Ok -> PairUiState(LinkState.Preview(parsed.value, ActionState.Idle), manualOpen = false)
             is Outcome.Err -> {
                 RostrumLog.w(TAG, "pair_link_invalid", "error" to parsed.error::class.simpleName)
                 PairUiState(LinkState.Invalid(parsed.error), manualOpen = true)
             }
         }
+        _state.update { current -> next.copy(manual = current.manual, manualOpen = current.manualOpen || next.manualOpen) }
     }
 
     override fun pairWithLink() {

@@ -3,7 +3,6 @@ package io.github.rhizonymph.rostrum.ui.onboarding
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.rhizonymph.rostrum.data.Outcome
-import io.github.rhizonymph.rostrum.data.RostrumBackend
 import io.github.rhizonymph.rostrum.data.RostrumLog
 import io.github.rhizonymph.rostrum.data.session.GitHubAuth
 import io.github.rhizonymph.rostrum.data.session.SessionRepository
@@ -20,26 +19,23 @@ data class SignInUiState(
     val notice: String? = null,
     val tokenFormOpen: Boolean = false,
     val token: String = "",
-    val host: String = RostrumBackend.GITHUB_COM,
     val submit: ActionState = ActionState.Idle,
 ) {
     val canSubmit: Boolean get() = token.isNotBlank() && submit != ActionState.Running
 
     override fun toString(): String =
-        "SignInUiState(notice=$notice, tokenFormOpen=$tokenFormOpen, token=redacted, host=$host, submit=$submit)"
+        "SignInUiState(notice=$notice, tokenFormOpen=$tokenFormOpen, token=redacted, submit=$submit)"
 }
 
 interface SignInActions {
     fun toggleTokenForm()
     fun onTokenChange(token: String)
-    fun onHostChange(host: String)
     fun signIn()
 }
 
 object NoSignInActions : SignInActions {
     override fun toggleTokenForm() = Unit
     override fun onTokenChange(token: String) = Unit
-    override fun onHostChange(host: String) = Unit
     override fun signIn() = Unit
 }
 
@@ -68,16 +64,12 @@ class SignInViewModel(private val session: SessionRepository) : ViewModel(), Sig
         _state.update { it.copy(token = token, submit = ActionState.Idle) }
     }
 
-    override fun onHostChange(host: String) {
-        _state.update { it.copy(host = host, submit = ActionState.Idle) }
-    }
-
     override fun signIn() {
         val current = _state.value
         if (!current.canSubmit) return
         _state.update { it.copy(submit = ActionState.Running) }
         viewModelScope.launch {
-            when (val result = session.signInWithToken(current.token, current.host)) {
+            when (val result = session.signInWithToken(current.token)) {
                 is Outcome.Ok -> {
                     RostrumLog.i(TAG, "token_sign_in", "login" to result.value.login)
                     _state.update { it.copy(token = "", submit = ActionState.Idle) }

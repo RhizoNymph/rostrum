@@ -1,32 +1,19 @@
 package io.github.rhizonymph.rostrum.ui.pr.conversation
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import io.github.rhizonymph.rostrum.data.model.CodeSegment
 import io.github.rhizonymph.rostrum.data.model.ColorRole
-import io.github.rhizonymph.rostrum.data.model.DiffLineView
-import io.github.rhizonymph.rostrum.data.model.LineKind
 import io.github.rhizonymph.rostrum.data.model.ReviewThreadView
 import io.github.rhizonymph.rostrum.ui.components.Avatar
 import io.github.rhizonymph.rostrum.ui.components.CardDivider
@@ -87,10 +74,6 @@ fun ThreadCard(
             }
         }
         CardDivider()
-        if (thread.excerpt.isNotEmpty()) {
-            CodeExcerpt(thread.excerpt)
-            CardDivider()
-        }
         Column(
             Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 4.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -131,49 +114,5 @@ fun ThreadCard(
                 TextPillButton("Reply…", onClick = { actions.onStart(thread.id) }, modifier = Modifier.padding(start = 16.dp))
             }
         }
-    }
-}
-
-/** Diff lines on the page colour, with the line number in a gutter. */
-@Composable
-fun CodeExcerpt(lines: List<DiffLineView>, modifier: Modifier = Modifier) {
-    val colors = RostrumTheme.colors
-    Column(modifier.fillMaxWidth().background(colors.bg).padding(vertical = 6.dp)) {
-        lines.forEach { line ->
-            val tint = when (line.kind) {
-                LineKind.Added -> colors.success.copy(alpha = 0.10f)
-                LineKind.Removed -> colors.danger.copy(alpha = 0.10f)
-                LineKind.Context -> Color.Transparent
-            }
-            Row(Modifier.fillMaxWidth().height(20.dp).background(tint), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    (line.newLine ?: line.oldLine)?.toString().orEmpty(),
-                    style = RostrumText.diffLine,
-                    color = colors.textSubtle,
-                    textAlign = TextAlign.End,
-                    modifier = Modifier.width(36.dp).padding(end = 10.dp),
-                )
-                Text(
-                    codeText(line.segments, colors.text),
-                    style = RostrumText.diffLine,
-                    maxLines = 1,
-                    softWrap = false,
-                    overflow = TextOverflow.Clip,
-                )
-            }
-        }
-    }
-}
-
-/** Syntax-coloured segments as one styled line. */
-fun codeText(segments: List<CodeSegment>, fallback: Color): AnnotatedString = buildAnnotatedString {
-    segments.forEach { segment ->
-        withStyle(
-            SpanStyle(
-                color = if (segment.argb == 0) fallback else Color(segment.argb),
-                fontWeight = if (segment.bold) FontWeight.SemiBold else null,
-                fontStyle = if (segment.italic) FontStyle.Italic else null,
-            ),
-        ) { append(segment.text) }
     }
 }

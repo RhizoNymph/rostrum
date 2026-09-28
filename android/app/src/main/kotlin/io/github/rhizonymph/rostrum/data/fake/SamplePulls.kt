@@ -1,8 +1,6 @@
 package io.github.rhizonymph.rostrum.data.fake
 
 import io.github.rhizonymph.rostrum.data.model.CheckState
-import io.github.rhizonymph.rostrum.data.model.Chip
-import io.github.rhizonymph.rostrum.data.model.ColorRole
 import io.github.rhizonymph.rostrum.data.model.LabelView
 import io.github.rhizonymph.rostrum.data.model.MergeStatus
 import io.github.rhizonymph.rostrum.data.model.ReviewDecision
@@ -60,7 +58,6 @@ internal object SamplePulls {
                 behind = 4, ahead = 3, labels = listOf("diff_review"),
                 additions = 900, deletions = 9, changedFiles = 7, comments = 3,
                 reviewers = listOf(VIEWER), headRef = "feat/diff-overview", headSha = DIFF_OVERVIEW_SHA,
-                localChips = listOf(Chip("handed off", ColorRole.Accent, "Rebase stopped on conflicts; handed to tmux")),
             ),
             FakePull(
                 repo = ROSTRUM, number = 9,
@@ -70,7 +67,6 @@ internal object SamplePulls {
                 behind = 3, ahead = 5, labels = listOf("enhancement"),
                 additions = 1737, deletions = 97, changedFiles = 14, comments = 1,
                 reviewers = listOf("ada-lin"), headRef = "feat/author-filter", headSha = "e7d20b4a1c9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d",
-                localChips = listOf(Chip("↑2 unpushed", ColorRole.Neutral, "2 local commits not on origin")),
             ),
             FakePull(
                 repo = ROSTRUM, number = 11,

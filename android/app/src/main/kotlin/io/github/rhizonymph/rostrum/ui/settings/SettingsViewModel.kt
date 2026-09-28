@@ -51,7 +51,7 @@ object NoSettingsActions : SettingsActions {
 
 /**
  * The account, the watched repositories, the desktop row and the sync
- * settings. Reloads whenever the session's desktop or GitHub host changes, so
+ * settings. Reloads whenever the session's desktop or sign-in changes, so
  * unpairing from the Desktop tab shows here at once.
  *
  * @param onNotificationSettingsChanged keeps the background check's schedule
@@ -77,9 +77,9 @@ class SettingsViewModel(
         }
     }
 
-    private fun SessionState.sessionKey(): Pair<DesktopLink?, String?> {
+    private fun SessionState.sessionKey(): Pair<DesktopLink?, Boolean> {
         val ready = this as? SessionState.Ready
-        return ready?.desktop to (ready?.github as? GitHubAuth.SignedIn)?.host
+        return ready?.desktop to (ready?.github is GitHubAuth.SignedIn)
     }
 
     override fun retry() {
@@ -105,7 +105,7 @@ class SettingsViewModel(
             is Outcome.Ok -> outcome.value
         }
         val ready = session.state.value as? SessionState.Ready
-        val host = (ready?.github as? GitHubAuth.SignedIn)?.host ?: RostrumBackend.GITHUB_COM
+        val host = RostrumBackend.GITHUB_COM
         val viewer = when (val outcome = backend.viewer()) {
             is Outcome.Ok -> AccountViewer.Known(outcome.value.login)
             is Outcome.Err -> AccountViewer.Unknown(outcome.error)

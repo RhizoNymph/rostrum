@@ -155,11 +155,11 @@ class FakeRostrumBackendTest {
     @Nested
     inner class PullRequests {
         @Test
-        fun `the sample conversation has its description, thread and push`() = runTest {
+        fun `the sample conversation has its description, thread and checks`() = runTest {
             val detail = testBackend().pullDetail(diffOverview).orFail()
             assertInstanceOf(TimelineKind.Description::class.java, detail.timeline.first().kind)
             assertEquals(1, detail.unresolvedThreads)
-            assertEquals(2, detail.threads.single().excerpt.size)
+            assertEquals(2, detail.threads.single().comments.size)
             assertEquals(7, detail.checks.size)
             assertEquals(MergeStatus.Blocked, detail.header.merge.status)
             assertTrue(detail.header.merge.blocksMerge)
@@ -336,7 +336,7 @@ class FakeRostrumBackendTest {
     @Nested
     inner class Desktop {
         @Test
-        fun `a pairing link parses into a preview`() {
+        fun `a pairing link parses into a preview`() = runTest {
             val preview = testBackend().parsePairingLink(
                 "rostrum://pair?name=nymph-desk&hosts=192.168.1.24,nymph-desk.local&port=8485&fp=4f2a91c07e3bd518&code=WDJB-MJHT",
             ).orFail()
@@ -347,7 +347,7 @@ class FakeRostrumBackendTest {
         }
 
         @Test
-        fun `other links are refused`() {
+        fun `other links are refused`() = runTest {
             val backend = testBackend()
             assertInstanceOf(Outcome.Err::class.java, backend.parsePairingLink("https://example.com/pair?code=x"))
             assertInstanceOf(Outcome.Err::class.java, backend.parsePairingLink("rostrum://pair?name=x"))

@@ -43,8 +43,6 @@ internal data class FakePull(
     val headRef: String,
     val baseRef: String = "main",
     val headSha: String,
-    /** Chips the paired desktop contributes: `handed off`, `↑2 unpushed`. */
-    val localChips: List<Chip> = emptyList(),
 ) {
     val ref: PrRef get() = PrRef(repo, number)
 
@@ -92,7 +90,6 @@ internal data class FakePull(
         isYours = viewer != null && author.equals(viewer, ignoreCase = true),
         headRef = headRef,
         baseRef = baseRef,
-        localChips = localChips,
     )
 
     fun header(viewer: String?, labelsByName: Map<String, LabelView>): PullHeader = PullHeader(

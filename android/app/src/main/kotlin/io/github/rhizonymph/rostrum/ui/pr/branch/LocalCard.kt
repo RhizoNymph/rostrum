@@ -202,22 +202,6 @@ private fun InProgressBox(branch: LocalBranch, aborting: Boolean, onAbort: () ->
             }
         }
         branch.handoff?.takeIf { it.running }?.let { CopyCommandRow(it.attachCommand, wrap = true) }
-        if (branch.conflictedFiles.isNotEmpty()) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                val count = branch.conflictedFiles.size
-                Text(
-                    "$count conflicted file${if (count == 1) "" else "s"}",
-                    style = RostrumText.caption.copy(fontWeight = FontWeight.SemiBold),
-                    color = colors.textMuted,
-                )
-                branch.conflictedFiles.forEach { path ->
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StatusDot(colors.warning, size = 6.dp)
-                        Text(path, style = RostrumText.mono12, color = colors.textSecondary)
-                    }
-                }
-            }
-        }
         if (inProgress.abortable) {
             DangerOutlinedButton("Abort $noun", onClick = { confirmAbort = true }, busy = aborting)
         }

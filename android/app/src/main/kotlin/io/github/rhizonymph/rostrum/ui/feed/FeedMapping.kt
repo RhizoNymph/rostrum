@@ -18,7 +18,7 @@ import java.time.Instant
  */
 
 /** An icon a row chip leads with. */
-enum class ChipIcon { Check, Desktop }
+enum class ChipIcon { Check }
 
 /** One chip under a feed row's meta line. */
 data class RowChip(
@@ -31,7 +31,7 @@ data class RowChip(
 
 /**
  * The chips of a feed row, in the mockup's order: merge trouble, your review,
- * the review verdict, distance from base, then what the desktop knows.
+ * the review verdict, then distance from base.
  * Drafts are marked in the meta line instead.
  */
 fun rowChips(pr: PrSummary): List<RowChip> = buildList {
@@ -42,10 +42,6 @@ fun rowChips(pr: PrSummary): List<RowChip> = buildList {
         add(RowChip(it.text, it.role, icon = icon, description = it.tooltip))
     }
     pr.behindChip?.let { add(RowChip(it.text, it.role, mono = true, description = it.tooltip)) }
-    pr.localChips.forEach {
-        val icon = if (it.role == ColorRole.Neutral) ChipIcon.Desktop else null
-        add(RowChip(it.text, it.role, icon = icon, description = it.tooltip))
-    }
 }
 
 /** `you` for your own pull requests, the author's login otherwise. */

@@ -160,22 +160,11 @@ private fun TokenForm(state: SignInUiState, actions: SignInActions) {
             isError = failure != null,
             errorText = failure?.describe(),
             visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false, imeAction = ImeAction.Next),
-        )
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        FieldLabel("Host")
-        RostrumTextField(
-            value = state.host,
-            onValueChange = actions::onHostChange,
-            accessibilityLabel = "GitHub host",
-            mono = true,
-            minHeight = 56.dp,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false, imeAction = ImeAction.Done),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false, imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { actions.signIn() }),
         )
         Text(
-            "Change for GitHub Enterprise Server",
+            "A github.com token. GitHub Enterprise isn't supported yet.",
             style = RostrumText.caption,
             color = colors.textSubtle,
             modifier = Modifier.padding(horizontal = 4.dp),

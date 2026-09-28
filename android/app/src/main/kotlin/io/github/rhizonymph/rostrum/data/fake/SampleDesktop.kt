@@ -40,7 +40,6 @@ internal object SampleDesktop {
         ),
         handlerConfigured = true,
         autostash = false,
-        worktrees = 9,
     )
 
     fun attach(session: String) = "tmux attach -t =$session"
@@ -57,11 +56,6 @@ internal object SampleDesktop {
                 blocker = null,
                 inProgress = InProgress(InProgressKind.Rebase, "Rebase onto main stopped on 3 conflicts", abortable = true),
                 handoff = HandoffState(HANDOFF_SESSION, running = true, attachCommand = attach(HANDOFF_SESSION)),
-                conflictedFiles = listOf(
-                    "crates/rostrum/src/detail.rs",
-                    "crates/rostrum/src/detail/files.rs",
-                    "docs/OVERVIEW.md",
-                ),
             ),
         ),
         PrRef(SamplePulls.ROSTRUM, 9) to LocalStatus.CheckedOut(
@@ -74,7 +68,6 @@ internal object SampleDesktop {
                 blocker = "worktree has uncommitted changes",
                 inProgress = null,
                 handoff = null,
-                conflictedFiles = emptyList(),
             ),
         ),
         PrRef(SamplePulls.ROSTRUM, 11) to LocalStatus.NotCheckedOut,
@@ -87,7 +80,7 @@ internal object SampleDesktop {
     )
 
     private fun clean(worktree: String, branch: String, behind: Int) = LocalStatus.CheckedOut(
-        LocalBranch(worktree, branch, ahead = 0, behind = behind, fetched = true, blocker = null, inProgress = null, handoff = null, conflictedFiles = emptyList()),
+        LocalBranch(worktree, branch, ahead = 0, behind = behind, fetched = true, blocker = null, inProgress = null, handoff = null),
     )
 
     fun result(outcome: JobOutcome, branch: String): JobResult = when (outcome) {

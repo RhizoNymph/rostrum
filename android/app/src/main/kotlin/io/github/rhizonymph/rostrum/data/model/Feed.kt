@@ -124,11 +124,6 @@ data class PrSummary(
     val isYours: Boolean,
     val headRef: String,
     val baseRef: String,
-    /**
-     * Chips from the paired desktop's clone: `handed off`, `↑2 unpushed`.
-     * Not yet in `rostrum-ffi`'s `PrSummary`; empty until the core adds them.
-     */
-    val localChips: List<Chip> = emptyList(),
 ) {
     val ref: PrRef get() = PrRef(repo, number)
 }

@@ -110,8 +110,6 @@ sealed interface TimelineEvent {
     data object ReadyForReview : TimelineEvent
     data object ConvertedToDraft : TimelineEvent
     data object ForcePushed : TimelineEvent
-    /** Commits pushed, as short SHAs. Not yet in `rostrum-ffi` (arrives as Other). */
-    data class Pushed(val commits: List<String>) : TimelineEvent
     data class ReviewRequested(val reviewer: String) : TimelineEvent
     data class Assigned(val assignee: String) : TimelineEvent
     data class Labeled(val label: String) : TimelineEvent
@@ -135,11 +133,6 @@ data class ReviewThreadView(
     val comments: List<ThreadCommentView>,
     /** Whether replyToThread can reply here. */
     val canReply: Boolean,
-    /**
-     * The diff lines the thread is anchored to, for showing it outside the
-     * diff (the Conversation tab). Not yet in `rostrum-ffi`; may be empty.
-     */
-    val excerpt: List<DiffLineView> = emptyList(),
 )
 
 data class ThreadCommentView(

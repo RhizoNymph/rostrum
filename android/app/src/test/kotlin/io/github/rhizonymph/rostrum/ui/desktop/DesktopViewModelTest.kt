@@ -88,7 +88,7 @@ class DesktopViewModelTest {
     fun `aborting a handoff removes it`() = runTest(main.dispatcher) {
         val (vm, _) = viewModel()
         val session = (vm.content().handoffs as UiState.Loaded).data.single()
-        val message = backgroundScope.launch { assertEquals("Aborted the rebase in feat/diff-overview", vm.messages.flow.first()) }
+        val message = backgroundScope.launch { assertEquals("Aborted the stopped operation in feat/diff-overview", vm.messages.flow.first()) }
         vm.abort(session)
         assertTrue(session.session in vm.content().aborting)
         advanceUntilIdle()

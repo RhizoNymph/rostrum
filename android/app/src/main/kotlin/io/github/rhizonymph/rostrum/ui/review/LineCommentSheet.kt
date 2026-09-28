@@ -35,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import io.github.rhizonymph.rostrum.data.Outcome
 import io.github.rhizonymph.rostrum.data.describe
 import io.github.rhizonymph.rostrum.data.model.CommentAnchor
 import io.github.rhizonymph.rostrum.data.model.Side
@@ -180,7 +181,10 @@ private fun PreviewBox(state: ComposerState) {
             .border(1.dp, colors.borderStrong, shape)
             .padding(12.dp),
     ) {
-        if (state.preview.isEmpty()) {
+        val error = state.previewError
+        if (error != null) {
+            Text("Couldn't render the preview: $error", style = RostrumText.body, color = colors.dangerText)
+        } else if (state.preview.isEmpty()) {
             Text("Nothing to preview", style = RostrumText.body, color = colors.textSubtle)
         } else {
             MarkdownBlocks(state.preview)
@@ -196,7 +200,7 @@ private fun NewActions(state: ComposerState, actions: ComposerActions) {
         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TextPillButton("Comment now", actions.onCommentNow, enabled = state.canSend, style = RostrumText.button)
+        TextPillButton("Comment now", actions.onCommentNow, enabled = state.canCommentNow, style = RostrumText.button)
         PrimaryButton(
             text = "Add to review",
             onClick = actions.onAddToReview,
@@ -238,7 +242,7 @@ private fun LineCommentPreview() {
     val state = ComposerState(
         mode = ComposerMode.New(CommentTarget(CommentAnchor(path, 56, Side.Right), CommentAnchor(path, 53, Side.Right))),
         text = text,
-        preview = PreviewData.backend().renderMarkdown(text),
+        preview = (PreviewData.backend().renderMarkdown(text, "RhizoNymph/rostrum") as? Outcome.Ok)?.value.orEmpty(),
         otherPending = 2,
         stale = false,
     )

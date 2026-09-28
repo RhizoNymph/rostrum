@@ -40,6 +40,7 @@ internal class FakeDesktop(
     private val clock: Clock,
     private val started: Instant,
     paired: Boolean,
+    private val gitHubHost: String,
     private val pulls: MutableMap<PrRef, FakePull>,
     private val onFeedChanged: () -> Unit,
     /** The desktop handed over a GitHub token: use it if none is set. */
@@ -93,7 +94,7 @@ internal class FakeDesktop(
 
     private fun completePairing(machine: String, hosts: List<String>): PairingResult {
         remote = pairedStatus(hosts)
-        val github = DesktopGitHubToken(DESKTOP_TOKEN, "gh auth token", "github.com")
+        val github = DesktopGitHubToken(DESKTOP_TOKEN, "gh auth token", gitHubHost)
         adoptTokenIfSignedOut(github.token)
         return PairingResult(
             machine = SampleDesktop.machine().copy(name = machine),
@@ -208,7 +209,6 @@ internal class FakeDesktop(
                             abortable = true,
                         ),
                         handoff = HandoffState(outcome.session, true, outcome.attachCommand),
-                        conflictedFiles = listOf("src/lib.rs"),
                     )
                     else -> branch
                 },
@@ -226,8 +226,7 @@ internal class FakeDesktop(
             if (branch?.inProgress == null || !branch.inProgress.abortable) {
                 Outcome.Err(BackendError.RemoteApi(RemoteErrorCode.BadRequest, "Nothing to abort in this worktree"))
             } else {
-                local[pr] = LocalStatus.CheckedOut(branch.copy(inProgress = null, handoff = null, conflictedFiles = emptyList()))
-                pulls[pr]?.let { pull -> pulls[pr] = pull.copy(localChips = pull.localChips.filterNot { it.text == "handed off" }) }
+                local[pr] = LocalStatus.CheckedOut(branch.copy(inProgress = null, handoff = null))
                 onFeedChanged()
                 Outcome.Ok(Unit)
             }
@@ -294,7 +293,6 @@ internal class FakeDesktop(
                 local.mapNotNull { (pr, status) ->
                     val branch = (status as? LocalStatus.CheckedOut)?.branch ?: return@mapNotNull null
                     val handoff = branch.handoff?.takeIf { it.running } ?: return@mapNotNull null
-                    val conflicts = branch.conflictedFiles.size
                     HandoffSession(
                         session = handoff.session,
                         repo = pr.repo,
@@ -303,8 +301,6 @@ internal class FakeDesktop(
                         worktree = branch.worktree,
                         startedAt = started.minus(Duration.ofMinutes(3)),
                         attachCommand = handoff.attachCommand,
-                        description = "Rebase onto ${pulls[pr]?.baseRef ?: "main"} stopped · $conflicts conflicted file${if (conflicts == 1) "" else "s"}",
-                        abortLabel = if (branch.inProgress?.abortable == true) "rebase" else null,
                     )
                 },
             )
@@ -314,7 +310,7 @@ internal class FakeDesktop(
     fun refreshGitHubTokenFromDesktop(): Outcome<DesktopGitHubToken> =
         run {
             withRemote {
-                val github = DesktopGitHubToken(DESKTOP_TOKEN, "gh auth token", "github.com")
+                val github = DesktopGitHubToken(DESKTOP_TOKEN, "gh auth token", gitHubHost)
                 replaceToken(github.token)
                 Outcome.Ok(github)
             }

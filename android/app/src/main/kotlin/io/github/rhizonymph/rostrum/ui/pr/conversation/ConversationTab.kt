@@ -12,7 +12,6 @@ import io.github.rhizonymph.rostrum.data.model.PullDetail
 import io.github.rhizonymph.rostrum.data.model.ReviewState
 import io.github.rhizonymph.rostrum.data.model.ReviewThreadView
 import io.github.rhizonymph.rostrum.data.model.TimelineEntry
-import io.github.rhizonymph.rostrum.data.model.TimelineEvent
 import io.github.rhizonymph.rostrum.data.model.TimelineKind
 import io.github.rhizonymph.rostrum.ui.components.RostrumIcons
 import io.github.rhizonymph.rostrum.ui.format.relativeAge
@@ -70,7 +69,6 @@ private fun LazyListScope.timelineEntry(
                 actor = actor,
                 text = kind.text,
                 age = age,
-                shas = (kind.event as? TimelineEvent.Pushed)?.commits.orEmpty(),
             )
         }
         is TimelineKind.Review -> {

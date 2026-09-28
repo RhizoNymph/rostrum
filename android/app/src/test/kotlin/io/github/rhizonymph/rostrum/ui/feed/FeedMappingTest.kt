@@ -34,18 +34,17 @@ class FeedMappingTest {
     @Nested
     inner class Chips {
         @Test
-        fun `the diff overview row reads Your review, behind, handed off`() {
+        fun `the diff overview row reads Your review, then behind`() {
             val chips = rowChips(pr(10))
-            assertEquals(listOf("Your review", "↓4 main", "handed off"), chips.map { it.text })
-            assertEquals(listOf(ColorRole.Accent, ColorRole.Warning, ColorRole.Accent), chips.map { it.role })
+            assertEquals(listOf("Your review", "↓4 main"), chips.map { it.text })
+            assertEquals(listOf(ColorRole.Accent, ColorRole.Warning), chips.map { it.role })
             assertTrue(chips[1].mono)
         }
 
         @Test
-        fun `a local neutral chip carries the desktop icon`() {
+        fun `a behind chip alone has no icon`() {
             val chips = rowChips(pr(9))
-            assertEquals(listOf("↓3 main", "↑2 unpushed"), chips.map { it.text })
-            assertEquals(ChipIcon.Desktop, chips[1].icon)
+            assertEquals(listOf("↓3 main"), chips.map { it.text })
             assertNull(chips[0].icon)
         }
 

@@ -14,7 +14,6 @@ import io.github.rhizonymph.rostrum.data.secrets.SecretRead
 import io.github.rhizonymph.rostrum.data.secrets.SecretStore
 import io.github.rhizonymph.rostrum.data.secrets.SecretWrite
 import io.github.rhizonymph.rostrum.data.secrets.describe
-import io.github.rhizonymph.rostrum.data.secrets.valueOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -34,7 +33,8 @@ sealed interface GitHubAuth {
     /** [notice] explains an involuntary sign-out (unreadable secret, revoked token). */
     data class SignedOut(val notice: String? = null) : GitHubAuth
 
-    data class SignedIn(val host: String) : GitHubAuth
+    /** A github.com token is set (GitHub Enterprise is not supported). */
+    data object SignedIn : GitHubAuth
 }
 
 sealed interface DesktopLink {
@@ -82,7 +82,6 @@ class SessionRepository(
     }
 
     private suspend fun restoreGitHub(): GitHubAuth {
-        val host = secrets.read(SecretKey.GitHubHost).valueOrNull() ?: RostrumBackend.GITHUB_COM
         return when (val token = secrets.read(SecretKey.GitHubToken)) {
             SecretRead.Absent -> GitHubAuth.SignedOut()
             is SecretRead.Failed -> {
@@ -90,8 +89,8 @@ class SessionRepository(
                 secrets.delete(SecretKey.GitHubToken)
                 GitHubAuth.SignedOut("Your saved sign-in couldn't be read. Sign in again.")
             }
-            is SecretRead.Present -> when (val set = backend.setGitHubToken(token.value, host)) {
-                is Outcome.Ok -> GitHubAuth.SignedIn(host)
+            is SecretRead.Present -> when (val set = backend.setGitHubToken(token.value)) {
+                is Outcome.Ok -> GitHubAuth.SignedIn
                 is Outcome.Err -> {
                     RostrumLog.w(TAG, "github_token_rejected", "error" to set.error::class.simpleName)
                     GitHubAuth.SignedOut("Your saved sign-in couldn't be used. Sign in again.")
@@ -119,25 +118,24 @@ class SessionRepository(
         }
     }
 
-    /** Verify a pasted token with GitHub, then keep it. */
-    suspend fun signInWithToken(token: String, host: String): Outcome<UserRef> {
-        val cleanHost = host.trim().removePrefix("https://").removeSuffix("/").ifEmpty { RostrumBackend.GITHUB_COM }
+    /** Verify a pasted github.com token with GitHub, then keep it. */
+    suspend fun signInWithToken(token: String): Outcome<UserRef> {
         val cleanToken = token.trim()
         if (cleanToken.isEmpty()) return Outcome.Err(BackendError.InvalidInput("Paste a token first"))
-        when (val set = backend.setGitHubToken(cleanToken, cleanHost)) {
+        when (val set = backend.setGitHubToken(cleanToken)) {
             is Outcome.Err -> return set
             is Outcome.Ok -> Unit
         }
         return when (val viewer = backend.viewer()) {
             is Outcome.Err -> {
                 backend.setGitHubToken(null)
-                RostrumLog.i(TAG, "sign_in_rejected", "error" to viewer.error::class.simpleName, "host" to cleanHost)
+                RostrumLog.i(TAG, "sign_in_rejected", "error" to viewer.error::class.simpleName)
                 viewer
             }
             is Outcome.Ok -> {
-                persistGitHub(cleanToken, cleanHost)?.let { return Outcome.Err(it) }
-                setGitHub(GitHubAuth.SignedIn(cleanHost))
-                RostrumLog.i(TAG, "signed_in", "login" to viewer.value.login, "host" to cleanHost)
+                persistGitHub(cleanToken)?.let { return Outcome.Err(it) }
+                setGitHub(GitHubAuth.SignedIn)
+                RostrumLog.i(TAG, "signed_in", "login" to viewer.value.login)
                 viewer
             }
         }
@@ -167,9 +165,15 @@ class SessionRepository(
         val paired = (remote as? Outcome.Ok)?.value as? RemoteStatus.Paired
         val github = result.github
         val current = (_state.value as? SessionState.Ready)?.github
+        var notice: String? = null
         if (github != null && current !is GitHubAuth.SignedIn) {
-            adoptDesktopToken(github)?.let { return Outcome.Err(it) }
+            when (val adopted = adoptDesktopToken(github)) {
+                null -> Unit
+                is BackendError.InvalidInput -> notice = adopted.reason
+                else -> return Outcome.Err(adopted)
+            }
         }
+        if (notice != null) setGitHub(GitHubAuth.SignedOut(notice))
         _state.update { state ->
             val ready = state as? SessionState.Ready ?: SessionState.Ready(GitHubAuth.SignedOut(), DesktopLink.NotPaired)
             ready.copy(desktop = paired?.let { DesktopLink.Paired(it) } ?: DesktopLink.NotPaired)
@@ -184,10 +188,24 @@ class SessionRepository(
         is Outcome.Ok -> adoptDesktopToken(fetched.value)?.let { Outcome.Err(it) } ?: Outcome.Ok(Unit)
     }
 
+    /**
+     * Use a token the desktop handed over. The core talks to github.com only,
+     * so a token for another host is refused with an [BackendError.InvalidInput]
+     * explaining why, and nothing is stored.
+     */
     private suspend fun adoptDesktopToken(github: DesktopGitHubToken): BackendError? {
-        backend.setGitHubToken(github.token, github.host)
-        persistGitHub(github.token, github.host)?.let { return it }
-        setGitHub(GitHubAuth.SignedIn(github.host))
+        if (!github.host.equals(RostrumBackend.GITHUB_COM, ignoreCase = true)) {
+            RostrumLog.w(TAG, "desktop_token_other_host", "host" to github.host)
+            return BackendError.InvalidInput(
+                "Your desktop signs in to ${github.host}; Rostrum on Android supports github.com only. Paste a github.com token instead.",
+            )
+        }
+        when (val set = backend.setGitHubToken(github.token)) {
+            is Outcome.Err -> return set.error
+            is Outcome.Ok -> Unit
+        }
+        persistGitHub(github.token)?.let { return it }
+        setGitHub(GitHubAuth.SignedIn)
         return null
     }
 
@@ -195,7 +213,6 @@ class SessionRepository(
     suspend fun signOut(notice: String? = null) {
         backend.setGitHubToken(null)
         secrets.delete(SecretKey.GitHubToken)
-        secrets.delete(SecretKey.GitHubHost)
         setGitHub(GitHubAuth.SignedOut(notice))
         RostrumLog.i(TAG, "signed_out", "involuntary" to (notice != null))
     }
@@ -227,11 +244,8 @@ class SessionRepository(
         secrets.delete(SecretKey.DeviceToken)
     }
 
-    private suspend fun persistGitHub(token: String, host: String): BackendError? {
-        val failed = listOf(
-            secrets.write(SecretKey.GitHubToken, token),
-            secrets.write(SecretKey.GitHubHost, host),
-        ).filterIsInstance<SecretWrite.Failed>().firstOrNull() ?: return null
+    private suspend fun persistGitHub(token: String): BackendError? {
+        val failed = secrets.write(SecretKey.GitHubToken, token) as? SecretWrite.Failed ?: return null
         RostrumLog.e(TAG, "github_token_not_saved", "reason" to failed.error.describe())
         return BackendError.Storage(failed.error.describe())
     }

@@ -47,10 +47,9 @@ interface RostrumBackend {
 
     /**
      * Hand in the GitHub token, or `null` to sign out. Held in memory only.
-     * [host] is github.com or a GitHub Enterprise Server host; `rostrum-ffi`'s
-     * `set_github_token` does not take one yet.
+     * The core talks to github.com only; GitHub Enterprise is not supported.
      */
-    suspend fun setGitHubToken(token: String?, host: String = GITHUB_COM): Outcome<GitHubStatus>
+    suspend fun setGitHubToken(token: String?): Outcome<GitHubStatus>
 
     /** The token's current status, without a network request. */
     suspend fun githubStatus(): GitHubStatus
@@ -137,11 +136,11 @@ interface RostrumBackend {
     suspend fun addComment(pr: PrRef, body: String): Outcome<Unit>
 
     /**
-     * Render markdown the way the timeline shows it, for the composer's
-     * Preview. Pure and synchronous. Not yet exported by `rostrum-ffi`
-     * (`rostrum-md` already does the work).
+     * Render markdown exactly as the timeline will show it, for the
+     * composer's Preview. [repo] (`owner/name`) resolves `#123` shorthand.
+     * Synchronous and cheap for comment-sized text.
      */
-    fun renderMarkdown(source: String): List<MdBlock>
+    fun renderMarkdown(source: String, repo: String): Outcome<List<MdBlock>>
 
     /** Reply into an inline thread. */
     suspend fun replyToThread(pr: PrRef, threadId: String, body: String): Outcome<Unit>
@@ -206,7 +205,7 @@ interface RostrumBackend {
     // --- desktop -------------------------------------------------------------
 
     /** Read a `rostrum://pair?…` link without contacting anything. */
-    fun parsePairingLink(uri: String): Outcome<PairingPreview>
+    suspend fun parsePairingLink(uri: String): Outcome<PairingPreview>
 
     /** Pair using a link. Persist the result's secrets. */
     suspend fun pairWithLink(uri: String, deviceName: String): Outcome<PairingResult>

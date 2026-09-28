@@ -27,7 +27,6 @@ import io.github.rhizonymph.rostrum.data.model.TimelineEvent
 import io.github.rhizonymph.rostrum.ui.components.Avatar
 import io.github.rhizonymph.rostrum.ui.components.CardShape
 import io.github.rhizonymph.rostrum.ui.components.RostrumIcons
-import io.github.rhizonymph.rostrum.ui.components.ShaTag
 import io.github.rhizonymph.rostrum.ui.components.StatusChip
 import io.github.rhizonymph.rostrum.ui.components.markdown.MarkdownBlocks
 import io.github.rhizonymph.rostrum.ui.format.relativeAge
@@ -79,7 +78,6 @@ fun EventRow(
     text: String,
     age: String,
     modifier: Modifier = Modifier,
-    shas: List<String> = emptyList(),
     chip: Chip? = null,
 ) {
     val colors = RostrumTheme.colors
@@ -104,7 +102,6 @@ fun EventRow(
             modifier = Modifier.weight(1f),
         )
         if (chip != null) StatusChip(chip)
-        shas.forEach { ShaTag(it) }
     }
 }
 
@@ -116,7 +113,7 @@ fun eventIcon(event: TimelineEvent): ImageVector = when (event) {
     TimelineEvent.ReadyForReview, is TimelineEvent.ReviewRequested -> RostrumIcons.Eye
     TimelineEvent.ConvertedToDraft, is TimelineEvent.Renamed -> RostrumIcons.Edit
     TimelineEvent.ForcePushed -> RostrumIcons.Rebase
-    is TimelineEvent.Pushed, is TimelineEvent.Other -> RostrumIcons.Commit
+    is TimelineEvent.Other -> RostrumIcons.Commit
     is TimelineEvent.Assigned, is TimelineEvent.Labeled -> RostrumIcons.Plus
     is TimelineEvent.Unlabeled -> RostrumIcons.Close
 }

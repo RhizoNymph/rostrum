@@ -133,7 +133,9 @@ private fun HandoffCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Text(session.description, style = RostrumText.meta, color = colors.textSecondary)
+                    session.worktree?.let {
+                        Text(it, style = RostrumText.mono12, color = colors.textSecondary, maxLines = 1, overflow = TextOverflow.StartEllipsis)
+                    }
                     val meta = handoffMeta(session, now)
                     if (meta.isNotEmpty()) Text(meta, style = RostrumText.caption, color = colors.textSubtle)
                 }
@@ -146,10 +148,9 @@ private fun HandoffCard(
                     modifier = Modifier.weight(1f),
                     enabled = session.pr != null,
                 )
-                val abortLabel = session.abortLabel
-                if (abortLabel != null && session.pr != null) {
+                if (session.pr != null) {
                     DangerOutlinedButton(
-                        "Abort $abortLabel",
+                        "Abort",
                         { confirmAbort = true },
                         modifier = Modifier.weight(1f),
                         busy = aborting,
@@ -159,12 +160,11 @@ private fun HandoffCard(
         }
     }
     if (confirmAbort) {
-        val label = session.abortLabel ?: "operation"
         ConfirmDialog(
-            title = "Abort the $label?",
-            body = "The $label of ${session.headRef ?: "this branch"} on the desktop stops and the worktree goes back " +
-                "to how it was before it started. The tmux session is left for you to close.",
-            confirmLabel = "Abort $label",
+            title = "Abort the stopped operation?",
+            body = "The rebase or merge stopped in ${session.worktree ?: session.headRef ?: "this worktree"} on the desktop " +
+                "is aborted and the worktree goes back to how it was before it started. The tmux session is left for you to close.",
+            confirmLabel = "Abort",
             destructive = true,
             onConfirm = {
                 confirmAbort = false

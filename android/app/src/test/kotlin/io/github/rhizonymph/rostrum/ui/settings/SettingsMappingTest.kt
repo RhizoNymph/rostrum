@@ -18,7 +18,7 @@ class SettingsMappingTest {
     private val machine = MachineInfo(
         name = "nymph-desk", version = "0.1.0", apiVersion = 1,
         clones = listOf(CloneInfo("a/one", "~/Code/one")),
-        handlerConfigured = true, autostash = false, worktrees = 3,
+        handlerConfigured = true, autostash = false,
     )
 
     private fun feed(shown: List<String>, hideEmpty: Boolean = true) = FeedSnapshot(

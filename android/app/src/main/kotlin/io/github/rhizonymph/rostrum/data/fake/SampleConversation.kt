@@ -4,7 +4,6 @@ import io.github.rhizonymph.rostrum.data.model.CheckRunView
 import io.github.rhizonymph.rostrum.data.model.CheckState
 import io.github.rhizonymph.rostrum.data.model.Chip
 import io.github.rhizonymph.rostrum.data.model.ColorRole
-import io.github.rhizonymph.rostrum.data.model.DiffRow
 import io.github.rhizonymph.rostrum.data.model.ReviewState
 import io.github.rhizonymph.rostrum.data.model.ReviewThreadView
 import io.github.rhizonymph.rostrum.data.model.Side
@@ -31,9 +30,6 @@ internal object SampleConversation {
         val mkowal = UserRef("mkowal")
         val files = SampleFiles.diffOverview
         val overviewRs = files.first { it.path == "crates/rostrum-diff/src/overview.rs" }
-        val excerpt = FakeDiffs.rows(overviewRs, emptyList(), emptyList())
-            .mapNotNull { (it as? DiffRow.Line)?.line }
-            .filter { it.newLine in 60..61 }
         val thread = ReviewThreadView(
             id = "thread-1",
             path = overviewRs.path,
@@ -54,7 +50,6 @@ internal object SampleConversation {
                 ),
             ),
             canReply = true,
-            excerpt = excerpt,
         )
         val timeline = mutableListOf(
             TimelineEntry(
@@ -77,7 +72,7 @@ internal object SampleConversation {
             ),
             TimelineEntry(
                 id = "ev-pushed", author = adaLin, createdAt = ago(40),
-                kind = TimelineKind.Event(TimelineEvent.Pushed(listOf("fd16b9e", "136c158")), "pushed 2 commits"),
+                kind = TimelineKind.Event(TimelineEvent.Other("committed"), "pushed 2 commits"),
             ),
         )
         return FakeConversation(timeline, mutableListOf(thread), diffOverviewChecks, files)

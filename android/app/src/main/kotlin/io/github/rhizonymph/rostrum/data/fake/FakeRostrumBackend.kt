@@ -68,12 +68,14 @@ import java.time.Duration
  * @param latency simulated round-trip time; zero in tests.
  * @param signedIn start with a GitHub token already handed in.
  * @param paired start with nymph-desk set as the session's desktop.
+ * @param desktopGitHubHost the host of the GitHub token the desktop hands over.
  */
 class FakeRostrumBackend(
     private val clock: Clock = Clock.systemUTC(),
     private val latency: Duration = Duration.ZERO,
     signedIn: Boolean = false,
     paired: Boolean = false,
+    desktopGitHubHost: String = "github.com",
 ) : RostrumBackend {
     private val mutex = Mutex()
     private val started = clock.instant()
@@ -112,6 +114,7 @@ class FakeRostrumBackend(
         clock = clock,
         started = started,
         paired = paired,
+        gitHubHost = desktopGitHubHost,
         pulls = pulls,
         onFeedChanged = { emitFeed() },
         adoptTokenIfSignedOut = { if (token == null) token = it },
@@ -164,7 +167,7 @@ class FakeRostrumBackend(
 
     // --- session ---------------------------------------------------------------
 
-    override suspend fun setGitHubToken(token: String?, host: String): Outcome<GitHubStatus> = call(FakeCall.SetGitHubToken) {
+    override suspend fun setGitHubToken(token: String?): Outcome<GitHubStatus> = call(FakeCall.SetGitHubToken) {
         this.token = token?.takeIf { it.isNotBlank() }?.trim()
         tokenVerified = false
         Outcome.Ok(if (this.token == null) GitHubStatus.NoToken else GitHubStatus.Unverified)
@@ -428,7 +431,7 @@ class FakeRostrumBackend(
         }
     }
 
-    override fun renderMarkdown(source: String): List<MdBlock> = FakeMarkdown.parse(source)
+    override fun renderMarkdown(source: String, repo: String): Outcome<List<MdBlock>> = Outcome.Ok(FakeMarkdown.parse(source))
 
     override suspend fun replyToThread(pr: PrRef, threadId: String, body: String): Outcome<Unit> =
         call(FakeCall.ReplyToThread) {
@@ -528,7 +531,7 @@ class FakeRostrumBackend(
                         )
                         when (method) {
                             BranchUpdateMethod.Merge ->
-                                event(pull, TimelineEvent.Pushed(listOf(newHead.take(7))), "merged ${pull.baseRef} into ${pull.headRef}")
+                                event(pull, TimelineEvent.Other("merged"), "merged ${pull.baseRef} into ${pull.headRef}")
                             BranchUpdateMethod.Rebase ->
                                 event(pull, TimelineEvent.ForcePushed, "rebased ${pull.headRef} onto ${pull.baseRef}")
                         }
@@ -726,7 +729,8 @@ class FakeRostrumBackend(
 
     // --- desktop (see FakeDesktop) ------------------------------------------------
 
-    override fun parsePairingLink(uri: String): Outcome<PairingPreview> = desktop.parsePairingLink(uri)
+    override suspend fun parsePairingLink(uri: String): Outcome<PairingPreview> =
+        call(FakeCall.ParsePairingLink) { desktop.parsePairingLink(uri) }
 
     override suspend fun pairWithLink(uri: String, deviceName: String): Outcome<PairingResult> =
         call(FakeCall.PairWithLink) { desktop.pairWithLink(uri, deviceName) }

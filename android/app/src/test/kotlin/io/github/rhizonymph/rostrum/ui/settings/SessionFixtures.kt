@@ -13,7 +13,6 @@ fun accountSecrets(signedIn: Boolean = true, paired: Boolean = true): InMemorySe
     buildMap {
         if (signedIn) {
             put(SecretKey.GitHubToken, TEST_TOKEN)
-            put(SecretKey.GitHubHost, "github.com")
         }
         if (paired) {
             put(SecretKey.DesktopEndpoint, """{"hosts":["192.168.1.24","nymph-desk.local"],"port":8485}""")

@@ -20,7 +20,7 @@ class ShellViewModelTest {
     val main = MainDispatcherExtension()
 
     private val paired = SessionState.Ready(
-        GitHubAuth.SignedIn("github.com"),
+        GitHubAuth.SignedIn,
         DesktopLink.Paired(RemoteStatus.Paired(listOf("h"), 8485, "4F2A · 91C0 · 7E3B", "h")),
     )
 
