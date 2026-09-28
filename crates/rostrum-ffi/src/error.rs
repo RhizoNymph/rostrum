@@ -40,6 +40,10 @@ pub enum RostrumError {
     #[error("network error: {reason}")]
     Network { reason: String },
 
+    /// No profile has this id: it was removed, or never existed.
+    #[error("there is no profile {id}")]
+    ProfileNotFound { id: String },
+
     /// The pull request is not in the feed or the local cache. Refresh the
     /// feed first.
     #[error("{repo}#{number} is not in the feed")]

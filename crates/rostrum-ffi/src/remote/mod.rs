@@ -76,6 +76,27 @@ impl CoreState {
     }
 }
 
+/// The endpoint and code a `rostrum://pair` link carries.
+pub(crate) fn link_offer(uri: &str) -> Result<(Endpoint, PairingCode), RostrumError> {
+    let offer = PairingOffer::from_uri(uri).map_err(invalid)?;
+    Ok((offer.endpoint, offer.code))
+}
+
+/// The endpoint and code of a desktop typed in by address, pinned to the
+/// fingerprint `probe_desktop` reported.
+pub(crate) fn manual_offer(
+    host: &str,
+    port: u16,
+    fingerprint: &str,
+    code: &str,
+) -> Result<(Endpoint, PairingCode), RostrumError> {
+    let host: Host = host.trim().parse().map_err(invalid)?;
+    let fingerprint = CertFingerprint::from_base64url(fingerprint.trim()).map_err(invalid)?;
+    let endpoint = Endpoint::new(vec![host], port, fingerprint).map_err(invalid)?;
+    let code = PairingCode::parse(code).map_err(invalid)?;
+    Ok((endpoint, code))
+}
+
 fn invalid(error: impl std::fmt::Display) -> RostrumError {
     RostrumError::invalid(error.to_string())
 }
@@ -91,7 +112,7 @@ fn github_token(handover: &GitHubHandover) -> DesktopGitHubToken {
 impl RostrumCore {
     /// Check the desktop speaks this protocol, exchange the code for a device
     /// token, and make the desktop this session's remote.
-    async fn pair(
+    pub(crate) async fn pair(
         &self,
         endpoint: Endpoint,
         code: PairingCode,
@@ -221,10 +242,7 @@ impl RostrumCore {
         code: String,
         device_name: String,
     ) -> Result<PairingResult, RostrumError> {
-        let host: Host = host.trim().parse().map_err(invalid)?;
-        let fingerprint = CertFingerprint::from_base64url(fingerprint.trim()).map_err(invalid)?;
-        let endpoint = Endpoint::new(vec![host], port, fingerprint).map_err(invalid)?;
-        let code = PairingCode::parse(&code).map_err(invalid)?;
+        let (endpoint, code) = manual_offer(&host, port, &fingerprint, &code)?;
         self.pair(endpoint, code, device_name).await
     }
 

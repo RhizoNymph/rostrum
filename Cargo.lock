@@ -5217,6 +5217,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "futures",
+ "getrandom 0.3.4",
  "rcgen",
  "rostrum-config",
  "rostrum-core",
