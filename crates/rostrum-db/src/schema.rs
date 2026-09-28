@@ -92,7 +92,13 @@ CREATE TABLE IF NOT EXISTS cache_http (
 /// A cache version mismatch drops the cache tables; the drafts table is only
 /// ever created, never dropped.
 pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), DbError> {
-    let mut tx = pool.begin().await?;
+    // `IMMEDIATE`: the migration reads the recorded versions before it
+    // writes. A deferred transaction would take a read snapshot first and
+    // then fail outright (`SQLITE_BUSY_SNAPSHOT`, which the busy timeout does
+    // not retry) if another connection — a previous session still flushing
+    // its last writes — committed in between. Taking the write lock up front
+    // makes the open wait its turn instead.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     sqlx::query(CREATE_META).execute(&mut *tx).await?;
     sqlx::query(CREATE_DRAFTS).execute(&mut *tx).await?;
