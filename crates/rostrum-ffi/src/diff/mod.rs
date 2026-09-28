@@ -1,6 +1,13 @@
 //! Changed files, the overview, and one file's diff at a time.
 
+mod highlight;
+pub(crate) mod load;
+mod overview;
+mod rows;
+mod segments;
 mod types;
+
+pub(crate) use load::LoadedFiles;
 
 pub use types::{
     ChangedFile, CodeSegment, CommentAnchor, DiffAvailability, DiffLineView, DiffRow, DiffStats,
@@ -8,7 +15,10 @@ pub use types::{
     TileHeat,
 };
 
-use crate::{engine::RostrumCore, error::RostrumError};
+use crate::{
+    engine::{RostrumCore, state::PullKey},
+    error::RostrumError,
+};
 
 #[uniffi::export(async_runtime = "tokio")]
 impl RostrumCore {
@@ -19,8 +29,15 @@ impl RostrumCore {
         repo: String,
         number: u32,
     ) -> Result<FilesOverview, RostrumError> {
-        let _ = (repo, number);
-        Err(RostrumError::unimplemented("files_overview"))
+        let key = PullKey::parse(&repo, number)?;
+        let loaded = self.load_files(&key).await?;
+        let threads = self.known_threads(&key).await?;
+        let drafts = self.draft_list(&key).await?;
+        let built = tokio::task::spawn_blocking(move || {
+            overview::overview(&loaded, &threads, &drafts)
+        })
+        .await?;
+        Ok(built)
     }
 
     /// One file's diff as rows: syntax-highlighted, word-level changes
@@ -33,7 +50,34 @@ impl RostrumCore {
         number: u32,
         file_index: u32,
     ) -> Result<FileDiff, RostrumError> {
-        let _ = (repo, number, file_index);
-        Err(RostrumError::unimplemented("file_diff"))
+        let key = PullKey::parse(&repo, number)?;
+        let loaded = self.load_files(&key).await?;
+        let index = file_index as usize;
+        if index >= loaded.files.len() {
+            return Err(RostrumError::invalid(format!(
+                "file {file_index} is out of range; this diff has {} files",
+                loaded.files.len()
+            )));
+        }
+        let threads = self.known_threads(&key).await?;
+        let drafts = self.draft_list(&key).await?;
+        let built = tokio::task::spawn_blocking(move || {
+            let file = &loaded.files[index];
+            let changed = overview::changed_file(index, file, &threads, &drafts);
+            let body = if changed.availability == DiffAvailability::Text {
+                FileDiffBody::Rows {
+                    rows: rows::build_rows(file, &threads, &drafts, &key.repo),
+                }
+            } else {
+                FileDiffBody::Unavailable
+            };
+            FileDiff {
+                file: changed,
+                head_sha: loaded.head_sha.clone(),
+                body,
+            }
+        })
+        .await?;
+        Ok(built)
     }
 }

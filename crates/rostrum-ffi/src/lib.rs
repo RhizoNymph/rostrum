@@ -37,5 +37,8 @@ pub mod session;
 pub mod settings;
 pub mod types;
 
+#[cfg(test)]
+pub(crate) mod test_support;
+
 pub use engine::RostrumCore;
 pub use error::{RemoteErrorCode, RostrumError};
