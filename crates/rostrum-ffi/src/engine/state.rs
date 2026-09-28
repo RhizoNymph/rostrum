@@ -16,7 +16,7 @@ use crate::{
     feed::{FeedSnapshot, FeedState, ProbeSlot},
     remote::RemoteSession,
     review::DraftBook,
-    session::Session,
+    session::{GitHubApi, Session},
 };
 
 /// Conversations kept in memory (SQLite keeps them all).
@@ -59,6 +59,8 @@ pub(crate) struct CoreState {
     /// Problems found loading the settings file, for `warnings()`.
     pub warnings: Vec<String>,
     pub session: Session,
+    /// Where GitHub requests go: github.com, except in tests.
+    pub github_api: GitHubApi,
     pub feed: FeedState,
     pub remote: Option<RemoteSession>,
     /// Pending reviews loaded so far, by pull request.
@@ -84,6 +86,7 @@ pub(crate) struct CoreState {
 
 /// What [`CoreState::new`] needs.
 pub(crate) struct Startup {
+    pub github_api: GitHubApi,
     pub config_path: PathBuf,
     pub config: Config,
     pub warnings: Vec<String>,
@@ -102,6 +105,7 @@ impl CoreState {
             config: startup.config,
             warnings,
             session: Session::SignedOut,
+            github_api: startup.github_api,
             feed,
             remote: None,
             drafts: HashMap::new(),

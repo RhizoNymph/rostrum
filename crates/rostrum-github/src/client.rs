@@ -46,12 +46,34 @@ pub struct RepoPullRequests {
 pub struct GitHubClient {
     http: Client,
     token: Token,
+    /// Where GraphQL documents are posted.
+    graphql_url: String,
+    /// The root REST paths are appended to, without a trailing slash.
+    rest_base: String,
 }
 
 impl GitHubClient {
+    /// A client for github.com.
     pub fn new(token: Token) -> Result<Self, GitHubError> {
+        Self::with_endpoints(token, GRAPHQL_URL, REST_BASE)
+    }
+
+    /// A client for another API root: a GitHub Enterprise Server
+    /// (`https://host/api/graphql` and `https://host/api/v3`), or a local
+    /// stand-in in tests. Every request goes to these two roots and nowhere
+    /// else, except the pagination links GitHub itself returns.
+    pub fn with_endpoints(
+        token: Token,
+        graphql_url: &str,
+        rest_base: &str,
+    ) -> Result<Self, GitHubError> {
         let http = Client::builder().user_agent(USER_AGENT).build()?;
-        Ok(Self { http, token })
+        Ok(Self {
+            http,
+            token,
+            graphql_url: graphql_url.to_string(),
+            rest_base: rest_base.trim_end_matches('/').to_string(),
+        })
     }
 
     /// Who the token belongs to.
@@ -144,7 +166,8 @@ impl GitHubClient {
     ) -> Result<Vec<PullRequestFile>, GitHubError> {
         let resource = resource_name(repo, number);
         let mut url = format!(
-            "{REST_BASE}/repos/{}/{}/pulls/{}/files?per_page=100",
+            "{}/repos/{}/{}/pulls/{}/files?per_page=100",
+            self.rest_base,
             repo.owner(),
             repo.name(),
             number.0
@@ -178,7 +201,8 @@ impl GitHubClient {
     pub async fn repository_labels(&self, repo: &RepoId) -> Result<Vec<Label>, GitHubError> {
         let resource = repo.to_string();
         let mut url = format!(
-            "{REST_BASE}/repos/{}/{}/labels?per_page=100",
+            "{}/repos/{}/{}/labels?per_page=100",
+            self.rest_base,
             repo.owner(),
             repo.name()
         );
@@ -222,7 +246,8 @@ impl GitHubClient {
         }
 
         let url = format!(
-            "{REST_BASE}/repos/{}/{}/issues/{}/labels",
+            "{}/repos/{}/{}/issues/{}/labels",
+            self.rest_base,
             repo.owner(),
             repo.name(),
             number.0
@@ -245,7 +270,8 @@ impl GitHubClient {
         label: &str,
     ) -> Result<(), GitHubError> {
         let url = format!(
-            "{REST_BASE}/repos/{}/{}/issues/{}/labels/{}",
+            "{}/repos/{}/{}/issues/{}/labels/{}",
+            self.rest_base,
             repo.owner(),
             repo.name(),
             number.0,
@@ -272,7 +298,8 @@ impl GitHubClient {
         body: &str,
     ) -> Result<(), GitHubError> {
         let url = format!(
-            "{REST_BASE}/repos/{}/{}/issues/{}/comments",
+            "{}/repos/{}/{}/issues/{}/comments",
+            self.rest_base,
             repo.owner(),
             repo.name(),
             number.0
@@ -293,7 +320,8 @@ impl GitHubClient {
         review: SubmitReview,
     ) -> Result<(), GitHubError> {
         let url = format!(
-            "{REST_BASE}/repos/{}/{}/pulls/{}/reviews",
+            "{}/repos/{}/{}/pulls/{}/reviews",
+            self.rest_base,
             repo.owner(),
             repo.name(),
             number.0
@@ -316,7 +344,8 @@ impl GitHubClient {
         body: &str,
     ) -> Result<(), GitHubError> {
         let url = format!(
-            "{REST_BASE}/repos/{}/{}/pulls/{}/comments/{in_reply_to}/replies",
+            "{}/repos/{}/{}/pulls/{}/comments/{in_reply_to}/replies",
+            self.rest_base,
             repo.owner(),
             repo.name(),
             number.0
@@ -339,7 +368,8 @@ impl GitHubClient {
         request: &MergePullRequest,
     ) -> Result<(), GitHubError> {
         let url = format!(
-            "{REST_BASE}/repos/{}/{}/pulls/{}/merge",
+            "{}/repos/{}/{}/pulls/{}/merge",
+            self.rest_base,
             repo.owner(),
             repo.name(),
             number.0
@@ -362,7 +392,8 @@ impl GitHubClient {
         state: IssueState,
     ) -> Result<(), GitHubError> {
         let url = format!(
-            "{REST_BASE}/repos/{}/{}/pulls/{}",
+            "{}/repos/{}/{}/pulls/{}",
+            self.rest_base,
             repo.owner(),
             repo.name(),
             number.0
@@ -613,7 +644,7 @@ impl GitHubClient {
         let response = self
             .execute(
                 self.http
-                    .post(GRAPHQL_URL)
+                    .post(&self.graphql_url)
                     .bearer_auth(self.token.as_str())
                     .json(&body),
             )

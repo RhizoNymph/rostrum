@@ -25,6 +25,7 @@ use crate::{
         writer::Writer,
     },
     error::RostrumError,
+    session::GitHubApi,
 };
 
 /// The Android app's core. Create one per process with [`RostrumCore::open`]
@@ -47,6 +48,40 @@ impl RostrumCore {
     /// first use.
     #[uniffi::constructor]
     pub async fn open(data_dir: String) -> Result<Arc<Self>, RostrumError> {
+        Self::open_with(data_dir, GitHubApi::GitHubCom).await
+    }
+
+    /// Problems found while loading the settings file — a malformed file is
+    /// replaced by defaults rather than refusing to start, and this says so.
+    pub async fn warnings(&self) -> Vec<String> {
+        self.actor
+            .call(|state| state.warnings.clone())
+            .await
+            .unwrap_or_default()
+    }
+}
+
+impl RostrumCore {
+    /// [`RostrumCore::open`] against another GitHub API root. Not exported to
+    /// Kotlin: it exists so the integration tests can point the core at a
+    /// local stand-in instead of api.github.com.
+    #[doc(hidden)]
+    pub async fn open_with_github_api(
+        data_dir: String,
+        graphql_url: String,
+        rest_base: String,
+    ) -> Result<Arc<Self>, RostrumError> {
+        Self::open_with(
+            data_dir,
+            GitHubApi::Custom {
+                graphql_url,
+                rest_base,
+            },
+        )
+        .await
+    }
+
+    async fn open_with(data_dir: String, github_api: GitHubApi) -> Result<Arc<Self>, RostrumError> {
         if data_dir.trim().is_empty() {
             return Err(RostrumError::invalid("the data directory is empty"));
         }
@@ -62,6 +97,7 @@ impl RostrumCore {
         let writer = Writer::spawn(db.clone());
         let notifier = Notifier::spawn();
         let startup = Startup {
+            github_api,
             config_path,
             config,
             warnings: warnings.into_iter().map(|warning| warning.0).collect(),
@@ -73,17 +109,6 @@ impl RostrumCore {
         Ok(Arc::new(Self { actor, db }))
     }
 
-    /// Problems found while loading the settings file — a malformed file is
-    /// replaced by defaults rather than refusing to start, and this says so.
-    pub async fn warnings(&self) -> Vec<String> {
-        self.actor
-            .call(|state| state.warnings.clone())
-            .await
-            .unwrap_or_default()
-    }
-}
-
-impl RostrumCore {
     /// Map a GitHub failure, noting a rejected token in the session first so
     /// `github_status` reports it.
     pub(crate) async fn github_failed(&self, error: GitHubError) -> RostrumError {

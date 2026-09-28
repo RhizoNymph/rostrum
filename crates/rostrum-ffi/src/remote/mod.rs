@@ -125,7 +125,7 @@ impl RostrumCore {
                 if state.session.client().is_none()
                     && let Some(token) = handed_over
                 {
-                    state.session.set_token(Some(token))?;
+                    state.session.set_token(Some(token), &state.github_api)?;
                     state.publish();
                 }
                 Ok(())
@@ -377,7 +377,7 @@ impl RostrumCore {
         let apply = token.token.clone();
         self.actor
             .try_call(move |state| {
-                state.session.set_token(Some(apply))?;
+                state.session.set_token(Some(apply), &state.github_api)?;
                 state.publish();
                 Ok(())
             })

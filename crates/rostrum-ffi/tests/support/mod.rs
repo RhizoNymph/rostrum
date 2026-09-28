@@ -4,6 +4,8 @@
 
 #![allow(dead_code)]
 
+pub mod github;
+
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -226,7 +228,7 @@ pub async fn serve(handler: Handler) -> (u16, CertFingerprint, Log) {
     (port, fingerprint, log)
 }
 
-async fn read_request<S: AsyncReadExt + Unpin>(stream: &mut S) -> Option<Request> {
+pub async fn read_request<S: AsyncReadExt + Unpin>(stream: &mut S) -> Option<Request> {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 8192];
     let header_end = loop {

@@ -22,6 +22,27 @@ pub enum GitHubStatus {
     Invalid { reason: String },
 }
 
+/// Which GitHub API the session talks to.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum GitHubApi {
+    #[default]
+    GitHubCom,
+    /// Another root: a test stand-in (or, later, an Enterprise Server).
+    Custom { graphql_url: String, rest_base: String },
+}
+
+impl GitHubApi {
+    fn client(&self, token: Token) -> Result<GitHubClient, rostrum_github::GitHubError> {
+        match self {
+            Self::GitHubCom => GitHubClient::new(token),
+            Self::Custom {
+                graphql_url,
+                rest_base,
+            } => GitHubClient::with_endpoints(token, graphql_url, rest_base),
+        }
+    }
+}
+
 /// The session's state. A client exists exactly when a token does.
 pub(crate) enum Session {
     SignedOut,
@@ -42,7 +63,11 @@ pub(crate) enum Trust {
 impl Session {
     /// Replace the token. The same token again keeps what is known about it;
     /// a different one starts unverified, since it may belong to someone else.
-    pub(crate) fn set_token(&mut self, token: Option<String>) -> Result<(), RostrumError> {
+    pub(crate) fn set_token(
+        &mut self,
+        token: Option<String>,
+        api: &GitHubApi,
+    ) -> Result<(), RostrumError> {
         let token = token
             .map(|raw| raw.trim().to_string())
             .filter(|raw| !raw.is_empty());
@@ -56,7 +81,8 @@ impl Session {
             return Ok(());
         }
         let token = Token::new(raw);
-        let client = GitHubClient::new(token.clone())
+        let client = api
+            .client(token.clone())
             .map_err(|error| RostrumError::internal(format!("could not build a client: {error}")))?;
         tracing::info!(token = %token.redacted(), "github token set");
         *self = Self::Active {
@@ -126,7 +152,7 @@ impl RostrumCore {
     ) -> Result<GitHubStatus, RostrumError> {
         self.actor
             .try_call(move |state| {
-                state.session.set_token(token)?;
+                state.session.set_token(token, &state.github_api)?;
                 // The viewer, and so "yours" and "review requested", may have
                 // changed with the token.
                 state.publish();
@@ -184,7 +210,7 @@ mod tests {
     #[test]
     fn blank_tokens_sign_out() {
         let mut session = Session::SignedOut;
-        session.set_token(Some("  ".into())).expect("set");
+        session.set_token(Some("  ".into()), &GitHubApi::default()).expect("set");
         assert_eq!(session.status(), GitHubStatus::NoToken);
         assert!(session.client().is_none());
     }
@@ -192,7 +218,7 @@ mod tests {
     #[test]
     fn a_token_starts_unverified_and_learns_its_viewer() {
         let mut session = Session::SignedOut;
-        session.set_token(Some(" ghp_abc ".into())).expect("set");
+        session.set_token(Some(" ghp_abc ".into()), &GitHubApi::default()).expect("set");
         assert_eq!(session.status(), GitHubStatus::Unverified);
         assert!(session.client().is_some());
 
@@ -212,13 +238,13 @@ mod tests {
     #[test]
     fn the_same_token_keeps_what_is_known_and_a_new_one_forgets_it() {
         let mut session = Session::SignedOut;
-        session.set_token(Some("ghp_abc".into())).expect("set");
+        session.set_token(Some("ghp_abc".into()), &GitHubApi::default()).expect("set");
         session.verify(user("octocat"));
 
-        session.set_token(Some("ghp_abc".into())).expect("set");
+        session.set_token(Some("ghp_abc".into()), &GitHubApi::default()).expect("set");
         assert!(session.viewer().is_some());
 
-        session.set_token(Some("ghp_other".into())).expect("set");
+        session.set_token(Some("ghp_other".into()), &GitHubApi::default()).expect("set");
         assert_eq!(session.status(), GitHubStatus::Unverified);
         assert!(session.viewer().is_none());
     }
@@ -230,7 +256,7 @@ mod tests {
         session.reject("nope".into());
         assert_eq!(session.status(), GitHubStatus::NoToken);
 
-        session.set_token(Some("ghp_abc".into())).expect("set");
+        session.set_token(Some("ghp_abc".into()), &GitHubApi::default()).expect("set");
         session.reject("revoked".into());
         assert_eq!(
             session.status(),
@@ -238,7 +264,7 @@ mod tests {
                 reason: "revoked".into()
             }
         );
-        session.set_token(None).expect("set");
+        session.set_token(None, &GitHubApi::default()).expect("set");
         assert_eq!(session.status(), GitHubStatus::NoToken);
     }
 }
