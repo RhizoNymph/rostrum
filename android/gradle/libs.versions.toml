@@ -1,0 +1,54 @@
+# Every version is pinned exactly and was released at least a week before it
+# was adopted. `minCompileSdk=N` is the floor read from that AAR's metadata; an
+# AAR naming a higher one than `compileSdk` fails the build before compiling,
+# so pins move down rather than `compileSdk` up.
+
+[versions]
+agp = "9.3.1"                  # compiles Kotlin itself (android.builtInKotlin)
+kotlin = "2.4.20"              # compose compiler plugin; supports AGP <= 9.3.1
+ndk = "30.0.16248370"          # r30, 2026-09-09; also read by scripts/build-apk.sh
+
+compileSdk = "36"
+targetSdk = "36"
+minSdk = "28"
+
+composeBom = "2026.06.01"      # compose 1.11.x, material3 1.4.0; minCompileSdk=35
+activityCompose = "1.12.4"     # minCompileSdk=36 (1.13.0 is newer, not needed)
+coreKtx = "1.18.0"             # minCompileSdk=36; 1.19.0 needs 37
+lifecycle = "2.10.0"           # minCompileSdk=35; 2.11.0's compose artifacts need 37
+navigation = "2.9.5"           # minCompileSdk=35; 2.10.x needs 37
+work = "2.11.2"                # minCompileSdk=35
+kotlinxCoroutines = "1.11.0"   # UniFFI's Kotlin bindings use it for async exports
+# UniFFI's generated Kotlin calls into the .so through JNA and needs >= 5.12.
+# The `@aar` artifact carries `libjnidispatch.so` for each Android ABI.
+jna = "5.19.1"                 # 2026-06-12
+
+junit5 = "5.14.4"              # buildSrc unit tests
+
+[libraries]
+compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+compose-ui = { group = "androidx.compose.ui", name = "ui" }
+compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+compose-foundation = { group = "androidx.compose.foundation", name = "foundation" }
+compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }
+androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigation" }
+androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
+
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "kotlinxCoroutines" }
+
+jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
+
+junit-bom = { group = "org.junit", name = "junit-bom", version.ref = "junit5" }
+junit-jupiter = { group = "org.junit.jupiter", name = "junit-jupiter" }
+junit-platform-launcher = { group = "org.junit.platform", name = "junit-platform-launcher" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Only what XML needs (window, launcher icon). Compose reads RostrumColors. -->
+    <color name="rostrum_bg">#FF0F1115</color>
+    <color name="rostrum_accent">#FF5B9DFF</color>
+</resources>
