@@ -7,6 +7,8 @@
 //! nesting becomes style flags on each span.
 
 use rostrum_core::RepoId;
+
+use crate::error::RostrumError;
 use rostrum_md::{Block, GitHubContext, Inline, parse_github};
 
 /// One renderable block. Blocks inside a list item or a quote carry the
@@ -30,7 +32,9 @@ pub struct MdBlock {
 pub enum MdBlockKind {
     Paragraph,
     /// `level` is 1..=6.
-    Heading { level: u8 },
+    Heading {
+        level: u8,
+    },
     Code {
         /// The fence's info string, e.g. `rust`.
         language: Option<String>,
@@ -53,7 +57,10 @@ pub enum MdBlockKind {
         header: bool,
     },
     /// An image on a line of its own.
-    Image { url: String, alt: String },
+    Image {
+        url: String,
+        alt: String,
+    },
 }
 
 /// A run of text with one style. Concatenating a block's spans gives its
@@ -71,7 +78,6 @@ pub struct MdSpan {
     pub link: Option<String>,
 }
 
-
 /// Parse `source` as GitHub-flavoured markdown in `repo`'s context (so `#12`
 /// links to that repository) and flatten it.
 pub(crate) fn render(source: &str, repo: &RepoId) -> Vec<MdBlock> {
@@ -80,6 +86,19 @@ pub(crate) fn render(source: &str, repo: &RepoId) -> Vec<MdBlock> {
     let mut out = Vec::new();
     flatten_blocks(&document.blocks, Nesting::default(), &mut out);
     out
+}
+
+/// Render what the user is writing — the composer's Preview — exactly as the
+/// timeline will show it once posted in `repo` (`owner/name`), so `#12` and
+/// `@login` expand the same way before and after.
+#[uniffi::export]
+pub fn render_markdown(source: String, repo: String) -> Result<Vec<MdBlock>, RostrumError> {
+    let repo: RepoId = repo
+        .parse()
+        .map_err(|err: rostrum_core::model::ParseRepoIdError| {
+            RostrumError::invalid(err.to_string())
+        })?;
+    Ok(render(&source, &repo))
 }
 
 /// Where a block sits: inside how many quotes and lists.
@@ -323,6 +342,23 @@ mod tests {
             strike: false,
             link: None,
         }
+    }
+
+    #[test]
+    fn the_preview_export_renders_like_the_timeline() {
+        let source = "Fixes #12, thanks @ada-lin\n\n- [x] done".to_string();
+        assert_eq!(
+            render_markdown(source.clone(), "octo/repo".into()).expect("renders"),
+            md(&source)
+        );
+    }
+
+    #[test]
+    fn the_preview_export_rejects_a_malformed_repo() {
+        assert!(matches!(
+            render_markdown("hi".into(), "not a repo".into()),
+            Err(RostrumError::InvalidInput { .. })
+        ));
     }
 
     #[test]
