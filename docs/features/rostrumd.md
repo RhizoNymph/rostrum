@@ -112,6 +112,34 @@ list with DOM APIs (`textContent`, never markup).
    (`source` is `"<TokenSource> on <machine>"`, e.g. `gh auth token on
    framework`).
 
+### Re-pairing replaces the old entry
+
+Pairing the same phone again must not leave its old record listed beside the
+new one. When a pairing succeeds, in the same registry command and the same
+single write of `devices.json` that inserts the new device
+(`DeviceBook::pair`):
+
+1. **By token.** If `PairRequest::replaces` is present and its hash matches a
+   stored device, that device — and only that one — is dropped. Holding the
+   token proves it is the same phone, whatever it is called now.
+2. **By name.** Otherwise, every device whose name is exactly the new
+   device's (after the same cleaning, so `" Pixel 9 "` matches `"Pixel 9"`)
+   is dropped. This covers a reinstalled app whose token was wiped with its
+   data, and also sweeps up duplicates left by pairings made before this rule.
+3. Otherwise nothing is dropped. A `replaces` token that matches no device is
+   ignored, not an error; the name rule then still applies.
+
+Each replacement is logged at `info` with the new and the old device id. The
+code is redeemed first: a request whose code is wrong, expired, burned or
+throttled removes nothing, even if it carries a valid `replaces` token and a
+matching name. If the write fails, nothing is dropped and nothing is added.
+
+**Trade-off:** the name rule cannot tell two phones apart that report the
+same `device_name`. Two identical phones without distinct names will replace
+each other on every pairing unless the token path applies — which it does for
+any phone that still holds its previous token. Renaming one of the phones
+(Android's device name) keeps both.
+
 A refused code answers `pairing_code_invalid` (403: wrong, used, or burned),
 `pairing_code_expired` (410), or `rate_limited` (429); every refusal is logged
 at `warn` with the peer address and the reason — never the code.
@@ -377,7 +405,7 @@ saw — printing none of them.
 | `crates/rostrumd/src/net/listen.rs` | Dual-stack listeners without double-binding | `bind_all`, `bind_one`, `ListenError` |
 | `crates/rostrumd/src/registry/mod.rs` | The registry actor | `Registry`, `IssuedCode`, `Paired`, `PairError`, `RegistryError` |
 | `crates/rostrumd/src/registry/codes.rs` | Code lifecycle, strikes, throttle | `CodeBook`, `RedeemError`, `MAX_STRIKES`, `FAILURE_LIMIT`, `FAILURE_WINDOW` |
-| `crates/rostrumd/src/registry/devices.rs` | `devices.json` | `DeviceBook`, `DeviceRecord`, `DeviceView`, `clean_name` |
+| `crates/rostrumd/src/registry/devices.rs` | `devices.json`, and replacing a re-paired device in the same write | `DeviceBook` (`pair`), `DeviceRecord`, `DeviceView`, `Superseded`, `clean_name` |
 | `crates/rostrumd/src/jobs/mod.rs` | The coordinator's handle, leases, clone identity | `Jobs`, `Lease`, `CloneKey`, `Busy`, `JobsError`, `JobRunner`, `live_runner` |
 | `crates/rostrumd/src/jobs/actor.rs` | The coordinator task | — |
 | `crates/rostrumd/src/jobs/sync.rs` | Sync-all plans and the runner | `SyncPlan`, `PlannedEntry`, `EntryTarget` |
@@ -415,6 +443,9 @@ saw — printing none of them.
   normalisation, may generate codes, list devices or revoke; the `Host` must
   be an IP literal or one of this machine's names; a POST's `Origin`, when
   present, must match. Everyone else gets 403 `forbidden`.
+- **A re-pairing replaces, never duplicates** — by the presented token, else
+  by exact name — atomically with the insert, and only after the code is
+  accepted.
 - **Hashes only.** `devices.json` holds `TokenHash`es; a token exists only in
   the pairing response and on the phone. Codes live only in memory.
 - **One thing per clone.** At most one status/job/abort per repository at a
@@ -443,12 +474,13 @@ saw — printing none of them.
 
 ## Testing
 
-`cargo test -p rostrumd` — 171 tests:
+`cargo test -p rostrumd` — 181 tests:
 
 - Unit: code lifecycle (expiry, single use, five strikes, per-address throttle
   and its window, IPv6 `/64`), address classification including mapped IPv6
   and the range edges, `Host`/`Origin` parsing and matching, device store
-  round trip / revoke / `0600` / no plaintext token / debounce, settings,
+  round trip / revoke / `0600` / no plaintext token / debounce / replacement
+  by token or name in one write, settings,
   the TLS identity's reuse and refusal cases, advertised-host filtering from a
   fake interface list, `tailscale status` parsing, every wire ↔ local
   conversion, tmux output parsing and joining, the coordinator (ordering,
@@ -456,7 +488,9 @@ saw — printing none of them.
   records, shutdown), the copyable-config mapping, page rendering and
   escaping, APK description and download headers.
 - Router (`tower::ServiceExt::oneshot` on scratch directories): every route,
-  bearer auth (missing, garbage, other scheme, unknown, revoked), `config`
+  bearer auth (missing, garbage, other scheme, unknown, revoked), re-pairing
+  (replaced by token, by name, a different name keeps both, a bad code removes
+  nothing, a bogus `replaces` is ignored, the old token is then 401), `config`
   from a file with malformed and duplicate repositories, mixed-case authors
   and every never-sent field set, pairing and
   its refusals (410 with a paused clock, 429), the gate from every kind of

@@ -44,6 +44,7 @@ async fn a_phone_pairs_from_the_page_link_and_uses_the_api_until_it_unpairs() {
         .pair(&PairRequest {
             code: offer.code.clone(),
             device_name: "Integration Phone".into(),
+            replaces: None,
         })
         .await
         .expect("pairs");
@@ -58,6 +59,7 @@ async fn a_phone_pairs_from_the_page_link_and_uses_the_api_until_it_unpairs() {
         .pair(&PairRequest {
             code: offer.code,
             device_name: "Second".into(),
+            replaces: None,
         })
         .await
         .expect_err("single use");
@@ -146,6 +148,7 @@ async fn a_code_nobody_issued_is_refused() {
         .pair(&PairRequest {
             code: PairingCode::parse("ZZZZ-ZZZZ").expect("code"),
             device_name: "x".into(),
+            replaces: None,
         })
         .await
         .expect_err("never issued");

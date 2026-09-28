@@ -17,7 +17,7 @@ use rostrum_remote::{DeviceId, DeviceToken, PairingCode, TokenHash};
 use tokio::sync::{mpsc, oneshot};
 
 pub use codes::{CodeBook, RedeemError};
-pub use devices::{DeviceBook, DeviceRecord, DeviceView, clean_name};
+pub use devices::{DeviceBook, DeviceRecord, DeviceView, Superseded, clean_name};
 
 use crate::{random::RandomError, state_file::StoreError};
 
@@ -64,6 +64,7 @@ enum Command {
     Pair {
         code: PairingCode,
         name: String,
+        replaces: Option<TokenHash>,
         from: IpAddr,
         reply: oneshot::Sender<Result<Paired, PairError>>,
     },
@@ -115,16 +116,22 @@ impl Registry {
         self.ask(|reply| Command::IssueCode { reply }).await?
     }
 
-    /// Redeem `code` and record a new device named `name`.
+    /// Redeem `code` and record a new device named `name`, replacing the
+    /// device that held `replaces` — or, failing that, any device of exactly
+    /// the same name (see [`DeviceBook::pair`]). Nothing is replaced unless
+    /// the code is accepted.
     pub async fn pair(
         &self,
         code: PairingCode,
         name: String,
+        replaces: Option<&DeviceToken>,
         from: IpAddr,
     ) -> Result<Paired, PairError> {
+        let replaces = replaces.map(DeviceToken::hash);
         self.ask(|reply| Command::Pair {
             code,
             name,
+            replaces,
             from,
             reply,
         })
@@ -167,10 +174,11 @@ impl Actor {
                 Command::Pair {
                     code,
                     name,
+                    replaces,
                     from,
                     reply,
                 } => {
-                    let _ = reply.send(self.pair(&code, name, from));
+                    let _ = reply.send(self.pair(&code, name, replaces.as_ref(), from));
                 }
                 Command::Authenticate { hash, from, reply } => {
                     let _ = reply.send(self.authenticate(&hash, from));
@@ -199,24 +207,49 @@ impl Actor {
         &mut self,
         code: &PairingCode,
         name: String,
+        replaces: Option<&TokenHash>,
         from: IpAddr,
     ) -> Result<Paired, PairError> {
+        // The code first: a request whose code is refused must not be able to
+        // remove anything, whatever it says it replaces.
         self.codes.redeem(code, from, tokio::time::Instant::now())?;
         let token = crate::random::device_token().map_err(RegistryError::from)?;
         let id = crate::random::device_id().map_err(RegistryError::from)?;
         let now = Utc::now();
         let name = clean_name(&name);
-        self.devices
-            .add(DeviceRecord {
-                id: id.clone(),
-                name: name.clone(),
-                token_hash: token.hash(),
-                paired_at: now,
-                last_seen: now,
-                last_ip: from.to_canonical(),
-            })
+        let superseded = self
+            .devices
+            .pair(
+                DeviceRecord {
+                    id: id.clone(),
+                    name: name.clone(),
+                    token_hash: token.hash(),
+                    paired_at: now,
+                    last_seen: now,
+                    last_ip: from.to_canonical(),
+                },
+                replaces,
+            )
             .map_err(RegistryError::from)?;
         tracing::info!(device = %id, name = %name, client = %from.to_canonical(), "paired a device");
+        match &superseded {
+            Some(Superseded::Token(old)) => tracing::info!(
+                device = %id,
+                replaced = %old,
+                "the new pairing replaced the device whose token the phone presented"
+            ),
+            Some(Superseded::Name(old)) => {
+                for old in old {
+                    tracing::info!(
+                        device = %id,
+                        replaced = %old,
+                        name = %name,
+                        "the new pairing replaced a device of the same name"
+                    );
+                }
+            }
+            None => {}
+        }
         Ok(Paired {
             device: id,
             name,
@@ -266,7 +299,12 @@ mod tests {
         assert!(issued.expires_at > Utc::now());
 
         let paired = registry
-            .pair(issued.code.clone(), " Pixel 8 ".into(), ip("192.168.0.9"))
+            .pair(
+                issued.code.clone(),
+                " Pixel 8 ".into(),
+                None,
+                ip("192.168.0.9"),
+            )
             .await
             .expect("pairs");
         assert_eq!(paired.name, "Pixel 8");
@@ -278,7 +316,7 @@ mod tests {
         );
 
         let again = registry
-            .pair(issued.code, "second".into(), ip("192.168.0.9"))
+            .pair(issued.code, "second".into(), None, ip("192.168.0.9"))
             .await;
         assert!(matches!(again, Err(PairError::Code(RedeemError::Invalid))));
 
@@ -293,7 +331,7 @@ mod tests {
         let registry = registry(&scratch);
         let code = registry.issue_code().await.expect("code").code;
         let paired = registry
-            .pair(code, "phone".into(), ip("100.64.0.20"))
+            .pair(code, "phone".into(), None, ip("100.64.0.20"))
             .await
             .expect("pairs");
         assert!(
@@ -330,7 +368,7 @@ mod tests {
             let registry = registry(&scratch);
             let code = registry.issue_code().await.expect("code").code;
             registry
-                .pair(code, "phone".into(), ip("192.168.0.9"))
+                .pair(code, "phone".into(), None, ip("192.168.0.9"))
                 .await
                 .expect("pairs")
         };

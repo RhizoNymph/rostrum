@@ -238,6 +238,7 @@ async fn a_code_comes_with_a_link_that_parses_and_a_qr_code() {
         .pair(
             parsed.code,
             "phone".into(),
+            None,
             "192.168.0.50".parse().expect("ip"),
         )
         .await;

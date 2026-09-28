@@ -185,6 +185,7 @@ impl Kit {
                 Some(&PairRequest {
                     code,
                     device_name: name.into(),
+                    replaces: None,
                 }),
             ),
         )

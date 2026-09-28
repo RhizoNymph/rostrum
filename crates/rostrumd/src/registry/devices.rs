@@ -65,6 +65,17 @@ struct DevicesFile {
     devices: Vec<DeviceRecord>,
 }
 
+/// Which earlier devices a new pairing replaced, and on what evidence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Superseded {
+    /// The phone presented this device's token in `replaces`: proof that it
+    /// is the same phone.
+    Token(DeviceId),
+    /// No token matched, and these devices had exactly the new device's name
+    /// — a reinstalled phone whose token was wiped. Never empty.
+    Name(Vec<DeviceId>),
+}
+
 /// The paired devices and the file they live in.
 #[derive(Debug)]
 pub struct DeviceBook {
@@ -100,6 +111,47 @@ impl DeviceBook {
         let mut next = self.devices.clone();
         next.push(record);
         self.commit(next)
+    }
+
+    /// Record a newly paired device, dropping the device(s) it replaces, in
+    /// one write of the file.
+    ///
+    /// `replaces` is the hash of the token the phone held before. When it
+    /// matches a device, that device — and only that one — is dropped.
+    /// Otherwise every device whose name is exactly `record.name` is dropped.
+    /// A hash that matches nothing is ignored. If the write fails nothing
+    /// changes, in memory or on disk.
+    pub fn pair(
+        &mut self,
+        record: DeviceRecord,
+        replaces: Option<&TokenHash>,
+    ) -> Result<Option<Superseded>, StoreError> {
+        let superseded = match replaces.and_then(|hash| self.find(hash)) {
+            Some(ix) => Some(Superseded::Token(self.devices[ix].id.clone())),
+            None => {
+                let same_name: Vec<DeviceId> = self
+                    .devices
+                    .iter()
+                    .filter(|device| device.name == record.name)
+                    .map(|device| device.id.clone())
+                    .collect();
+                (!same_name.is_empty()).then_some(Superseded::Name(same_name))
+            }
+        };
+        let dropped: &[DeviceId] = match &superseded {
+            Some(Superseded::Token(id)) => std::slice::from_ref(id),
+            Some(Superseded::Name(ids)) => ids,
+            None => &[],
+        };
+        let mut next: Vec<DeviceRecord> = self
+            .devices
+            .iter()
+            .filter(|device| !dropped.contains(&device.id))
+            .cloned()
+            .collect();
+        next.push(record);
+        self.commit(next)?;
+        Ok(superseded)
     }
 
     /// The device holding a token with this hash. Compares against every
@@ -355,6 +407,103 @@ mod tests {
                 .is_err()
         );
         assert!(book.records().is_empty());
+    }
+
+    fn with(book: &mut DeviceBook, n: u8, name: &str) -> DeviceToken {
+        let token = DeviceToken::from_bytes([n; 32]);
+        let mut device = record(n, &token);
+        device.name = name.into();
+        book.add(device).expect("add");
+        token
+    }
+
+    fn named(n: u8, name: &str) -> (DeviceRecord, DeviceToken) {
+        let token = DeviceToken::from_bytes([n; 32]);
+        let mut device = record(n, &token);
+        device.name = name.into();
+        (device, token)
+    }
+
+    #[test]
+    fn pairing_with_a_known_token_supersedes_that_device_in_one_write() {
+        let scratch = ScratchDir::new("devices-supersede-token");
+        let path = scratch.join("devices.json");
+        let mut book = DeviceBook::load(path.clone()).expect("empty");
+        let old = with(&mut book, 1, "Pixel");
+        with(&mut book, 2, "Tablet");
+        let (new, _) = named(3, "Pixel (work)");
+
+        let superseded = book.pair(new.clone(), Some(&old.hash())).expect("pair");
+        assert_eq!(
+            superseded,
+            Some(Superseded::Token(DeviceId::from_bytes([1; 16])))
+        );
+        let names: Vec<&str> = book.records().iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, vec!["Tablet", "Pixel (work)"]);
+        assert_eq!(
+            DeviceBook::load(path).expect("load").records(),
+            book.records()
+        );
+    }
+
+    #[test]
+    fn pairing_under_an_existing_name_supersedes_every_device_so_named() {
+        let scratch = ScratchDir::new("devices-supersede-name");
+        let mut book = DeviceBook::load(scratch.join("devices.json")).expect("empty");
+        with(&mut book, 1, "Google Pixel 9");
+        with(&mut book, 2, "Google Pixel 9");
+        with(&mut book, 3, "Tablet");
+        let (new, _) = named(4, "Google Pixel 9");
+        let superseded = book.pair(new, None).expect("pair");
+        assert_eq!(
+            superseded,
+            Some(Superseded::Name(vec![
+                DeviceId::from_bytes([1; 16]),
+                DeviceId::from_bytes([2; 16])
+            ]))
+        );
+        assert_eq!(book.records().len(), 2);
+    }
+
+    #[test]
+    fn the_token_path_takes_precedence_over_the_name_path() {
+        let scratch = ScratchDir::new("devices-supersede-precedence");
+        let mut book = DeviceBook::load(scratch.join("devices.json")).expect("empty");
+        let old = with(&mut book, 1, "Pixel");
+        with(&mut book, 2, "Tablet");
+        // The token names device 1; device 2 shares the new name but stays.
+        let (new, _) = named(3, "Tablet");
+        let superseded = book.pair(new, Some(&old.hash())).expect("pair");
+        assert_eq!(
+            superseded,
+            Some(Superseded::Token(DeviceId::from_bytes([1; 16])))
+        );
+        assert_eq!(book.records().len(), 2);
+    }
+
+    #[test]
+    fn an_unknown_replaces_hash_and_a_new_name_keep_everything() {
+        let scratch = ScratchDir::new("devices-supersede-none");
+        let mut book = DeviceBook::load(scratch.join("devices.json")).expect("empty");
+        with(&mut book, 1, "Pixel");
+        let (new, _) = named(2, "Tablet");
+        let bogus = DeviceToken::from_bytes([9; 32]).hash();
+        assert_eq!(book.pair(new, Some(&bogus)).expect("pair"), None);
+        assert_eq!(book.records().len(), 2);
+    }
+
+    #[test]
+    fn a_failed_pairing_write_supersedes_nothing() {
+        let scratch = ScratchDir::new("devices-supersede-fail");
+        let mut book = DeviceBook::load(scratch.join("blocker/devices.json")).expect("empty");
+        std::fs::create_dir_all(scratch.join("blocker")).expect("dir");
+        let old = with(&mut book, 1, "Pixel");
+        std::fs::remove_dir_all(scratch.join("blocker")).expect("rm");
+        std::fs::write(scratch.join("blocker"), "").expect("block");
+        let (new, _) = named(2, "Pixel");
+        assert!(book.pair(new, Some(&old.hash())).is_err());
+        assert_eq!(book.records().len(), 1);
+        assert_eq!(book.find(&old.hash()), Some(0));
     }
 
     #[test]

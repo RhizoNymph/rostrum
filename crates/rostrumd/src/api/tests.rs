@@ -339,6 +339,7 @@ async fn a_code_pairs_only_once() {
     let request = PairRequest {
         code,
         device_name: "a".into(),
+        replaces: None,
     };
     let api = kit.api();
     let pair = || {
@@ -390,6 +391,7 @@ async fn repeated_failures_from_one_address_are_rate_limited() {
             Some(&PairRequest {
                 code,
                 device_name: "x".into(),
+                replaces: None,
             }),
         )
     };
@@ -427,12 +429,154 @@ async fn an_expired_code_is_410() {
             Some(&PairRequest {
                 code,
                 device_name: "late".into(),
+                replaces: None,
             }),
         ),
     )
     .await;
     assert_eq!(status, StatusCode::GONE);
     assert_eq!(error(&body).code, ApiErrorCode::PairingCodeExpired);
+}
+
+// --- re-pairing replaces the old entry ---------------------------------------
+
+async fn try_pair(
+    kit: &Kit,
+    code: rostrum_remote::PairingCode,
+    name: &str,
+    replaces: Option<&DeviceToken>,
+) -> (StatusCode, axum::body::Bytes) {
+    send(
+        &kit.api(),
+        api_request(
+            Method::POST,
+            routes::PAIR,
+            "192.168.0.50",
+            None,
+            Some(&PairRequest {
+                code,
+                device_name: name.into(),
+                replaces: replaces.cloned(),
+            }),
+        ),
+    )
+    .await
+}
+
+async fn pair_as(
+    kit: &Kit,
+    name: &str,
+    replaces: Option<&DeviceToken>,
+) -> rostrum_remote::PairResponse {
+    let code = kit.daemon.registry.issue_code().await.expect("code").code;
+    let (status, body) = try_pair(kit, code, name, replaces).await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    json(&body)
+}
+
+async fn device_names(kit: &Kit) -> Vec<String> {
+    let mut names: Vec<String> = kit
+        .daemon
+        .registry
+        .devices()
+        .await
+        .expect("devices")
+        .into_iter()
+        .map(|device| device.name)
+        .collect();
+    names.sort();
+    names
+}
+
+#[tokio::test]
+async fn re_pairing_with_the_old_token_replaces_that_device() {
+    let kit = Kit::new("api-replace-token");
+    let old = pair_as(&kit, "Pixel", None).await;
+    let other = pair_as(&kit, "Tablet", None).await;
+    // Renamed in between, so only the token can say it is the same phone.
+    let new = pair_as(&kit, "Pixel (work)", Some(&old.token)).await;
+
+    assert_eq!(device_names(&kit).await, vec!["Pixel (work)", "Tablet"]);
+    assert_eq!(
+        get(&kit, routes::MACHINE, Some(&old.token)).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        get(&kit, routes::MACHINE, Some(&new.token)).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get(&kit, routes::MACHINE, Some(&other.token)).await.0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn re_pairing_under_the_same_name_replaces_that_device() {
+    let kit = Kit::new("api-replace-name");
+    let old = pair_as(&kit, "Google Pixel 9", None).await;
+    // A reinstalled app has lost its token and sends none.
+    let new = pair_as(&kit, "Google Pixel 9", None).await;
+
+    let devices = kit.daemon.registry.devices().await.expect("devices");
+    assert_eq!(devices.len(), 1);
+    assert_eq!(devices[0].id, new.device);
+    assert_eq!(
+        get(&kit, routes::MACHINE, Some(&old.token)).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        get(&kit, routes::MACHINE, Some(&new.token)).await.0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn a_different_name_keeps_both_devices() {
+    let kit = Kit::new("api-replace-different");
+    let first = pair_as(&kit, "Pixel 9", None).await;
+    let second = pair_as(&kit, "Pixel 8", None).await;
+    assert_eq!(device_names(&kit).await, vec!["Pixel 8", "Pixel 9"]);
+    assert_eq!(
+        get(&kit, routes::MACHINE, Some(&first.token)).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get(&kit, routes::MACHINE, Some(&second.token)).await.0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn a_bad_code_removes_nothing() {
+    let kit = Kit::new("api-replace-bad-code");
+    let old = pair_as(&kit, "Pixel", None).await;
+    // Right token, right name, wrong code: nothing may be removed.
+    let (status, body) = try_pair(&kit, stranger_code(), "Pixel", Some(&old.token)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(error(&body).code, ApiErrorCode::PairingCodeInvalid);
+    assert_eq!(device_names(&kit).await, vec!["Pixel"]);
+    assert_eq!(
+        get(&kit, routes::MACHINE, Some(&old.token)).await.0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn a_replaces_token_that_matches_nothing_is_ignored() {
+    let kit = Kit::new("api-replace-bogus");
+    let kept = pair_as(&kit, "Pixel", None).await;
+    let bogus = DeviceToken::from_bytes([0x5a; 32]);
+    let new = pair_as(&kit, "Tablet", Some(&bogus)).await;
+    assert_eq!(device_names(&kit).await, vec!["Pixel", "Tablet"]);
+    assert_eq!(
+        get(&kit, routes::MACHINE, Some(&kept.token)).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get(&kit, routes::MACHINE, Some(&new.token)).await.0,
+        StatusCode::OK
+    );
 }
 
 // --- local/status -----------------------------------------------------------

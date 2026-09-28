@@ -70,6 +70,7 @@ async fn run(page: SocketAddr) -> Result<(), String> {
         .pair(&PairRequest {
             code: parsed.code.clone(),
             device_name: "rostrumd live check".into(),
+            replaces: None,
         })
         .await
         .map_err(|e| format!("pair: {e}"))?;

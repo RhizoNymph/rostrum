@@ -155,6 +155,7 @@ impl Harness {
             .pair(&PairRequest {
                 code: offer.code,
                 device_name: name.into(),
+                replaces: None,
             })
             .await
             .expect("pairs");

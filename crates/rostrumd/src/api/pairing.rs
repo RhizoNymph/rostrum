@@ -25,7 +25,12 @@ pub async fn pair(
 ) -> Result<Json<PairResponse>, ApiFailure> {
     let paired = match daemon
         .registry
-        .pair(request.code, request.device_name, ip)
+        .pair(
+            request.code,
+            request.device_name,
+            request.replaces.as_ref(),
+            ip,
+        )
         .await
     {
         Ok(paired) => paired,
