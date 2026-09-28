@@ -34,6 +34,7 @@ import io.github.rhizonymph.rostrum.ui.components.SectionHeader
 import io.github.rhizonymph.rostrum.ui.components.TonalButton
 import io.github.rhizonymph.rostrum.ui.theme.RostrumText
 import io.github.rhizonymph.rostrum.ui.theme.RostrumTheme
+import io.github.rhizonymph.rostrum.ui.components.pairingPageSentence
 
 /** A desktop to pair with: tile, name, and the lines to compare. */
 @Composable

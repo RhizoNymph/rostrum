@@ -19,7 +19,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.rhizonymph.rostrum.data.model.FilesOverview
 import io.github.rhizonymph.rostrum.data.model.PrRef
 import io.github.rhizonymph.rostrum.ui.common.UiState
-import io.github.rhizonymph.rostrum.ui.common.rostrumViewModel
+import io.github.rhizonymph.rostrum.ui.common.profileViewModel
 import io.github.rhizonymph.rostrum.ui.components.EmptyView
 import io.github.rhizonymph.rostrum.ui.components.ErrorView
 import io.github.rhizonymph.rostrum.ui.components.LoadingView
@@ -38,7 +38,7 @@ fun FilesOverviewTab(
     onOpenFile: (fileIndex: Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val viewModel = rostrumViewModel(key = "files-overview-$pr") { FilesOverviewViewModel(it.backend, pr) }
+    val viewModel = profileViewModel(key = "files-overview-$pr") { _, profile -> FilesOverviewViewModel(profile.backend, pr) }
     val state by viewModel.state.collectAsStateWithLifecycle()
     // Coming back from a diff: counts of drafts and threads may have changed.
     LifecycleResumeEffect(viewModel) {

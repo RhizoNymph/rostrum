@@ -38,6 +38,10 @@ fun PairScreen(
     modifier: Modifier = Modifier,
 ) {
     val colors = RostrumTheme.colors
+    state.switchOffer?.let { switch ->
+        SwitchProfileStep(switch, actions, modifier)
+        return
+    }
     val offer = state.copy
     if (offer != null) {
         CopySettingsStep(offer, actions, modifier)

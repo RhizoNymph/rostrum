@@ -1,5 +1,6 @@
 package io.github.rhizonymph.rostrum.data.secrets
 
+import io.github.rhizonymph.rostrum.data.model.ProfileId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertArrayEquals
@@ -31,6 +32,9 @@ private class XorCipher : SecretCipher {
 
     private fun xor(data: ByteArray, iv: ByteArray) = ByteArray(data.size) { (data[it].toInt() xor iv[it % iv.size].toInt() xor 0x5A).toByte() }
 }
+
+private val P1 = ProfileId.of("p1")!!
+private val P2 = ProfileId.of("p2")!!
 
 class SecretStorageTest {
     @Nested
@@ -70,50 +74,50 @@ class SecretStorageTest {
 
         @Test
         fun `an unwritten secret is absent`() = runTest {
-            assertEquals(SecretRead.Absent, store().read(SecretKey.GitHubToken))
+            assertEquals(SecretRead.Absent, store().read(P1, SecretKey.GitHubToken))
         }
 
         @Test
         fun `a written secret reads back and is not stored in plain text`() = runTest {
             val store = store()
-            assertEquals(SecretWrite.Done, store.write(SecretKey.GitHubToken, "ghp_secretvalue"))
-            assertEquals(SecretRead.Present("ghp_secretvalue"), store.read(SecretKey.GitHubToken))
-            val onDisk = File(dir, "secrets/github_token.sealed").readBytes()
+            assertEquals(SecretWrite.Done, store.write(P1, SecretKey.GitHubToken, "ghp_secretvalue"))
+            assertEquals(SecretRead.Present("ghp_secretvalue"), store.read(P1, SecretKey.GitHubToken))
+            val onDisk = File(dir, "secrets/p1/github_token.sealed").readBytes()
             assertFalse(String(onDisk, Charsets.ISO_8859_1).contains("ghp_secretvalue"))
         }
 
         @Test
         fun `keys are stored independently`() = runTest {
             val store = store()
-            store.write(SecretKey.GitHubToken, "a")
-            store.write(SecretKey.DeviceToken, "b")
-            assertEquals("a", store.read(SecretKey.GitHubToken).valueOrNull())
-            assertEquals("b", store.read(SecretKey.DeviceToken).valueOrNull())
+            store.write(P1, SecretKey.GitHubToken, "a")
+            store.write(P1, SecretKey.DeviceToken, "b")
+            assertEquals("a", store.read(P1, SecretKey.GitHubToken).valueOrNull())
+            assertEquals("b", store.read(P1, SecretKey.DeviceToken).valueOrNull())
         }
 
         @Test
         fun `overwriting replaces the value and leaves no temp file`() = runTest {
             val store = store()
-            store.write(SecretKey.DesktopEndpoint, "one")
-            store.write(SecretKey.DesktopEndpoint, "two")
-            assertEquals("two", store.read(SecretKey.DesktopEndpoint).valueOrNull())
-            assertEquals(listOf("desktop_endpoint.sealed"), File(dir, "secrets").list()!!.toList())
+            store.write(P1, SecretKey.DesktopEndpoint, "one")
+            store.write(P1, SecretKey.DesktopEndpoint, "two")
+            assertEquals("two", store.read(P1, SecretKey.DesktopEndpoint).valueOrNull())
+            assertEquals(listOf("desktop_endpoint.sealed"), File(dir, "secrets/p1").list()!!.toList())
         }
 
         @Test
         fun `delete removes the value and deleting again succeeds`() = runTest {
             val store = store()
-            store.write(SecretKey.GitHubToken, "x")
-            assertEquals(SecretWrite.Done, store.delete(SecretKey.GitHubToken))
-            assertEquals(SecretRead.Absent, store.read(SecretKey.GitHubToken))
-            assertEquals(SecretWrite.Done, store.delete(SecretKey.GitHubToken))
+            store.write(P1, SecretKey.GitHubToken, "x")
+            assertEquals(SecretWrite.Done, store.delete(P1, SecretKey.GitHubToken))
+            assertEquals(SecretRead.Absent, store.read(P1, SecretKey.GitHubToken))
+            assertEquals(SecretWrite.Done, store.delete(P1, SecretKey.GitHubToken))
         }
 
         @Test
         fun `a corrupt file reads as Corrupt, not as a value`() = runTest {
-            File(dir, "secrets").mkdirs()
-            File(dir, "secrets/github_token.sealed").writeBytes(byteArrayOf(7, 7, 7))
-            val read = store().read(SecretKey.GitHubToken)
+            File(dir, "secrets/p1").mkdirs()
+            File(dir, "secrets/p1/github_token.sealed").writeBytes(byteArrayOf(7, 7, 7))
+            val read = store().read(P1, SecretKey.GitHubToken)
             assertInstanceOf(SecretRead.Failed::class.java, read)
             assertInstanceOf(SecretStoreError.Corrupt::class.java, (read as SecretRead.Failed).error)
         }
@@ -121,9 +125,9 @@ class SecretStorageTest {
         @Test
         fun `a lost key reads as KeystoreUnavailable`() = runTest {
             val store = store()
-            store.write(SecretKey.GitHubToken, "x")
+            store.write(P1, SecretKey.GitHubToken, "x")
             cipher.failOpen = CipherOutcome.Failed("invalidated", keyLost = true)
-            val read = store.read(SecretKey.GitHubToken) as SecretRead.Failed
+            val read = store.read(P1, SecretKey.GitHubToken) as SecretRead.Failed
             assertInstanceOf(SecretStoreError.KeystoreUnavailable::class.java, read.error)
         }
 
@@ -131,15 +135,48 @@ class SecretStorageTest {
         fun `a failing seal writes nothing`() = runTest {
             val store = store()
             cipher.failSeal = "no key"
-            val write = store.write(SecretKey.GitHubToken, "x")
+            val write = store.write(P1, SecretKey.GitHubToken, "x")
             assertInstanceOf(SecretWrite.Failed::class.java, write)
-            assertEquals(SecretRead.Absent, store.read(SecretKey.GitHubToken))
+            assertEquals(SecretRead.Absent, store.read(P1, SecretKey.GitHubToken))
         }
 
         @Test
         fun `values survive a new store instance`() = runTest {
-            store().write(SecretKey.DeviceToken, "rdt_1")
-            assertEquals("rdt_1", store().read(SecretKey.DeviceToken).valueOrNull())
+            store().write(P1, SecretKey.DeviceToken, "rdt_1")
+            assertEquals("rdt_1", store().read(P1, SecretKey.DeviceToken).valueOrNull())
+        }
+
+        @Test
+        fun `each profile keeps its own secrets`() = runTest {
+            val store = store()
+            store.write(P1, SecretKey.GitHubToken, "one")
+            store.write(P2, SecretKey.GitHubToken, "two")
+            assertEquals("one", store.read(P1, SecretKey.GitHubToken).valueOrNull())
+            assertEquals("two", store.read(P2, SecretKey.GitHubToken).valueOrNull())
+            assertEquals(SecretRead.Absent, store.read(P2, SecretKey.DeviceToken))
+        }
+
+        @Test
+        fun `deleting a profile removes all of its secrets and nothing else`() = runTest {
+            val store = store()
+            store.write(P1, SecretKey.GitHubToken, "one")
+            store.write(P1, SecretKey.DeviceToken, "rdt")
+            store.write(P2, SecretKey.GitHubToken, "two")
+            assertEquals(SecretWrite.Done, store.deleteProfile(P1))
+            assertEquals(SecretRead.Absent, store.read(P1, SecretKey.GitHubToken))
+            assertEquals(SecretRead.Absent, store.read(P1, SecretKey.DeviceToken))
+            assertEquals("two", store.read(P2, SecretKey.GitHubToken).valueOrNull())
+            assertEquals(listOf("p2"), File(dir, "secrets").list()!!.toList())
+            assertEquals(SecretWrite.Done, store.deleteProfile(P1))
+        }
+
+        @Test
+        fun `a profile's view reads and writes only that profile`() = runTest {
+            val store = store()
+            val view = store.forProfile(P2)
+            view.write(SecretKey.DesktopEndpoint, "{}")
+            assertEquals("{}", store.read(P2, SecretKey.DesktopEndpoint).valueOrNull())
+            assertEquals(SecretRead.Absent, store.read(P1, SecretKey.DesktopEndpoint))
         }
 
         @Test

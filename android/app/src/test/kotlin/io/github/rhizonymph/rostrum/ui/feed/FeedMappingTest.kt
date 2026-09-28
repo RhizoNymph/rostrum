@@ -160,23 +160,23 @@ class FeedMappingTest {
         private val machine = runBlocking { testBackend().machineInfo().orFail() }
 
         @Test
-        fun `unpaired phones offer pairing`() {
+        fun `without a desktop the pill is just the profile`() {
             assertEquals(DesktopPill.NotPaired, desktopPillOf(paired = false, info = null))
-            assertEquals(PillView("Pair desktop", null, "Pair a desktop"), DesktopPill.NotPaired.view())
+            assertEquals(PillView("Work", null, "Profile Work. Switch profiles"), DesktopPill.NotPaired.view("Work"))
         }
 
         @Test
-        fun `a desktop that answers is connected`() {
+        fun `a desktop that answers is connected, under the profile name`() {
             val pill = desktopPillOf(true, Outcome.Ok(machine))
             assertEquals(DesktopPill.Connected("nymph-desk"), pill)
-            assertEquals(PillView("nymph-desk", ColorRole.Success, "Desktop nymph-desk, connected"), pill.view())
+            assertEquals(PillView("Home", ColorRole.Success, "Profile Home, desktop nymph-desk connected. Switch profiles"), pill.view("Home"))
         }
 
         @Test
         fun `timeouts and unreachable desktops warn`() {
             assertEquals(DesktopPill.Unreachable, desktopPillOf(true, Outcome.Err(BackendError.DesktopUnreachable("refused"))))
             assertEquals(DesktopPill.Unreachable, desktopPillOf(true, Outcome.Err(BackendError.DesktopTimeout)))
-            assertEquals(ColorRole.Warning, DesktopPill.Unreachable.view().dot)
+            assertEquals(ColorRole.Warning, DesktopPill.Unreachable.view("Home").dot)
         }
 
         @Test
@@ -190,13 +190,13 @@ class FeedMappingTest {
             val error = BackendError.RemoteApi(RemoteErrorCode.Internal, "boom")
             val pill = desktopPillOf(true, Outcome.Err(error))
             assertEquals(DesktopPill.Problem(error), pill)
-            assertEquals(ColorRole.Danger, pill.view().dot)
+            assertEquals(ColorRole.Danger, pill.view("Home").dot)
         }
 
         @Test
         fun `while checking the pill is neutral`() {
             assertEquals(DesktopPill.Checking, desktopPillOf(true, null))
-            assertEquals(ColorRole.Neutral, DesktopPill.Checking.view().dot)
+            assertEquals(ColorRole.Neutral, DesktopPill.Checking.view("Home").dot)
         }
     }
 }

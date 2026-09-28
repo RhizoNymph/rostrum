@@ -14,22 +14,27 @@ import io.github.rhizonymph.rostrum.notifications.NotificationPermissionState
 import io.github.rhizonymph.rostrum.notifications.rememberNotificationPermission
 import io.github.rhizonymph.rostrum.ui.common.CollectMessages
 import io.github.rhizonymph.rostrum.ui.common.UiState
-import io.github.rhizonymph.rostrum.ui.common.rostrumViewModel
+import io.github.rhizonymph.rostrum.ui.common.profileViewModel
 
-/** The Settings tab's entry point, wired into the navigation graph. */
+/**
+ * The Settings tab's entry point, wired into the navigation graph. Everything
+ * here belongs to the active profile, except [profilesSection] (the list of
+ * profiles, from the profiles feature), shown first.
+ */
 @Composable
 fun SettingsRoute(
     onPairDesktop: () -> Unit,
     onOpenDesktop: () -> Unit,
     modifier: Modifier = Modifier,
+    profilesSection: @Composable () -> Unit = {},
 ) {
-    val viewModel = rostrumViewModel { container ->
-        SettingsViewModel(container.backend, container.session, container::onNotificationSettingsChanged)
+    val viewModel = profileViewModel { container, profile ->
+        SettingsViewModel(profile.backend, profile.session) { container.onNotificationSettingsChanged() }
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val permission = rememberNotificationPermission()
     val actions = remember(viewModel, permission) { PermissionAwareActions(viewModel, permission) }
-    val copySheet = rostrumViewModel { container -> DesktopConfigSheetViewModel(container.backend) }
+    val copySheet = profileViewModel { _, profile -> DesktopConfigSheetViewModel(profile.backend) }
     val sheetState by copySheet.state.collectAsStateWithLifecycle()
     CollectMessages(viewModel.messages.flow)
     CollectMessages(copySheet.messages.flow)
@@ -46,6 +51,7 @@ fun SettingsRoute(
         onPairDesktop = onPairDesktop,
         onCopySettings = copySheet::open,
         modifier = modifier,
+        profilesSection = profilesSection,
     )
     val machine = ((state.content as? UiState.Loaded)?.data?.desktop as? DesktopSummary.Connected)?.machine?.name
     CopySettingsSheet(sheetState, copySheet, machine)

@@ -123,10 +123,14 @@ fun desktopPillOf(paired: Boolean, info: Outcome<MachineInfo>?): DesktopPill = w
 /** The pill as drawn: label, dot colour (none for "Pair desktop"), accessibility text. */
 data class PillView(val label: String, val dot: ColorRole?, val description: String)
 
-fun DesktopPill.view(): PillView = when (this) {
-    DesktopPill.NotPaired -> PillView("Pair desktop", null, "Pair a desktop")
-    DesktopPill.Checking -> PillView("Desktop", ColorRole.Neutral, "Desktop, checking")
-    is DesktopPill.Connected -> PillView(name, ColorRole.Success, "Desktop $name, connected")
-    DesktopPill.Unreachable -> PillView("Unreachable", ColorRole.Warning, "Desktop unreachable")
-    is DesktopPill.Problem -> PillView("Desktop", ColorRole.Danger, "Desktop has a problem")
+/**
+ * The header pill: the active profile's name (tap to switch profiles), with
+ * a dot for its desktop's state, none when it has no desktop.
+ */
+fun DesktopPill.view(profile: String): PillView = when (this) {
+    DesktopPill.NotPaired -> PillView(profile, null, "Profile $profile. Switch profiles")
+    DesktopPill.Checking -> PillView(profile, ColorRole.Neutral, "Profile $profile, checking the desktop. Switch profiles")
+    is DesktopPill.Connected -> PillView(profile, ColorRole.Success, "Profile $profile, desktop $name connected. Switch profiles")
+    DesktopPill.Unreachable -> PillView(profile, ColorRole.Warning, "Profile $profile, desktop unreachable. Switch profiles")
+    is DesktopPill.Problem -> PillView(profile, ColorRole.Danger, "Profile $profile, the desktop has a problem. Switch profiles")
 }

@@ -7,7 +7,7 @@ import io.github.rhizonymph.rostrum.data.model.PrRef
 @Immutable
 class FeedActions(
     val openPullRequest: (PrRef) -> Unit = {},
-    val openDesktop: () -> Unit = {},
+    val openProfiles: () -> Unit = {},
     val refresh: () -> Unit = {},
     val retry: () -> Unit = {},
     val toggleCollapsed: (repo: String) -> Unit = {},

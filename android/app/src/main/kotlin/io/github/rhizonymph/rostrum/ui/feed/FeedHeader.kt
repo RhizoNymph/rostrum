@@ -1,8 +1,6 @@
 package io.github.rhizonymph.rostrum.ui.feed
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,7 +11,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
@@ -26,26 +23,22 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import io.github.rhizonymph.rostrum.data.model.FeedPreferences
 import io.github.rhizonymph.rostrum.ui.components.FilterPill
+import io.github.rhizonymph.rostrum.ui.components.HeaderPill
 import io.github.rhizonymph.rostrum.ui.components.RostrumIconButton
 import io.github.rhizonymph.rostrum.ui.components.RostrumIcons
 import io.github.rhizonymph.rostrum.ui.components.RostrumTextField
-import io.github.rhizonymph.rostrum.ui.components.StatusDot
 import io.github.rhizonymph.rostrum.ui.components.colors
 import io.github.rhizonymph.rostrum.ui.theme.RostrumText
 import io.github.rhizonymph.rostrum.ui.theme.RostrumTheme
 
 /**
- * The feed's 64dp header: wordmark and open count, the desktop pill, search
+ * The feed's 64dp header: wordmark and open count, the profile pill, search
  * and filters (with the accent dot while any filter narrows the feed).
  */
 @Composable
@@ -74,7 +67,13 @@ fun FeedHeader(
                 Text(openCountText(openCount), style = RostrumText.mono12, color = colors.textMuted, modifier = Modifier.padding(top = 3.dp))
             }
         }
-        DesktopPillButton(desktop, actions.openDesktop, Modifier.padding(end = 2.dp))
+        HeaderPill(
+            label = desktop.label,
+            description = desktop.description,
+            onClick = actions.openProfiles,
+            dot = desktop.dot?.colors()?.solid,
+            modifier = Modifier.padding(end = 2.dp),
+        )
         RostrumIconButton(
             icon = if (searchOpen) RostrumIcons.Close else RostrumIcons.Search,
             contentDescription = if (searchOpen) "Close search" else "Search pull requests",
@@ -99,43 +98,6 @@ fun FeedHeader(
                         .background(colors.accent),
                 )
             }
-        }
-    }
-}
-
-/** The 30dp pill with a status dot and the machine's name; the touch target is 44dp tall. */
-@Composable
-private fun DesktopPillButton(pill: PillView, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val colors = RostrumTheme.colors
-    val shape = RoundedCornerShape(15.dp)
-    Box(
-        modifier = modifier
-            .height(48.dp)
-            .clip(shape)
-            .clickable(onClick = onClick)
-            .clearAndSetSemantics {
-                contentDescription = pill.description
-                role = Role.Button
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        Row(
-            modifier = Modifier
-                .height(30.dp)
-                .clip(shape)
-                .background(colors.surface)
-                .border(1.dp, colors.border, shape)
-                .padding(horizontal = 11.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
-        ) {
-            pill.dot?.let { StatusDot(it.colors().solid) }
-            Text(
-                pill.label,
-                style = RostrumText.chip,
-                color = if (pill.dot == null) colors.accentText else colors.textSecondary,
-                maxLines = 1,
-            )
         }
     }
 }

@@ -4,19 +4,20 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.rhizonymph.rostrum.data.BackendError
 import io.github.rhizonymph.rostrum.data.Outcome
-import io.github.rhizonymph.rostrum.data.RostrumBackend
 import io.github.rhizonymph.rostrum.data.RostrumLog
 import io.github.rhizonymph.rostrum.data.model.DesktopProbe
 import io.github.rhizonymph.rostrum.data.model.PairingPreview
-import io.github.rhizonymph.rostrum.data.session.SessionRepository
+import io.github.rhizonymph.rostrum.data.model.Profile
+import io.github.rhizonymph.rostrum.data.model.ProfileId
+import io.github.rhizonymph.rostrum.data.profiles.PairedProfile
+import io.github.rhizonymph.rostrum.data.profiles.ProfileManager
+import io.github.rhizonymph.rostrum.data.profiles.ProfilesState
 import io.github.rhizonymph.rostrum.data.describe
 import io.github.rhizonymph.rostrum.data.model.DesktopConfigPreview
-import io.github.rhizonymph.rostrum.data.session.isSignedIn
 import io.github.rhizonymph.rostrum.ui.common.ActionState
 import io.github.rhizonymph.rostrum.ui.common.Messages
 import io.github.rhizonymph.rostrum.ui.common.running
 import io.github.rhizonymph.rostrum.ui.desktopconfig.DesktopConfigCopier
-import io.github.rhizonymph.rostrum.ui.navigation.OnboardingHold
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -70,10 +71,19 @@ data class ManualForm(
         get() = probe?.compatible == true && isCompletePairingCode(code) && step !is ManualStep.Pairing
 }
 
-/** After pairing: the offer to copy the desktop's settings, and the copy in flight. */
+/** A new desktop was paired while another profile is in use: switch to it? */
+data class SwitchOffer(
+    val profile: Profile,
+    val machine: String,
+    /** The profile in use, which "Stay" keeps. */
+    val current: String?,
+)
+
+/** After pairing: the offer to copy the desktop's settings into [profile], and the copy in flight. */
 data class CopyOffer(
+    val profile: ProfileId,
     val preview: DesktopConfigPreview,
-    /** What copying would change here, one line each. */
+    /** What copying would change in that profile, one line each. */
     val changes: List<String> = emptyList(),
     val action: ActionState = ActionState.Idle,
 )
@@ -83,9 +93,11 @@ data class PairUiState(
     val link: LinkState?,
     val manualOpen: Boolean,
     val manual: ManualForm = ManualForm(),
-    /** Paired, and the desktop's settings differ: ask before going on. */
+    /** Paired a new desktop while set up: ask before switching to it. */
+    val switchOffer: SwitchOffer? = null,
+    /** Paired, and the desktop's settings differ from the profile's: ask before going on. */
     val copy: CopyOffer? = null,
-    /** Pairing (and the copy question) finished; the route leaves the screen. */
+    /** Pairing (and its questions) finished; the route leaves the screen. */
     val paired: Boolean = false,
 )
 
@@ -97,6 +109,8 @@ interface PairActions {
     fun onCodeChange(code: String)
     fun probe()
     fun pairManual()
+    fun switchToPaired()
+    fun stayOnCurrent()
     fun copySettings()
     fun keepPhoneSettings()
 }
@@ -109,35 +123,43 @@ object NoPairActions : PairActions {
     override fun onCodeChange(code: String) = Unit
     override fun probe() = Unit
     override fun pairManual() = Unit
+    override fun switchToPaired() = Unit
+    override fun stayOnCurrent() = Unit
     override fun copySettings() = Unit
     override fun keepPhoneSettings() = Unit
 }
 
 /**
- * Pairing with the desktop: from a deep link (preview, then pair), or by hand
+ * Pairing with a desktop: from a deep link (preview, then pair), or by hand
  * (address and code, a probe to show the certificate fingerprint for the user
- * to compare, then pair pinned to it). Pairing also hands over the desktop's
- * GitHub token when the phone has none, which signs the app in.
+ * to compare, then pair pinned to it). Each desktop is its own profile:
+ *
+ * - First run (no active profile): the new profile becomes active once the
+ *   copy-settings question is answered.
+ * - A new desktop while set up: "Switch to it?"; switching asks the copy
+ *   question for the new profile, then switches. Staying changes nothing.
+ * - A desktop already paired: its profile is re-paired ("Re-paired …") and
+ *   the active profile stays as it is.
  */
 class PairViewModel(
-    private val backend: RostrumBackend,
-    private val session: SessionRepository,
+    private val profiles: ProfileManager,
     private val link: String?,
-    private val hold: OnboardingHold = OnboardingHold(),
     private val appMessages: Messages = Messages(),
 ) : ViewModel(), PairActions {
-    private val copier = DesktopConfigCopier(backend)
     private val _state = MutableStateFlow(
         PairUiState(link = if (link == null) null else LinkState.Reading, manualOpen = false),
     )
     val state: StateFlow<PairUiState> = _state.asStateFlow()
+
+    /** The profile to make active when the questions are answered. */
+    private var activateOnFinish: ProfileId? = null
 
     init {
         if (link != null) viewModelScope.launch { readLink(link) }
     }
 
     private suspend fun readLink(uri: String) {
-        val next = when (val parsed = backend.parsePairingLink(uri)) {
+        val next = when (val parsed = profiles.parsePairingLink(uri)) {
             is Outcome.Ok -> PairUiState(LinkState.Preview(parsed.value, ActionState.Idle), manualOpen = false)
             is Outcome.Err -> {
                 RostrumLog.w(TAG, "pair_link_invalid", "error" to parsed.error::class.simpleName)
@@ -152,17 +174,16 @@ class PairViewModel(
         val preview = _state.value.link as? LinkState.Preview ?: return
         if (preview.pairing == ActionState.Running) return
         setLink(preview.copy(pairing = ActionState.Running))
-        holdIfFirstRun()
+        val firstRun = isFirstRun()
         viewModelScope.launch {
-            when (val result = session.pairWithLink(uri)) {
+            when (val result = profiles.pairWithLink(uri)) {
                 is Outcome.Ok -> {
-                    RostrumLog.i(TAG, "paired_by_link", "machine" to result.value.machine.name)
+                    RostrumLog.i(TAG, "paired_by_link", "machine" to result.value.machine, "created" to result.value.created)
                     setLink(preview.copy(pairing = ActionState.Idle))
-                    offerCopy(result.value.machine.name)
+                    afterPairing(result.value, firstRun)
                 }
                 is Outcome.Err -> {
                     RostrumLog.w(TAG, "pair_by_link_failed", "error" to result.error::class.simpleName)
-                    hold.release()
                     setLink(preview.copy(pairing = ActionState.Failed(result.error)))
                 }
             }
@@ -209,7 +230,7 @@ class PairViewModel(
         }
         updateManual { it.copy(step = ManualStep.Probing) }
         viewModelScope.launch {
-            val step = when (val result = backend.probeDesktop(form.host.trim(), port)) {
+            val step = when (val result = profiles.probeDesktop(form.host.trim(), port)) {
                 is Outcome.Ok -> {
                     RostrumLog.i(TAG, "desktop_probed", "machine" to result.value.machine, "compatible" to result.value.compatible)
                     ManualStep.Probed(result.value)
@@ -228,38 +249,61 @@ class PairViewModel(
         val probe = form.probe ?: return
         if (!form.canPair) return
         updateManual { it.copy(step = ManualStep.Pairing(probe)) }
-        holdIfFirstRun()
+        val firstRun = isFirstRun()
         viewModelScope.launch {
-            when (val result = session.pairManual(probe.host, probe.port, probe.fingerprint, form.code)) {
+            when (val result = profiles.pairManual(probe.host, probe.port, probe.fingerprint, form.code)) {
                 is Outcome.Ok -> {
-                    RostrumLog.i(TAG, "paired_by_hand", "machine" to result.value.machine.name)
+                    RostrumLog.i(TAG, "paired_by_hand", "machine" to result.value.machine, "created" to result.value.created)
                     updateManual { it.copy(step = ManualStep.Probed(probe)) }
-                    offerCopy(result.value.machine.name)
+                    afterPairing(result.value, firstRun)
                 }
                 is Outcome.Err -> {
                     RostrumLog.w(TAG, "pair_by_hand_failed", "error" to result.error::class.simpleName)
-                    hold.release()
                     updateManual { it.copy(step = ManualStep.PairFailed(probe, result.error)) }
                 }
             }
         }
     }
 
-    /**
-     * On first run, pairing signs the app in, which would swap in the
-     * signed-in screens at once; hold them until the copy question is
-     * answered. From Settings (already signed in) nothing needs holding.
-     */
-    private fun holdIfFirstRun() {
-        if (!session.state.value.isSignedIn) hold.hold()
+    private fun isFirstRun(): Boolean = (profiles.state.value as? ProfilesState.Ready)?.active == null
+
+    private suspend fun afterPairing(paired: PairedProfile, firstRun: Boolean) {
+        when {
+            firstRun -> {
+                activateOnFinish = paired.profile.id
+                offerCopy(paired.profile.id, paired.machine)
+            }
+            paired.created -> {
+                val current = (profiles.state.value as? ProfilesState.Ready)?.activeProfile?.label
+                _state.update { it.copy(switchOffer = SwitchOffer(paired.profile, paired.machine, current)) }
+            }
+            else -> {
+                appMessages.send("Re-paired ${paired.machine}")
+                finish()
+            }
+        }
     }
 
-    /** Ask about copying the desktop's settings, unless it would change nothing or can't be read. */
-    private suspend fun offerCopy(machine: String) {
-        when (val preview = copier.preview()) {
+    override fun switchToPaired() {
+        val offer = _state.value.switchOffer ?: return
+        _state.update { it.copy(switchOffer = null) }
+        activateOnFinish = offer.profile.id
+        viewModelScope.launch { offerCopy(offer.profile.id, offer.machine) }
+    }
+
+    override fun stayOnCurrent() {
+        val offer = _state.value.switchOffer ?: return
+        _state.update { it.copy(switchOffer = null) }
+        appMessages.send("Paired with ${offer.machine}. Switch to it from the profile menu.")
+        viewModelScope.launch { finish() }
+    }
+
+    /** Ask about copying the desktop's settings into [profile], unless it would change nothing or can't be read. */
+    private suspend fun offerCopy(profile: ProfileId, machine: String) {
+        when (val preview = copierFor(profile).preview()) {
             is Outcome.Ok ->
                 if (preview.value.preview.changesAnything) {
-                    _state.update { it.copy(copy = CopyOffer(preview.value.preview, preview.value.changes)) }
+                    _state.update { it.copy(copy = CopyOffer(profile, preview.value.preview, preview.value.changes)) }
                 } else {
                     finish()
                 }
@@ -270,12 +314,14 @@ class PairViewModel(
         }
     }
 
+    private fun copierFor(profile: ProfileId) = DesktopConfigCopier(profiles.handle(profile).backend)
+
     override fun copySettings() {
         val offer = _state.value.copy ?: return
         if (offer.action.running) return
         _state.update { it.copy(copy = offer.copy(action = ActionState.Running)) }
         viewModelScope.launch {
-            when (val copied = copier.copy(offer.preview.machine)) {
+            when (val copied = copierFor(offer.profile).copy(offer.preview.machine)) {
                 is Outcome.Ok -> {
                     appMessages.send(copied.value)
                     finish()
@@ -288,16 +334,19 @@ class PairViewModel(
     override fun keepPhoneSettings() {
         if (_state.value.copy?.action?.running == true) return
         RostrumLog.i(TAG, "desktop_config_kept_phone")
-        finish()
+        viewModelScope.launch { finish() }
     }
 
-    private fun finish() {
-        hold.release()
-        _state.update { it.copy(copy = null, paired = true) }
-    }
-
-    override fun onCleared() {
-        hold.release()
+    /** Leave the screen, switching to the paired profile first when that was decided. */
+    private suspend fun finish() {
+        activateOnFinish?.let { id ->
+            activateOnFinish = null
+            when (val switched = profiles.switchTo(id)) {
+                is Outcome.Ok -> Unit
+                is Outcome.Err -> appMessages.send("Couldn't switch profiles: ${switched.error.describe()}")
+            }
+        }
+        _state.update { it.copy(switchOffer = null, copy = null, paired = true) }
     }
 
     private companion object {

@@ -33,11 +33,11 @@ class WorkManagerBackgroundWork(private val context: Context) : BackgroundWork {
 
 /**
  * Keeps the background check scheduled exactly when it can report something:
- * signed in, and at least one notification toggle on.
+ * some profile is signed in with at least one notification toggle on (see
+ * [io.github.rhizonymph.rostrum.data.profiles.ProfileManager.wantsNotifications]).
  */
 class NotificationScheduler(private val work: BackgroundWork) {
-    fun sync(signedIn: Boolean, notifyNewPullRequests: Boolean, notifyReviewRequests: Boolean) {
-        val wanted = signedIn && (notifyNewPullRequests || notifyReviewRequests)
+    fun sync(wanted: Boolean) {
         if (wanted) work.schedulePeriodic(WORK_NAME) else work.cancel(WORK_NAME)
         RostrumLog.i(TAG, "notification_schedule", "scheduled" to wanted)
     }

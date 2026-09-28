@@ -11,7 +11,7 @@ import io.github.rhizonymph.rostrum.data.model.UserRef
 import io.github.rhizonymph.rostrum.data.requiresPairing
 import io.github.rhizonymph.rostrum.data.secrets.SecretKey
 import io.github.rhizonymph.rostrum.data.secrets.SecretRead
-import io.github.rhizonymph.rostrum.data.secrets.SecretStore
+import io.github.rhizonymph.rostrum.data.secrets.ProfileSecrets
 import io.github.rhizonymph.rostrum.data.secrets.SecretWrite
 import io.github.rhizonymph.rostrum.data.secrets.describe
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -50,14 +50,16 @@ val SessionState.isPaired: Boolean
     get() = this is SessionState.Ready && desktop is DesktopLink.Paired
 
 /**
- * The only owner of the app's secrets. At start-up it reads them from the
- * [SecretStore] and hands them to the backend (which keeps them in memory
- * only); after sign-in or pairing it persists what the backend returned.
+ * One profile's session: the only owner of that profile's secrets. At
+ * start-up it reads them from its [ProfileSecrets] and hands them to the
+ * profile's backend (which keeps them in memory only); after sign-in or
+ * pairing it persists what the backend returned. Pairing itself goes
+ * through the registry ([io.github.rhizonymph.rostrum.data.profiles.ProfileManager]),
+ * which hands the result to [adoptPairing].
  */
 class SessionRepository(
     private val backend: RostrumBackend,
-    private val secrets: SecretStore,
-    private val deviceName: String,
+    private val secrets: ProfileSecrets,
 ) {
     private val _state = MutableStateFlow<SessionState>(SessionState.Restoring)
     val state: StateFlow<SessionState> = _state.asStateFlow()
@@ -141,18 +143,12 @@ class SessionRepository(
         }
     }
 
-    /** Pair from a `rostrum://pair?…` link and keep the pairing (and a handed-over token). */
-    suspend fun pairWithLink(uri: String): Outcome<PairingResult> = adopt(backend.pairWithLink(uri, deviceName))
-
-    /** Pair by address and code, pinned to the fingerprint the user compared. */
-    suspend fun pairManual(host: String, port: Int, fingerprint: String, code: String): Outcome<PairingResult> =
-        adopt(backend.pairManual(host, port, fingerprint, code, deviceName))
-
-    private suspend fun adopt(outcome: Outcome<PairingResult>): Outcome<PairingResult> {
-        val result = when (outcome) {
-            is Outcome.Err -> return outcome
-            is Outcome.Ok -> outcome.value
-        }
+    /**
+     * Keep a pairing the registry made into this profile (its core already
+     * uses it), and the GitHub token the desktop handed over when this
+     * profile has none.
+     */
+    suspend fun adoptPairing(result: PairingResult): Outcome<Unit> {
         val stored = listOf(
             secrets.write(SecretKey.DesktopEndpoint, result.endpoint),
             secrets.write(SecretKey.DeviceToken, result.deviceToken),
@@ -179,7 +175,7 @@ class SessionRepository(
             ready.copy(desktop = paired?.let { DesktopLink.Paired(it) } ?: DesktopLink.NotPaired)
         }
         RostrumLog.i(TAG, "paired", "machine" to result.machine.name, "github_handed_over" to (github != null))
-        return outcome
+        return Outcome.Ok(Unit)
     }
 
     /** Ask the paired desktop for its GitHub token (when this phone's copy stopped working). */

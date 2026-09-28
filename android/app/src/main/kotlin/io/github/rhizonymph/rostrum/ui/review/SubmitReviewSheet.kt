@@ -43,7 +43,7 @@ import io.github.rhizonymph.rostrum.data.model.ReviewEvent
 import io.github.rhizonymph.rostrum.ui.common.ActionState
 import io.github.rhizonymph.rostrum.ui.common.CollectMessages
 import io.github.rhizonymph.rostrum.ui.common.UiState
-import io.github.rhizonymph.rostrum.ui.common.rostrumViewModel
+import io.github.rhizonymph.rostrum.ui.common.profileViewModel
 import io.github.rhizonymph.rostrum.ui.common.running
 import io.github.rhizonymph.rostrum.ui.components.CardDivider
 import io.github.rhizonymph.rostrum.ui.components.ConfirmDialog
@@ -75,7 +75,7 @@ fun SubmitReviewSheet(
     onDismiss: () -> Unit,
     onSubmitted: () -> Unit,
 ) {
-    val viewModel = rostrumViewModel(key = "submit-review-$pr") { SubmitReviewViewModel(it.backend, pr) }
+    val viewModel = profileViewModel(key = "submit-review-$pr") { _, profile -> SubmitReviewViewModel(profile.backend, pr) }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val composer by viewModel.composer.state.collectAsStateWithLifecycle()
     val submitted by rememberUpdatedState(onSubmitted)

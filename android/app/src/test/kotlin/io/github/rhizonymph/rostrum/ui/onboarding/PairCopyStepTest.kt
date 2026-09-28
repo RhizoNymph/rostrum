@@ -3,17 +3,18 @@ package io.github.rhizonymph.rostrum.ui.onboarding
 import io.github.rhizonymph.rostrum.data.BackendError
 import io.github.rhizonymph.rostrum.data.fake.FakeCall
 import io.github.rhizonymph.rostrum.data.fake.FakeRostrumBackend
-import io.github.rhizonymph.rostrum.data.session.GitHubAuth
-import io.github.rhizonymph.rostrum.data.session.SessionRepository
-import io.github.rhizonymph.rostrum.data.session.SessionState
-import io.github.rhizonymph.rostrum.testing.InMemorySecretStore
+import io.github.rhizonymph.rostrum.data.profiles.ProfileManager
+import io.github.rhizonymph.rostrum.data.profiles.ProfilesState
+import io.github.rhizonymph.rostrum.data.session.isSignedIn
+import io.github.rhizonymph.rostrum.testing.FakeProfileRegistry
+import io.github.rhizonymph.rostrum.testing.InMemorySecretVault
 import io.github.rhizonymph.rostrum.testing.MainDispatcherExtension
 import io.github.rhizonymph.rostrum.testing.orFail
+import io.github.rhizonymph.rostrum.testing.pid
 import io.github.rhizonymph.rostrum.testing.testBackend
+import io.github.rhizonymph.rostrum.testing.testProfileManager
 import io.github.rhizonymph.rostrum.ui.common.ActionState
 import io.github.rhizonymph.rostrum.ui.common.Messages
-import io.github.rhizonymph.rostrum.ui.navigation.OnboardingHold
-import io.github.rhizonymph.rostrum.ui.settings.accountSecrets
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -28,7 +29,11 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 
-/** After pairing: "Copy settings from <machine>?", or straight on when nothing would change. */
+/**
+ * After pairing on first run: "Copy settings from <machine>?", or straight
+ * on when nothing would change. The new profile becomes active only once the
+ * question is answered.
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
 class PairCopyStepTest {
     @JvmField
@@ -38,25 +43,27 @@ class PairCopyStepTest {
     private val link = "rostrum://pair?v=1&m=nymph-desk&h=192.168.1.24&p=8485&c=WDJB-MJHT&fp=AAAA"
 
     private class Harness(
-        val backend: FakeRostrumBackend,
-        val session: SessionRepository,
+        val registry: FakeProfileRegistry,
+        val profiles: ProfileManager,
         val vm: PairViewModel,
-        val hold: OnboardingHold,
         val messages: MutableList<String>,
-    )
+    ) {
+        /** The profile pairing made (the fake registry numbers them p1, p2, …). */
+        val backend: FakeRostrumBackend get() = registry.backend(pid("p1"))
+        val active get() = (profiles.state.value as ProfilesState.Ready).active
+    }
 
     private suspend fun TestScope.harness(
         backend: FakeRostrumBackend = testBackend(signedIn = false, paired = false),
-        secrets: InMemorySecretStore = InMemorySecretStore(),
     ): Harness {
-        val session = SessionRepository(backend, secrets, "Pixel").also { it.restore() }
-        val hold = OnboardingHold()
+        val registry = FakeProfileRegistry { backend }
+        val profiles = testProfileManager(registry, InMemorySecretVault()).also { it.start() }
         val appMessages = Messages()
         val received = mutableListOf<String>()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { appMessages.flow.toList(received) }
-        val vm = PairViewModel(backend, session, link, hold, appMessages)
+        val vm = PairViewModel(profiles, link, appMessages)
         advanceUntilIdle()
-        return Harness(backend, session, vm, hold, received)
+        return Harness(registry, profiles, vm, received)
     }
 
     private fun TestScope.pair(h: Harness) {
@@ -65,17 +72,18 @@ class PairCopyStepTest {
     }
 
     @Test
-    fun `when the desktop's settings differ, pairing stops at the offer with the graph held`() = runTest(main.dispatcher) {
+    fun `when the desktop's settings differ, pairing stops at the offer before switching`() = runTest(main.dispatcher) {
         val h = harness()
         pair(h)
         val offer = h.vm.state.value.copy!!
+        assertEquals(pid("p1"), offer.profile)
         assertEquals("nymph-desk", offer.preview.machine)
         assertEquals(listOf("serde-rs/serde"), offer.preview.added)
         assertEquals(listOf("rust-lang/rust", "bevyengine/bevy"), offer.preview.removed)
         assertFalse(h.vm.state.value.paired)
-        // Pairing signed the phone in, but the first-run screens stay until the question is answered.
-        assertTrue((h.session.state.value as SessionState.Ready).github is GitHubAuth.SignedIn)
-        assertTrue(h.hold.held.value)
+        // The new profile is signed in, but not active until the question is answered.
+        assertTrue(h.profiles.handle(pid("p1")).session.state.value.isSignedIn)
+        assertNull(h.active)
     }
 
     @Test
@@ -87,7 +95,7 @@ class PairCopyStepTest {
         pair(h)
         assertNull(h.vm.state.value.copy)
         assertTrue(h.vm.state.value.paired)
-        assertFalse(h.hold.held.value)
+        assertEquals(pid("p1"), h.active)
         assertTrue(h.messages.isEmpty())
     }
 
@@ -98,13 +106,13 @@ class PairCopyStepTest {
         pair(h)
         assertNull(h.vm.state.value.copy)
         assertTrue(h.vm.state.value.paired)
-        assertFalse(h.hold.held.value)
+        assertEquals(pid("p1"), h.active)
         assertEquals(1, h.messages.size)
         assertTrue(h.messages.single().startsWith("Paired with nymph-desk. Couldn't read its settings"), h.messages.single())
     }
 
     @Test
-    fun `copying replaces the settings, refreshes the feed and finishes`() = runTest(main.dispatcher) {
+    fun `copying replaces the profile's settings, refreshes its feed and switches to it`() = runTest(main.dispatcher) {
         val h = harness()
         pair(h)
         val refreshes = h.backend.feedRefreshes
@@ -118,11 +126,11 @@ class PairCopyStepTest {
             h.backend.settings().orFail().repos,
         )
         assertEquals(listOf("Copied 4 repositories from nymph-desk"), h.messages)
-        assertFalse(h.hold.held.value)
+        assertEquals(pid("p1"), h.active)
     }
 
     @Test
-    fun `keeping this phone's settings changes nothing`() = runTest(main.dispatcher) {
+    fun `not copying changes nothing but still switches`() = runTest(main.dispatcher) {
         val h = harness()
         pair(h)
         val before = h.backend.settings().orFail()
@@ -131,7 +139,7 @@ class PairCopyStepTest {
         assertTrue(h.vm.state.value.paired)
         assertEquals(before, h.backend.settings().orFail())
         assertTrue(h.messages.isEmpty())
-        assertFalse(h.hold.held.value)
+        assertEquals(pid("p1"), h.active)
     }
 
     @Test
@@ -143,26 +151,20 @@ class PairCopyStepTest {
         advanceUntilIdle()
         assertEquals(ActionState.Failed(BackendError.DeviceRevoked), h.vm.state.value.copy!!.action)
         assertFalse(h.vm.state.value.paired)
-        assertTrue(h.hold.held.value)
+        assertNull(h.active)
         h.vm.keepPhoneSettings()
+        advanceUntilIdle()
         assertTrue(h.vm.state.value.paired)
-        assertFalse(h.hold.held.value)
+        assertEquals(pid("p1"), h.active)
     }
 
     @Test
-    fun `pairing from Settings (already signed in) never holds the graph`() = runTest(main.dispatcher) {
-        val h = harness(testBackend(signedIn = false, paired = false), accountSecrets(signedIn = true, paired = false))
-        pair(h)
-        assertTrue(h.vm.state.value.copy != null)
-        assertFalse(h.hold.held.value)
-    }
-
-    @Test
-    fun `a failed pairing releases the hold`() = runTest(main.dispatcher) {
+    fun `a failed pairing makes no profile and asks nothing`() = runTest(main.dispatcher) {
         val h = harness()
-        h.backend.failNext(FakeCall.PairWithLink, BackendError.DesktopUnreachable("refused"))
+        h.registry.failNext("pairDesktopWithLink", BackendError.DesktopUnreachable("refused"))
         pair(h)
-        assertFalse(h.hold.held.value)
         assertNull(h.vm.state.value.copy)
+        assertFalse(h.vm.state.value.paired)
+        assertEquals(ProfilesState.Ready(emptyList(), null), h.profiles.state.value)
     }
 }

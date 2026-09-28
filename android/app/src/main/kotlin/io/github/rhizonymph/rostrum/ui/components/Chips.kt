@@ -4,10 +4,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -15,9 +17,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -168,4 +173,46 @@ fun RefTag(ref: String, modifier: Modifier = Modifier) {
             .border(1.dp, colors.border, shape)
             .padding(horizontal = 8.dp, vertical = 2.dp),
     )
+}
+
+/**
+ * The header's 30dp pill (the active profile), with an optional status
+ * [dot]; the touch target is 48dp tall.
+ */
+@Composable
+fun HeaderPill(
+    label: String,
+    description: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    dot: Color? = null,
+) {
+    val colors = RostrumTheme.colors
+    val shape = RoundedCornerShape(15.dp)
+    Box(
+        modifier = modifier
+            .height(48.dp)
+            .clip(shape)
+            .clickable(onClick = onClick)
+            .clearAndSetSemantics {
+                contentDescription = description
+                role = Role.Button
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            modifier = Modifier
+                .height(30.dp)
+                .widthIn(max = 180.dp)
+                .clip(shape)
+                .background(colors.surface)
+                .border(1.dp, colors.border, shape)
+                .padding(horizontal = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            dot?.let { StatusDot(it) }
+            Text(label, style = RostrumText.chip, color = colors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
 }
