@@ -99,7 +99,7 @@ scroll region and one virtualized list.
 
 ## Managing repositories
 
-Repositories are added and removed from the feed's `repos` panel, which writes
+Repositories are added and removed from the feed's **repos** popover, which writes
 through `Config` and saves immediately. Adding accepts `owner/name` or a pasted
 GitHub URL, rejects duplicates and malformed input with a message under the
 input rather than silently dropping them, and starts fetching the new repo at
@@ -177,6 +177,18 @@ omitted.
 
 Nothing is pushed. After a local merge or rebase the detail pane's "ahead"
 count is the cue.
+
+## Header popovers
+
+`repos` and `authors` each open a `rostrum_ui::Popover`. The panel's top-left
+corner sits on the centre of its button, and it floats over the feed instead of
+pushing it down. At most one is open (`FeedView::popover:
+Option<HeaderPopover>`), so opening one closes the other. A press outside the
+panel and its button closes it. `escape` closes an open popover before it clears
+the filter or moves focus, because `dismiss_filter` checks the popover first.
+The popovers add no key contexts: `j`/`k` still resolve in `Feed`, and typing in
+the repo input still resolves in the input, so the navigation rules below are
+unchanged.
 
 ## Filtering and navigation
 

@@ -79,7 +79,10 @@ fn summary_strip(stats: &rostrum_diff::OverviewStats, theme: &Theme) -> impl Int
         .text_size(rems(0.78))
         .text_color(theme.text)
         .child(format!("{} files changed", stats.files))
-        .child(DiffStat::new(clamp(stats.additions), clamp(stats.deletions)))
+        .child(DiffStat::new(
+            clamp(stats.additions),
+            clamp(stats.deletions),
+        ))
         .when(stats.added_files > 0, |el| {
             el.child(Chip::new(format!("{} added", stats.added_files)).color(theme.added))
         })
@@ -108,9 +111,9 @@ fn render_map(
         .flex_none()
         .gap(px(3.))
         .children(
-            map.iter()
-                .enumerate()
-                .map(|(group_ix, group)| render_column(group_ix, group, files, max_churn, theme, cx)),
+            map.iter().enumerate().map(|(group_ix, group)| {
+                render_column(group_ix, group, files, max_churn, theme, cx)
+            }),
         )
 }
 
@@ -136,15 +139,11 @@ fn render_column(
                 .text_color(theme.text_muted)
                 .child(format!("{} ({})", group.label, group.file_count)),
         )
-        .child(
-            v_flex()
-                .flex_1()
-                .min_h(px(0.))
-                .gap(px(2.))
-                .children(group.tiles.iter().enumerate().map(|(tile_ix, tile)| {
-                    render_tile(group_ix, tile_ix, tile, files, max_churn, theme, cx)
-                })),
-        )
+        .child(v_flex().flex_1().min_h(px(0.)).gap(px(2.)).children(
+            group.tiles.iter().enumerate().map(|(tile_ix, tile)| {
+                render_tile(group_ix, tile_ix, tile, files, max_churn, theme, cx)
+            }),
+        ))
 }
 
 fn render_tile(
@@ -158,10 +157,7 @@ fn render_tile(
 ) -> AnyElement {
     let tooltip = match tile.file.and_then(|ix| files.get(ix)) {
         Some(file) => format!("{} — +{} −{}", file.path, tile.additions, tile.deletions),
-        None => format!(
-            "{} — +{} −{}",
-            tile.label, tile.additions, tile.deletions
-        ),
+        None => format!("{} — +{} −{}", tile.label, tile.additions, tile.deletions),
     };
 
     let base = div()
