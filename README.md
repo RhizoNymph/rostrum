@@ -92,6 +92,23 @@ immediately. `hide_empty_repos` is on by default and hides repositories that
 have loaded with no open pull requests; one that is still loading or that failed
 always stays visible.
 
+## Phone pairing (`rostrumd`)
+
+`rostrumd` is a small desktop daemon that lets the Android app see and run
+the local pull/merge/rebase operations above on this machine's clones. It
+serves a page on port 8484 — open it on the LAN or tailnet to download the
+APK; from this computer (or over the tailnet) it also generates pairing codes
+as a QR code and lists paired phones — and the phone's API on port 8485 over
+a pinned, self-signed TLS certificate. Install it as a systemd user service:
+
+```sh
+bash scripts/install-rostrumd.sh   # build, install to ~/.local/bin, enable and start
+journalctl --user -u rostrumd -f
+```
+
+Settings live in `~/.config/rostrum/rostrumd.json`; see
+`docs/features/rostrumd.md`.
+
 ## Keys
 
 | Key | Action |
