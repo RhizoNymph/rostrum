@@ -38,6 +38,10 @@ Overview:
       Narrowing the feed to chosen people — authored, or optionally also
       assigned/review-requested — and the persistence of every feed setting
       that is a standing preference rather than a half-finished search.
+    remote_protocol: >
+      The contract between a paired phone and `rostrumd`: pairing codes and
+      links, device tokens, certificate pinning, and the authenticated API for
+      local state, local jobs, sync-all and handoff sessions.
     conflict_handoff: >
       When a local rebase or merge stops on conflicts and a handler is
       configured, leaves the worktree in place and spawns the handler in a
@@ -125,6 +129,11 @@ Features Index:
     entry_points: [crates/rostrum-handoff/src/lib.rs, crates/rostrum-git/src/context.rs]
     depends_on: [local_git]
     doc: docs/features/conflict_handoff.md
+  remote_protocol:
+    description: Phone ↔ desktop protocol — pairing, device tokens, pinned TLS client, API types.
+    entry_points: [crates/rostrum-remote/src/lib.rs, crates/rostrum-remote/src/client.rs]
+    depends_on: [local_git]
+    doc: docs/features/remote_protocol.md
 ```
 
 ## Workspace layout
@@ -142,6 +151,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 | `rostrum-git` | no | Worktrees, clone status, divergence, pull/merge/rebase, conflict context via the `git` CLI |
 | `rostrum-handoff` | no | Context bundle rendering and tmux session spawning for conflict handoff |
 | `rostrum-local` | no | One pull request's local state (`local_state`) and one local operation on it (`run_local_job`), shared by every caller |
+| `rostrum-remote` | no | Phone ↔ desktop protocol: pairing, device tokens, API types, and (feature `client`) the pinned HTTPS client |
 | `rostrum-config` | no | `config.json`: watched repositories, clones, feed preferences, conflict handler |
 | `rostrum-md` | no | `pulldown-cmark` → renderable markdown model |
 | `rostrum-ui` | yes | Theme, components, text/selection, markdown element |
