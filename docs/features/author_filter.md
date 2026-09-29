@@ -167,7 +167,7 @@ is unbounded and would cost a cap and a round trip per busy pull request.
 
 ## Which settings persist
 
-`crates/rostrum/src/config.rs` owns the answer, in one pair of functions:
+`crates/rostrum-config/src/lib.rs` owns the answer, in one pair of functions:
 
 | Setting | Persisted | Why |
 | --- | --- | --- |
@@ -244,7 +244,7 @@ authors  [you] [alice] [bob] … [+7 more]
 | `crates/rostrum-core/src/feed.rs` | `FeedFilter::{authors, include_involved, accepts_author, toggle_author}`. |
 | `crates/rostrum-github/src/graphql.rs` | Query fields; `AuthorNode::into_user`, `ReviewRequestNode`; decoding into the model. |
 | `crates/rostrum-github/src/client.rs` | `RepoPullRequests::viewer`. |
-| `crates/rostrum/src/config.rs` | Persisted fields; `feed_filter`, `absorb_filter`, `load_from`, `save_to`. |
+| `crates/rostrum-config/src/lib.rs` | Persisted fields; `feed_filter`, `absorb_filter`, `load_from`, `save_to`. |
 | `crates/rostrum/src/sync.rs` | `Store::{viewer, authors, edit_filter}` and the persisted setters. |
 | `crates/rostrum/src/feed.rs` | `render_author_filter`, `AUTHOR_CHIP_LIMIT`, `author_tooltip`, the toggle handlers. |
 

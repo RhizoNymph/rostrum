@@ -24,10 +24,8 @@ use rostrum_git::{Autostash, BranchName};
 use rostrum_github::{GitHubClient, GitHubError, client::RepoPullRequests, resolve_token};
 use rostrum_handoff::PrMeta;
 
-use crate::{
-    config::{Config, ConflictHandler, Warning},
-    localops::{LocalJob, LocalOp, LocalResult, run_local_job},
-};
+use rostrum_config::{Config, ConflictHandler, Warning};
+use rostrum_local::{LocalJob, LocalOp, LocalResult, run_local_job};
 
 /// How long to wait before re-asking for a merge state GitHub is computing,
 /// doubling per attempt.
@@ -374,7 +372,7 @@ impl Store {
     /// Every persisted filter setting goes through here, so "changed in the UI"
     /// and "saved to disk" cannot come apart the way they did for `hide_drafts`.
     /// The search query is edited directly instead — see
-    /// [`crate::config::Config::feed_filter`] for why it is not a preference.
+    /// [`rostrum_config::Config::feed_filter`] for why it is not a preference.
     fn edit_filter(&mut self, edit: impl FnOnce(&mut FeedFilter), cx: &mut Context<Self>) {
         edit(&mut self.state.filter);
         self.config.absorb_filter(&self.state.filter);

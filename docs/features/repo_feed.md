@@ -163,7 +163,7 @@ uses), and a progress line.
 with a clone, synchronously, into `LocalJob`s, then runs them **one at a
 time** inside one retained task: git operations on one clone share refs, and
 one-at-a-time is what the progress line reads. Each job is the same
-`localops::run_local_job` the detail pane's buttons call — find the worktree,
+`rostrum_local::run_local_job` the detail pane's buttons call — find the worktree,
 run, hand off or abort a conflict — so the two cannot drift. A pull request
 whose branch is not checked out anywhere is skipped with `NotCheckedOut`.
 Dropping the task cancels between jobs, never mid-git.
@@ -246,4 +246,4 @@ repositories, and is what everything below assumes.
 | `crates/rostrum/src/feed/rows.rs` | Per-variant row renderers |
 | `crates/rostrum/src/feed/nav.rs` | Keyboard navigation, selection actions |
 | `crates/rostrum/src/sync.rs` | `fetch_divergences` (the batched compare), `sync_all` |
-| `crates/rostrum/src/localops.rs` | `run_local_job`, one job of a sync |
+| `crates/rostrum-local/src/jobs.rs` | `run_local_job`, one job of a sync |

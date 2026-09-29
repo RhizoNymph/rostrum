@@ -1,0 +1,17 @@
+[package]
+name = "rostrum-local"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rostrum-config.workspace = true
+rostrum-core.workspace = true
+rostrum-git.workspace = true
+rostrum-handoff.workspace = true
+
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

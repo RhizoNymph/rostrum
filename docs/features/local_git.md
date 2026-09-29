@@ -255,6 +255,14 @@ Live verification is `cargo run -p rostrum-git --example inspect -- <path>
   so counting them would grey out buttons that would have worked.
 - `Repo` is cheap to clone (`Arc`-backed), like `GitHubClient`, so views hand
   out copies rather than borrowing across an await.
+- A local job always works against a freshly fetched target. `pull_rebase`
+  fetches for itself; `run_local_job` fetches `origin/<head>` or
+  `origin/<base>` before a merge or rebase, and a failed fetch fails the job.
+  Without it, "Rebase onto base" measured against whatever `origin/<base>`
+  happened to be on disk and could report "up to date" against a base that had
+  moved on GitHub.
+- The UI-free half lives in `rostrum-local`, not in the desktop crate, so the
+  desktop app and `rostrumd` run the identical sequence.
 
 ## Files
 
@@ -272,7 +280,9 @@ Live verification is `cargo run -p rostrum-git --example inspect -- <path>
 | `crates/rostrum-git/src/repo/describe.rs` | `Repo::conflict_context` — see `conflict_handoff.md` |
 | `crates/rostrum-git/src/worktree.rs` | `WorktreeEntry`, `parse_worktree_list` |
 | `crates/rostrum-git/src/context.rs` | `ConflictContext` and its parsers — see `conflict_handoff.md` |
-| `crates/rostrum/src/localops.rs` | `run_local_job` — one operation, shared by the detail pane and sync-all |
+| `crates/rostrum-local/src/jobs.rs` | `run_local_job` — one operation, shared by the detail pane, sync-all, and any other caller; fetches its target first |
+| `crates/rostrum-local/src/state.rs` | `local_state` (worktree, drift from `origin/<head>`, blocker, in-progress, handoff session) and `abort_in_progress` |
+| `crates/rostrum-local/tests/local_state.rs` | Both against real repositories built in a scratch directory |
 | `crates/rostrum/src/detail.rs` | `LocalState`, `load_local`, `run_local_op`, `abort_local`, `render_local` |
 | `crates/rostrum/src/sync.rs` | `Store::sync_all`, `SyncProgress` |
-| `crates/rostrum/src/config.rs` | `clones` map, `autostash` flag, `local_path` |
+| `crates/rostrum-config/src/lib.rs` | `clones` map, `autostash` flag, `local_path` |

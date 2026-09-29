@@ -175,7 +175,7 @@ When a clone is configured for the repository, `PrDetail::local` is a
   and — when it is and a handler is configured — whether the handoff session
   still exists.
 
-Four buttons, all routed through `localops::run_local_job` — the same function
+Four buttons, all routed through `rostrum_local::run_local_job` — the same function
 the feed's sync-all runs, so the two cannot drift: `Pull (rebase)` and `Merge
 remote` against `origin/<head>`; `Merge base` and `Rebase onto base` against
 `origin/<base>`. The stash checkbox toggles the persisted `autostash` setting

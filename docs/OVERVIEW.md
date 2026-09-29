@@ -112,12 +112,12 @@ Features Index:
     doc: docs/features/github_sync.md
   local_git:
     description: Worktree-aware clone status, divergence, pull/merge/rebase, sync-all.
-    entry_points: [crates/rostrum-git/src/lib.rs, crates/rostrum/src/localops.rs, crates/rostrum/src/sync.rs]
+    entry_points: [crates/rostrum-git/src/lib.rs, crates/rostrum-local/src/lib.rs, crates/rostrum/src/sync.rs]
     depends_on: [pr_detail, repo_feed]
     doc: docs/features/local_git.md
   author_filter:
     description: Author/involvement filtering of the feed, and persisted feed settings.
-    entry_points: [crates/rostrum-core/src/authors.rs, crates/rostrum/src/config.rs]
+    entry_points: [crates/rostrum-core/src/authors.rs, crates/rostrum-config/src/lib.rs]
     depends_on: [repo_feed, github_sync]
     doc: docs/features/author_filter.md
   conflict_handoff:
@@ -141,6 +141,8 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 | `rostrum-diff` | no | Unified-diff parsing, `DiffRow` model, syntax highlighting |
 | `rostrum-git` | no | Worktrees, clone status, divergence, pull/merge/rebase, conflict context via the `git` CLI |
 | `rostrum-handoff` | no | Context bundle rendering and tmux session spawning for conflict handoff |
+| `rostrum-local` | no | One pull request's local state (`local_state`) and one local operation on it (`run_local_job`), shared by every caller |
+| `rostrum-config` | no | `config.json`: watched repositories, clones, feed preferences, conflict handler |
 | `rostrum-md` | no | `pulldown-cmark` → renderable markdown model |
 | `rostrum-ui` | yes | Theme, components, text/selection, markdown element |
 | `rostrum` | yes | Bootstrap, window, root views, `SyncEngine` |

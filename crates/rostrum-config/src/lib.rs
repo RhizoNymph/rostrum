@@ -108,6 +108,21 @@ pub struct ConflictHandler {
     pub command: String,
 }
 
+/// Why the config could not be written.
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    #[error("could not determine a config directory")]
+    NoConfigDir,
+    #[error("could not write {}: {source}", path.display())]
+    Write {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("could not serialise the config: {0}")]
+    Serialize(#[source] serde_json::Error),
+}
+
 /// Anything the user should know about but that should not stop startup.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Warning(pub String);
@@ -173,16 +188,21 @@ impl Config {
         }
     }
 
-    pub fn save(&self) -> anyhow::Result<()> {
-        let path = Self::path().ok_or_else(|| anyhow::anyhow!("no config directory"))?;
+    pub fn save(&self) -> Result<(), ConfigError> {
+        let path = Self::path().ok_or(ConfigError::NoConfigDir)?;
         self.save_to(&path)
     }
 
-    pub fn save_to(&self, path: &Path) -> anyhow::Result<()> {
+    pub fn save_to(&self, path: &Path) -> Result<(), ConfigError> {
+        let io = |source| ConfigError::Write {
+            path: path.to_path_buf(),
+            source,
+        };
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+            std::fs::create_dir_all(parent).map_err(io)?;
         }
-        std::fs::write(path, serde_json::to_string_pretty(self)?)?;
+        let text = serde_json::to_string_pretty(self).map_err(ConfigError::Serialize)?;
+        std::fs::write(path, text).map_err(io)?;
         Ok(())
     }
 

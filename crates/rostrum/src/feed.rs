@@ -25,8 +25,9 @@ use rostrum_ui::{
     },
 };
 
+use rostrum_local::LocalResult;
+
 use crate::{
-    localops::LocalResult,
     nav::{self, Nav},
     sync::{Store, SyncKind},
 };
