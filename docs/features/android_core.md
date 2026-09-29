@@ -238,6 +238,12 @@ Compose UI ──suspend call──▶ UniFFI scaffolding (async_runtime = "toki
   (with its device token) in memory as the session's remote, and returns the
   secrets for Kotlin to store. A handed-over GitHub token is applied only if
   none is set.
+- A re-pairing names the device it replaces: when this core already has a
+  remote for a desktop with the same certificate fingerprint (paired this
+  session, or restored with `setRemote`), the pair request carries that
+  remote's device token as `replaces`, and the desktop drops that device's
+  record once the new pairing succeeds. Otherwise `replaces` is absent and the
+  desktop falls back to replacing a record with the same device name.
 - Every desktop call goes through `rostrum_remote::client::RemoteClient`:
   the certificate is pinned by fingerprint, hosts are tried in order from the
   last one that answered, and a request is never re-sent to a second host.

@@ -666,3 +666,59 @@ async fn copying_the_desktops_config_end_to_end() {
     assert_eq!(repo_names(&feed), vec!["zed-industries/zed"]);
     assert_eq!(feed.query, "");
 }
+
+/// What the last `/api/v1/pair` request asked the desktop to replace.
+fn replaced(log: &support::Log) -> serde_json::Value {
+    let request = log.last("/api/v1/pair").expect("a pair request");
+    let body: serde_json::Value = serde_json::from_str(&request.body).expect("json");
+    body["replaces"].clone()
+}
+
+#[tokio::test]
+async fn re_pairing_names_the_device_token_it_replaces() {
+    let scratch = Scratch::new("replaces");
+    let core = core(&scratch).await;
+    let (port, fingerprint, log) = serve(desktop(1)).await;
+
+    // A first pairing replaces nothing.
+    core.pair_with_link(link(port, fingerprint), "Pixel".into())
+        .await
+        .expect("pairs");
+    assert!(replaced(&log).is_null(), "{}", replaced(&log));
+
+    // Pairing the same desktop again names the token this core holds for it.
+    core.pair_with_link(link(port, fingerprint), "Pixel".into())
+        .await
+        .expect("re-pairs");
+    assert_eq!(replaced(&log), issued_token().expose());
+
+    // A remote restored at startup counts the same way.
+    let fresh = Scratch::new("replaces-restored");
+    let restored = self::core(&fresh).await;
+    let saved = serde_json::to_string(&endpoint(port, fingerprint)).expect("json");
+    let previous = DeviceToken::from_bytes([5; 32]);
+    restored
+        .set_remote(saved, previous.expose().to_string())
+        .await
+        .expect("remote");
+    restored
+        .pair_with_link(link(port, fingerprint), "Pixel".into())
+        .await
+        .expect("re-pairs");
+    assert_eq!(replaced(&log), previous.expose());
+
+    // A remote for another desktop is not this desktop's device to drop.
+    let other = Scratch::new("replaces-other");
+    let elsewhere = self::core(&other).await;
+    let foreign =
+        serde_json::to_string(&endpoint(port, CertFingerprint::of_der(b"another"))).expect("json");
+    elsewhere
+        .set_remote(foreign, previous.expose().to_string())
+        .await
+        .expect("remote");
+    elsewhere
+        .pair_with_link(link(port, fingerprint), "Pixel".into())
+        .await
+        .expect("pairs");
+    assert!(replaced(&log).is_null(), "{}", replaced(&log));
+}
