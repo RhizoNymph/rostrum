@@ -84,8 +84,8 @@ without a window.
    zero counts.
 4. Entries sort: viewer first, then by newest pull request descending, then by
    login ascending.
-5. `visible(entries, selected, limit)` caps the row for rendering and reports
-   how many were dropped, for the `+N more` control.
+5. `visible(entries, selected, limit)` orders the roster for rendering, and can
+   cap it and report how many were dropped. The popover passes no cap.
 
 Ordering rationale, in order of the rules:
 
@@ -197,24 +197,37 @@ that they do not.
 
 ## Rendering
 
-`FeedView::render_author_filter` in `crates/rostrum/src/feed.rs` draws, above
-the feed and below the `hide empty repos` row:
+The filter sits behind an **authors** button in the filter bar, next to
+**repos**. The button's label shows the selection (`authors`, or `authors · 2`)
+and is `Primary` while a selection is active, so a narrowed feed is visible even
+with the popover closed. Clicking it opens a floating popover
+(`FeedView::render_author_popover`, drawn by `rostrum_ui::Popover`) whose
+top-left corner sits on the centre of the button:
 
 ```
-authors  [you] [alice] [bob] … [+7 more]
-         [x] include involved in   opened by, assigned to, or awaiting review from
+[authors · 2] [repos (6)]
+        ┌──────────────────────────┐
+        │ [x] you (you) · 3        │
+        │ [x] alice · 2            │
+        │ [ ] bob · 1              │
+        │ ───────────────────────  │
+        │ [ ] include involved in  │
+        │ opened by                │
+        │ [all authors]            │
+        └──────────────────────────┘
 ```
 
-- Chips are `Button`s, `Primary` when selected and `Subtle` otherwise — the same
-  vocabulary the `drafts` toggle already uses.
-- Element ids are `author-<login key>`, unique because the roster is keyed by
-  `LoginKey`.
-- The row renders `None` before the first refresh answers. An empty row of a
-  control that is about to populate itself is worse than no row.
-- `authors_expanded` lives on the view and is **not** persisted: it is a glance
-  at a long list, not a preference about what the feed shows.
+- Each author is a `Checkbox` labelled with the login and open-PR count. Element
+  ids are `author-<login key>`, unique because the roster is keyed by `LoginKey`.
+- Order comes from `rostrum_core::authors::visible`: the viewer and selected
+  authors first. The list is **not** capped. It scrolls inside the popover, so
+  no author is ever hidden behind `+N more`.
+- Before the first refresh answers, the popover says the feed has not loaded
+  rather than drawing an empty list.
 - `all authors` appears only with a selection, and clears it without disturbing
-  the rest of the filter. `clear` (escape) still resets everything.
+  the rest of the filter. `clear` (escape with the popover closed) still resets
+  everything.
+- Whether the popover is open lives on the view and is **not** persisted.
 
 ## Invariants
 

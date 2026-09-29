@@ -1,0 +1,25 @@
+[Unit]
+Description=rostrumd: rostrum's pairing page and paired-phone API
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/rostrumd
+Restart=on-failure
+RestartSec=5
+# git, gh, tmux and tailscale are found on this PATH. A conflict handler's
+# command runs in an interactive shell inside tmux, so the user's rc files
+# still decide its real PATH.
+Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+# Optional, never committed: e.g. GITHUB_TOKEN=… when `gh` is not logged in.
+EnvironmentFile=-%h/.config/rostrum/rostrumd.env
+# A conflict handoff may be what starts the user's tmux server, which would
+# then live in this unit's cgroup. Stopping or restarting rostrumd must never
+# take the user's tmux sessions with it, so only the main process is
+# signalled; it waits for its own git work before exiting.
+KillMode=process
+# rostrumd waits up to 330 s for running git work (a write is bounded at
+# 300 s by rostrum-git), so give it longer than that before SIGKILL.
+TimeoutStopSec=360
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,47 @@
+[package]
+name = "rostrumd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Headless desktop daemon: pairing page, APK download, and the paired phone's local-git API"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "rostrumd"
+path = "src/main.rs"
+
+[dependencies]
+rostrum-config.workspace = true
+rostrum-core.workspace = true
+rostrum-git.workspace = true
+rostrum-github.workspace = true
+rostrum-handoff.workspace = true
+rostrum-local.workspace = true
+rostrum-remote.workspace = true
+
+axum.workspace = true
+axum-server.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+getrandom.workspace = true
+if-addrs.workspace = true
+qrcode.workspace = true
+rcgen.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+socket2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net", "sync", "signal", "fs", "io-util"] }
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+rostrum-remote = { workspace = true, features = ["client"] }
+# `test-util` pauses the clock for pairing-code expiry tests.
+tokio = { workspace = true, features = ["test-util"] }
+tower.workspace = true

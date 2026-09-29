@@ -19,7 +19,7 @@ use rostrum_core::{
     flatten,
 };
 use rostrum_ui::{
-    ActiveTheme, InputEvent, TextInput,
+    ActiveTheme, InputEvent, Popover, PopoverAnchor, TextInput,
     components::{
         Button, ButtonStyle, Checkbox, Chip, DiffStat, Dot, Initial, h_flex, hex_color, v_flex,
     },
@@ -83,26 +83,22 @@ pub enum FeedEvent {
 /// Corner radius of a repo container, in pixels.
 const ROW_RADIUS: f32 = 8.;
 
-/// How many authors the row shows before collapsing the rest behind "+N more".
-///
-/// A dozen watched repositories can easily carry fifty distinct authors, and a
-/// filter control taller than the feed it filters is not a control. The cap is
-/// on the *unselected* tail only: the viewer and every selected author are
-/// always drawn, because a chip you cannot see is a filter you cannot switch
-/// off.
-const AUTHOR_CHIP_LIMIT: usize = 12;
+/// Which header popover is open. At most one: opening either closes the other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HeaderPopover {
+    Authors,
+    Repos,
+}
 
 pub struct FeedView {
     store: Entity<Store>,
     filter: Entity<TextInput>,
-    /// Input for adding a repository, shown while the manage panel is open.
+    /// Input for adding a repository, shown while the repos popover is open.
     repo_input: Entity<TextInput>,
-    /// Whether the repository management panel is open.
-    managing_repos: bool,
-    /// Whether the author row is showing everyone rather than the first
-    /// [`AUTHOR_CHIP_LIMIT`]. Deliberately *not* persisted: it is a glance at a
-    /// long list, not a preference about what the feed shows.
-    authors_expanded: bool,
+    /// The open header popover, if any. Deliberately *not* persisted.
+    popover: Option<HeaderPopover>,
+    authors_anchor: PopoverAnchor,
+    repos_anchor: PopoverAnchor,
     /// Why the last add attempt failed, shown under the input.
     repo_error: Option<String>,
     focus_handle: FocusHandle,
@@ -138,8 +134,9 @@ impl FeedView {
             store,
             filter,
             repo_input,
-            managing_repos: false,
-            authors_expanded: false,
+            popover: None,
+            authors_anchor: PopoverAnchor::default(),
+            repos_anchor: PopoverAnchor::default(),
             repo_error: None,
             focus_handle: cx.focus_handle(),
             feed,
@@ -150,10 +147,23 @@ impl FeedView {
 
     // --- repositories ------------------------------------------------------
 
-    fn toggle_repo_panel(&mut self, cx: &mut Context<Self>) {
-        self.managing_repos = !self.managing_repos;
+    /// Open `which`, or close it if it is already open. Opening one header
+    /// popover closes the other.
+    fn toggle_popover(&mut self, which: HeaderPopover, cx: &mut Context<Self>) {
+        self.popover = if self.popover == Some(which) {
+            None
+        } else {
+            Some(which)
+        };
         self.repo_error = None;
         cx.notify();
+    }
+
+    fn close_popover(&mut self, cx: &mut Context<Self>) {
+        if self.popover.take().is_some() {
+            self.repo_error = None;
+            cx.notify();
+        }
     }
 
     fn add_repo(&mut self, cx: &mut Context<Self>) {
@@ -188,7 +198,8 @@ impl FeedView {
             .update(cx, |store, cx| store.set_hide_empty_repos(hide, cx));
     }
 
-    /// The repository list, with a remove control each and an input to add one.
+    /// The repos popover: the repository list, with a remove control each and
+    /// an input to add one.
     ///
     /// This is the only place every configured repository is listed: hidden and
     /// collapsed repositories contribute no feed rows, so without it a repo
@@ -206,14 +217,6 @@ impl FeedView {
 
         v_flex()
             .gap_1p5()
-            .p_2()
-            .rounded_tl(px(6.))
-            .rounded_tr(px(6.))
-            .rounded_bl(px(6.))
-            .rounded_br(px(6.))
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.surface)
             .children(
                 repos
                     .into_iter()
@@ -379,10 +382,13 @@ impl FeedView {
         window.focus(&handle, cx);
     }
 
-    /// `escape`: clear an active filter first, and only give focus back to the
+    /// `escape`: close an open header popover first, then clear an active
+    /// filter, and only give focus back to the
     /// rows once there is nothing left to clear.
     fn dismiss_filter(&mut self, _: &DismissFilter, window: &mut Window, cx: &mut Context<Self>) {
-        if self.store.read(cx).state.filter.is_active() {
+        if self.popover.is_some() {
+            self.close_popover(cx);
+        } else if self.store.read(cx).state.filter.is_active() {
             self.clear_filter(cx);
         } else {
             window.focus(&self.focus_handle, cx);
@@ -732,120 +738,128 @@ impl FeedView {
             .into_any_element()
     }
 
-    /// The author filter: a chip per person with open work, the viewer first
-    /// and everyone else by recency, with the checkbox that widens a selection
-    /// from "opened by" to "waiting on".
+    /// The authors popover: every author with open work, selected ones and the
+    /// viewer first, as a toggleable list, plus the "include involved"
+    /// widening and a way back to everyone.
     ///
-    /// Returns `None` before the first refresh answers. An empty row of a
-    /// control that is about to populate itself is worse than no row.
-    fn render_author_filter(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+    /// The list is not capped the way the old inline row was: it scrolls
+    /// inside the popover instead, so nobody is ever hidden behind "+N more".
+    /// Ordering still comes from [`rostrum_core::authors::visible`].
+    fn render_author_popover(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let store = self.store.read(cx);
         let selected = store.state.filter.authors.clone();
         let include_involved = store.state.filter.include_involved;
         let entries = store.authors();
+        let everyone = entries.len();
+        let VisibleAuthors { shown, .. } = visible_authors(entries, &selected, everyone);
 
-        if entries.is_empty() {
-            return None;
-        }
-
-        // Expanding is "no cap", expressed as a limit nothing exceeds. The
-        // rule about what a cap may and may not drop lives in core, with its
-        // tests; see [`rostrum_core::authors::visible`].
-        let limit = if self.authors_expanded {
-            entries.len()
-        } else {
-            AUTHOR_CHIP_LIMIT
-        };
-        let VisibleAuthors { shown, hidden } = visible_authors(entries, &selected, limit);
-
-        Some(
-            v_flex()
-                .gap_1p5()
-                .child(
-                    h_flex()
-                        .gap_1p5()
-                        .flex_wrap()
-                        .child(
-                            div()
-                                .text_size(rems(0.7))
-                                .text_color(theme.text_subtle)
-                                .child("authors"),
-                        )
-                        .children(shown.into_iter().map(|entry| {
-                            let checked = selected.contains(&entry.key);
-                            let login = entry.key.clone();
-                            Button::new(
-                                SharedString::from(format!("author-{}", entry.key)),
-                                entry.user.login.clone(),
-                            )
-                            .style(if checked {
-                                ButtonStyle::Primary
-                            } else {
-                                ButtonStyle::Subtle
-                            })
-                            .tooltip(author_tooltip(&entry, checked))
-                            .on_click(cx.listener(
-                                move |this, _, _window, cx| this.toggle_author(login.clone(), cx),
-                            ))
-                        }))
-                        .when(hidden > 0, |el| {
-                            el.child(
-                                Button::new("authors-more", format!("+{hidden} more"))
-                                    .tooltip("Show every author with open work")
-                                    .on_click(cx.listener(|this, _, _window, cx| {
-                                        this.authors_expanded = true;
-                                        cx.notify();
-                                    })),
-                            )
-                        })
-                        .when(self.authors_expanded, |el| {
-                            el.child(
-                                Button::new("authors-less", "fewer")
-                                    .tooltip("Collapse the author list")
-                                    .on_click(cx.listener(|this, _, _window, cx| {
-                                        this.authors_expanded = false;
-                                        cx.notify();
-                                    })),
-                            )
-                        }),
+        v_flex()
+            .gap_1()
+            .when(shown.is_empty(), |el| {
+                el.child(
+                    div()
+                        .text_size(rems(0.72))
+                        .text_color(theme.text_subtle)
+                        .child("No authors yet — the feed has not loaded"),
                 )
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .child(
-                            Checkbox::new(
-                                "authors-include-involved",
-                                "include involved in",
-                                include_involved,
-                            )
-                            .on_toggle(
-                                cx.listener(|this, _, _window, cx| {
-                                    this.toggle_include_involved(cx)
-                                }),
-                            ),
-                        )
-                        .child(
-                            div()
-                                .text_size(rems(0.7))
-                                .text_color(theme.text_subtle)
-                                .child(if include_involved {
-                                    "opened by, assigned to, or awaiting review from"
-                                } else {
-                                    "opened by"
-                                }),
-                        )
-                        .when(!selected.is_empty(), |el| {
-                            el.child(
-                                Button::new("authors-clear", "all authors")
-                                    .tooltip("Stop filtering by author")
-                                    .on_click(
-                                        cx.listener(|this, _, _window, cx| this.clear_authors(cx)),
-                                    ),
-                            )
-                        }),
-                ),
+            })
+            .children(shown.into_iter().map(|entry| {
+                let checked = selected.contains(&entry.key);
+                let login = entry.key.clone();
+                Checkbox::new(
+                    SharedString::from(format!("author-{}", entry.key)),
+                    author_label(&entry),
+                    checked,
+                )
+                .on_toggle(
+                    cx.listener(move |this, _, _window, cx| this.toggle_author(login.clone(), cx)),
+                )
+            }))
+            .child(div().h(px(1.)).my_1().bg(theme.border))
+            .child(
+                Checkbox::new(
+                    "authors-include-involved",
+                    "include involved in",
+                    include_involved,
+                )
+                .on_toggle(cx.listener(|this, _, _window, cx| this.toggle_include_involved(cx))),
+            )
+            .child(
+                div()
+                    .text_size(rems(0.7))
+                    .text_color(theme.text_subtle)
+                    .child(if include_involved {
+                        "opened by, assigned to, or awaiting review from"
+                    } else {
+                        "opened by"
+                    }),
+            )
+            .when(!selected.is_empty(), |el| {
+                el.child(
+                    Button::new("authors-clear", "all authors")
+                        .tooltip("Stop filtering by author")
+                        .on_click(cx.listener(|this, _, _window, cx| this.clear_authors(cx))),
+                )
+            })
+    }
+
+    /// The authors button and its popover. The label carries the selection so
+    /// an active author filter is visible with the popover closed.
+    fn authors_button(&mut self, selected: usize, cx: &mut Context<Self>) -> impl IntoElement {
+        let open = self.popover == Some(HeaderPopover::Authors);
+        let label = if selected == 0 {
+            "authors".to_string()
+        } else {
+            format!("authors \u{00b7} {selected}")
+        };
+        let content = if open {
+            Some(self.render_author_popover(cx).into_any_element())
+        } else {
+            None
+        };
+        Popover::new(
+            "authors-popover",
+            self.authors_anchor.clone(),
+            Button::new("authors-button", label)
+                .style(if open || selected > 0 {
+                    ButtonStyle::Primary
+                } else {
+                    ButtonStyle::Subtle
+                })
+                .tooltip("Filter by author")
+                .on_click(cx.listener(|this, _, _window, cx| {
+                    this.toggle_popover(HeaderPopover::Authors, cx)
+                })),
         )
+        .open(content)
+        .on_dismiss(cx.listener(|this, _, _window, cx| this.close_popover(cx)))
+    }
+
+    /// The repos button and its popover.
+    fn repos_button(&mut self, repo_count: usize, cx: &mut Context<Self>) -> impl IntoElement {
+        let open = self.popover == Some(HeaderPopover::Repos);
+        let content = if open {
+            Some(self.render_repo_panel(cx).into_any_element())
+        } else {
+            None
+        };
+        Popover::new(
+            "repos-popover",
+            self.repos_anchor.clone(),
+            Button::new("manage-repos", format!("repos ({repo_count})"))
+                .style(if open {
+                    ButtonStyle::Primary
+                } else {
+                    ButtonStyle::Subtle
+                })
+                .tooltip("Add or remove repositories")
+                .on_click(cx.listener(|this, _, _window, cx| {
+                    this.toggle_popover(HeaderPopover::Repos, cx)
+                })),
+        )
+        .open(content)
+        .on_dismiss(cx.listener(|this, _, _window, cx| this.close_popover(cx)))
     }
 
     fn render_filter_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -855,6 +869,7 @@ impl FeedView {
         let hide_empty = store.state.filter.hide_empty_repos;
         let hidden_repos = self.feed.hidden_repos();
         let repo_count = store.state.repos.len();
+        let author_count = store.state.filter.authors.len();
         let active = store.state.filter.is_active();
         let counts = visible_counts(&store.state.repos, &store.state.filter);
         let has_clone = store.has_any_clone();
@@ -892,18 +907,8 @@ impl FeedView {
                             })
                             .on_click(cx.listener(|this, _, _window, cx| this.toggle_drafts(cx))),
                     )
-                    .child(
-                        Button::new("manage-repos", format!("repos ({repo_count})"))
-                            .style(if self.managing_repos {
-                                ButtonStyle::Primary
-                            } else {
-                                ButtonStyle::Subtle
-                            })
-                            .tooltip("Add or remove repositories")
-                            .on_click(
-                                cx.listener(|this, _, _window, cx| this.toggle_repo_panel(cx)),
-                            ),
-                    ),
+                    .child(self.authors_button(author_count, cx))
+                    .child(self.repos_button(repo_count, cx)),
             )
             .child(
                 h_flex()
@@ -962,10 +967,6 @@ impl FeedView {
                         }),
                 )
             })
-            .children(self.render_author_filter(cx))
-            .when(self.managing_repos, |el| {
-                el.child(self.render_repo_panel(cx))
-            })
             .when(active, |el| {
                 el.child(
                     h_flex()
@@ -989,24 +990,17 @@ impl FeedView {
     }
 }
 
-/// What a chip says on hover: who they are, and what clicking will do.
-fn author_tooltip(entry: &AuthorEntry, checked: bool) -> String {
+/// One author's row in the popover: who, and how much open work they have.
+fn author_label(entry: &AuthorEntry) -> String {
     let who = if entry.is_viewer {
-        "You".to_string()
+        format!("{} (you)", entry.user.login)
     } else {
         entry.user.login.clone()
     };
-    let work = match entry.open_prs {
-        0 => "no open pull requests".to_string(),
-        1 => "1 open pull request".to_string(),
-        n => format!("{n} open pull requests"),
-    };
-    let action = if checked {
-        "click to unselect"
-    } else {
-        "click to filter to them"
-    };
-    format!("{who} — {work}; {action}")
+    match entry.open_prs {
+        0 => who,
+        n => format!("{who} \u{00b7} {n}"),
+    }
 }
 
 /// How much of the feed a filter is letting through.
