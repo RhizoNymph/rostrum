@@ -71,6 +71,14 @@ Overview:
       per profile; the app keeps each profile's secrets under its id, shows the
       active profile only, switches between them, and checks every profile
       for notifications.
+    rostrumd: >
+      A headless desktop daemon, run as a systemd user service. Its plain-HTTP
+      page (LAN and tailnet) offers the Android APK and — from this computer or
+      over the tailnet only — generates pairing codes and revokes phones; its
+      HTTPS API (self-signed, pinned by fingerprint) serves the
+      remote_protocol routes by driving rostrum-local on the configured
+      clones. State is owned by two actors: pairing codes and devices, and
+      which clone is busy.
 
   data_flow: >
     At startup the app resolves a GitHub token (`gh auth token`, falling back to
@@ -143,6 +151,18 @@ Overview:
     and `RostrumException`s mapped to the app's model; the core's feed
     observer feeds the update flow. `FakeRostrumBackend` serves unit tests
     and previews only.
+    The phone reaches the desktop's clones through rostrumd. Its page issues a
+    one-time code as a `rostrum://pair` link and QR code carrying the LAN and
+    tailnet addresses and the certificate fingerprint; the phone pins that
+    fingerprint, exchanges the code for a device token (and the desktop's
+    GitHub token), and presents the token on every API call. Each local call
+    re-reads rostrum's `config.json` for the clone, the conflict handler and
+    autostash, takes that clone's lease from the job coordinator (409 when it
+    is busy), and runs the same `rostrum_local` function the desktop's button
+    runs, in a task that outlives the request. Nothing is ever pushed. A
+    paired phone can also copy the desktop's watched repositories and feed
+    preferences (`GET /api/v1/config`) — never its clones, conflict handler,
+    refresh interval or notifications.
 
 Features Index:
   ui_foundation:
@@ -220,6 +240,11 @@ Features Index:
     entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/profiles/ProfileManager.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/ffi/FfiProfileRegistry.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/app/RostrumApp.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/profiles/ProfileSwitcherSheet.kt]
     depends_on: [android_core, android_app]
     doc: docs/features/android_profiles.md
+  rostrumd:
+    description: Desktop daemon — pairing page and APK download (HTTP), the phone's local-git API (HTTPS), systemd user service.
+    entry_points: [crates/rostrumd/src/main.rs, crates/rostrumd/src/app.rs, crates/rostrumd/src/api/mod.rs, crates/rostrumd/src/web/mod.rs]
+    depends_on: [remote_protocol, local_git, conflict_handoff, github_sync]
+    doc: docs/features/rostrumd.md
 ```
 
 ## Workspace layout
@@ -238,6 +263,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 | `rostrum-handoff` | no | Context bundle rendering and tmux session spawning for conflict handoff |
 | `rostrum-local` | no | One pull request's local state (`local_state`) and one local operation on it (`run_local_job`), shared by every caller |
 | `rostrum-remote` | no | Phone ↔ desktop protocol: pairing, device tokens, API types, and (feature `client`) the pinned HTTPS client |
+| `rostrumd` | no | Desktop daemon: pairing page and APK download over HTTP, the paired phone's API over HTTPS, systemd user service |
 | `rostrum-config` | no | `config.json`: watched repositories, clones, feed preferences, conflict handler |
 | `rostrum-md` | no | `pulldown-cmark` → renderable markdown model |
 | `rostrum-ffi` | no | The Android app's core: `RostrumCore` over UniFFI (`cdylib`), plus the `uniffi-bindgen` binary |
@@ -259,6 +285,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 | Local writes | Never push | A local merge or rebase leaves the clone ahead, and that count is the cue to push. Keeps force-push out of the app entirely |
 | Feed distance | One batched `Ref.compare` per repository after each refresh | A GraphQL field cannot read a sibling's value, so the count cannot join the feed query; aliasing one `compare` per PR keeps it to one request, cost 1 |
 | Conflicts | Abort by default; leave and hand off to tmux when a handler is configured | Rostrum has no conflict editor. Either the clone is left as found, or something that can edit is running in a named session with the context gathered |
+| Phone access | `rostrumd`: an HTTPS API on a self-signed certificate the phone pins by fingerprint, and a plain-HTTP page whose pairing half answers only loopback and the tailnet | No CA and no certificate warning anywhere; the page opens in any browser; a pairing code — the key to the clones and the GitHub token — cannot be minted from the shared LAN |
 | Handoff environment | tmux inherits rostrum's full env; `rostrum-git` uses an allowlist | The two spawn different things for different reasons: git's output is parsed and must be deterministic; the harness is the user's own tool and needs their `PATH`, `DISPLAY`, and keys |
 | Cache | SQLite via `sqlx` | Instant cold start, offline reads, ETag storage |
 | Async | Tokio bridged into GPUI's executor | GPUI's executor is not Tokio; `reqwest` requires a Tokio reactor |
