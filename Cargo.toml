@@ -13,6 +13,7 @@ rostrum-config = { path = "crates/rostrum-config" }
 rostrum-core = { path = "crates/rostrum-core" }
 rostrum-db = { path = "crates/rostrum-db" }
 rostrum-diff = { path = "crates/rostrum-diff" }
+rostrum-ffi = { path = "crates/rostrum-ffi" }
 rostrum-git = { path = "crates/rostrum-git" }
 rostrum-handoff = { path = "crates/rostrum-handoff" }
 rostrum-local = { path = "crates/rostrum-local" }
@@ -115,3 +116,19 @@ debug = "limited"
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# The Android shared library (`librostrum_ffi.so`), built by the Gradle project
+# under `android/` through cargo-ndk. A profile of its own so desktop
+# `--release` builds keep their settings. `panic = "unwind"` is required:
+# UniFFI catches panics at the FFI boundary and turns them into Kotlin
+# exceptions, which an aborting panic would bypass. Symbols are stripped by AGP
+# when it packages the APK, not here, because uniffi-bindgen's library mode
+# reads the `UNIFFI_META_*` symbols out of the built `.so`.
+[profile.android-release]
+inherits = "release"
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "unwind"
+debug = false
+strip = "debuginfo"

@@ -50,6 +50,20 @@ Overview:
       When a local rebase or merge stops on conflicts and a handler is
       configured, leaves the worktree in place and spawns the handler in a
       named tmux session with a pre-gathered context bundle.
+    android_build: >
+      The Android app's toolchain. A Gradle project under `android/`
+      cross-compiles `rostrum-ffi` for each Android ABI with cargo-ndk,
+      generates its Kotlin bindings with UniFFI, packages both into a signed
+      APK, and publishes that APK for `rostrumd` to serve to phones. It also
+      owns the Compose theme foundation (palette, Material mapping, fonts).
+    android_app: >
+      The Android client. Jetpack Compose screens for the feed, a pull
+      request (conversation, files, checks, branch), the single-file diff with
+      inline comments and pending reviews, merging, settings, the paired
+      desktop (including copying its settings onto the phone), sign-in and
+      pairing. ViewModels depend on one Kotlin interface,
+      `RostrumBackend`, shaped after `RostrumCore`; secrets are sealed with an
+      Android Keystore key; WorkManager runs the notification check.
 
   data_flow: >
     At startup the app resolves a GitHub token (`gh auth token`, falling back to
@@ -95,6 +109,25 @@ Overview:
     revision order. Tokens arrive from Kotlin (the Keystore) and never touch
     disk on the Rust side. The paired desktop is reached through
     `rostrum-remote`'s pinned client.
+
+    On Android, the Kotlin app reaches the same Rust crates through
+    `rostrum-ffi`: Kotlin calls the UniFFI-generated bindings, which call into
+    `librostrum_ffi.so` through JNA. The Gradle build produces the library and
+    the bindings together, from one pinned uniffi version.
+
+    Inside the app, every screen's ViewModel talks to `RostrumBackend` and
+    gets back `Outcome` values (never exceptions). At start-up
+    `SessionRepository` unseals the GitHub token and the desktop pairing from
+    app-private files and hands them to the backend, which keeps them in
+    memory only; sign-in and pairing results flow the other way and are
+    sealed again. The feed arrives as `FeedSnapshot`s, from calls and from the
+    backend's update flow, newest revision winning. `rostrum://pair` links and
+    notification taps enter through `MainActivity` into a link inbox that the
+    navigation host drains. The backend is `FfiRostrumBackend`: one
+    `RostrumCore` per process, each method one core call with its records
+    and `RostrumException`s mapped to the app's model; the core's feed
+    observer feeds the update flow. `FakeRostrumBackend` serves unit tests
+    and previews only.
 
 Features Index:
   ui_foundation:
@@ -156,6 +189,16 @@ Features Index:
     entry_points: [crates/rostrum-ffi/src/lib.rs, crates/rostrum-ffi/src/engine/mod.rs]
     depends_on: [repo_feed, pr_detail, diff_review, diff_overview, author_filter, github_sync, remote_protocol]
     doc: docs/features/android_core.md
+  android_build:
+    description: Gradle project, cargo-ndk + UniFFI pipeline, signing, and APK publishing for the Android app.
+    entry_points: [android/scripts/build-apk.sh, android/app/build.gradle.kts, crates/rostrum-ffi/src/lib.rs]
+    depends_on: []
+    doc: docs/features/android_build.md
+  android_app:
+    description: Compose UI, RostrumBackend over the Rust core (FfiRostrumBackend), Keystore secrets, session, deep links, notifications.
+    entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/RostrumApplication.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/RostrumBackend.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/ffi/FfiRostrumBackend.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/navigation/RostrumNavHost.kt]
+    depends_on: [android_build, android_core]
+    doc: docs/features/android_app.md
 ```
 
 ## Workspace layout
@@ -238,6 +281,31 @@ sudo apt install libxkbcommon-x11-dev
 
 then add `"x11"` back to the `gpui`/`gpui_platform` feature lists in the root
 `Cargo.toml`. GPUI picks whichever backend it finds at runtime.
+
+## Android build prerequisites
+
+The Android app (`android/`, see `docs/features/android_build.md`) needs the
+following on top of the Rust toolchain. `android/scripts/build-apk.sh` checks
+each one and names the fix for any that is missing.
+
+- Rust targets `aarch64-linux-android` and `x86_64-linux-android` for the
+  active toolchain (`rustup target add ...`).
+- `cargo-ndk` 4.1.2 (`cargo install cargo-ndk --version 4.1.2 --locked`).
+- Android SDK with platform `android-36` and build-tools, located by `sdk.dir`
+  in `android/local.properties` (written from `$ANDROID_HOME` or
+  `~/Android/Sdk` if missing).
+- Android NDK r30 (`30.0.16248370`, the `ndk` entry in
+  `android/gradle/libs.versions.toml`) in `<sdk>/ndk/<version>`, or
+  `$ANDROID_NDK_HOME`.
+- A JDK 21 that Gradle can detect (the daemon and the compile toolchain), plus
+  any Java to launch `gradlew`.
+- For signed release builds, `android/.env` pointing at the keystore outside
+  the repository (`~/.config/rostrum/android/release.jks`). Without it, release
+  builds fall back to the debug key.
+
+Use the rustup `cargo` (`~/.cargo/bin/cargo` or `$CARGO`), never the one on
+PATH. On this machine that is a shim that may run builds on a remote host
+without the NDK.
 
 ## Dependency sourcing
 

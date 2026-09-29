@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A lowercase "r" inside the 66dp adaptive-icon safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="@color/rostrum_accent"
+        android:pathData="M40,74 L40,36 L48,36 L48,43.5 C51,38.5 57,35 65,35 L68,35 L68,43 L65,43 C54.5,43 48,49 48,58 L48,74 Z" />
+</vector>

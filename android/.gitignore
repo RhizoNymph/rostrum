@@ -1,0 +1,13 @@
+.gradle/
+.kotlin/
+build/
+local.properties
+*.iml
+.idea/
+captures/
+
+# Release signing secrets. The keystore lives outside the repo
+# (~/.config/rostrum/android/release.jks); see .env.example.
+.env
+*.jks
+*.keystore
