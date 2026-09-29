@@ -107,6 +107,16 @@ Accessed through an extension trait: `cx.theme()`.
 Built as `RenderOnce` + `#[derive(IntoElement)]` — GPUI's stateless component
 pattern. Stateful widgets (composer, context menu) are `Entity<T>` with `Render`.
 
+`Popover` (`crates/rostrum-ui/src/popover.rs`) is a floating panel anchored to a
+button: the panel's top-left corner sits on the centre of its trigger. It is
+placed by layout rather than by measuring: a zero-size box at `left/top: 50%` of
+a `relative` wrapper holds `deferred(anchored())`. It floats over the content
+below instead of pushing it down. A press outside both the panel and the trigger
+calls `on_dismiss`. The view owns a `PopoverAnchor`, into which the trigger's
+bounds are recorded every frame, so pressing the trigger of an open popover is
+left to the trigger's own click. Otherwise the popover would close on mouse-down
+and reopen on the click. Binding `escape` is up to the owner.
+
 Two things bite repeatedly and are worth stating once:
 
 - **`.id()` is required before `.on_click()` or `.overflow_y_scroll()`.** Those
