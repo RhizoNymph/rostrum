@@ -362,8 +362,8 @@ Each phase leaves a usable application.
 
 ## Status
 
-All five phases are complete and verified against the live API. 898 tests pass
-(152 of them in `rostrum-ffi`); clippy is clean across the workspace.
+All five phases are complete and verified against the live API. 902 tests pass
+(154 of them in `rostrum-ffi`); clippy is clean across the workspace.
 
 The Android app's core, `rostrum-ffi`, exposes the same feed, detail, diff,
 review, desktop and notification behaviour to Kotlin through UniFFI, one

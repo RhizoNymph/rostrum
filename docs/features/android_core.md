@@ -334,7 +334,11 @@ them.
   name); on any failure the core's storage is closed and the directory
   deleted, so a failed pairing leaves nothing behind. Pairings run one at a
   time, so the same desktop paired twice at once cannot make two profiles.
-  Pairing never changes the active profile. The GitHub token handover in
+  Pairing never changes the active profile. Re-pairing into a profile goes
+  through that profile's core, so the request names the profile's current
+  device token as `replaces` when its core is open with the remote restored
+  (Kotlin restores each profile's remote at startup), and names none
+  otherwise. The GitHub token handover in
   `PairingResult` works as for a single core: it is applied to that
   profile's core when it has none, and Kotlin stores it under the profile id.
 - **Before any profile.** The registry's `parsePairingLink` and

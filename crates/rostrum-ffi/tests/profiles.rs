@@ -556,3 +556,61 @@ async fn the_pair_screen_reads_links_and_probes_before_any_profile_exists() {
     assert_eq!(profile_dirs(&scratch), Vec::<String>::new());
     assert!(!scratch.dir.join("profiles.json").exists());
 }
+
+/// What the last `/api/v1/pair` request asked the desktop to replace.
+fn replaced(log: &support::Log) -> serde_json::Value {
+    let request = log.last("/api/v1/pair").expect("a pair request");
+    let body: serde_json::Value = serde_json::from_str(&request.body).expect("json");
+    body["replaces"].clone()
+}
+
+#[tokio::test]
+async fn re_pairing_a_profile_replaces_its_current_device() {
+    let scratch = Scratch::new("replaces");
+    let registry = registry(&scratch);
+    let (port, fingerprint, log) = serve(desktop("desk")).await;
+
+    // A new profile replaces nothing.
+    let first = registry
+        .pair_desktop_with_link(link(port, fingerprint, CODE), "Pixel".into())
+        .await
+        .expect("pairs");
+    assert!(replaced(&log).is_null(), "{}", replaced(&log));
+
+    // Re-pairing into it names the device token its core holds.
+    let again = registry
+        .pair_desktop_with_link(link(port, fingerprint, CODE), "Pixel".into())
+        .await
+        .expect("re-pairs");
+    assert!(!again.created);
+    assert_eq!(replaced(&log), issued_token().expose());
+
+    // After a restart the core is not open, so there is nothing to name...
+    drop(registry);
+    let registry = ProfileRegistry::open(scratch.path()).expect("reopen");
+    registry
+        .pair_desktop_manual(
+            "127.0.0.1".into(),
+            port,
+            fingerprint.to_base64url(),
+            CODE.into(),
+            "Pixel".into(),
+        )
+        .await
+        .expect("re-pairs");
+    assert!(replaced(&log).is_null(), "{}", replaced(&log));
+
+    // ...until Kotlin restores the profile's remote, as it does at startup.
+    drop(registry);
+    let registry = ProfileRegistry::open(scratch.path()).expect("reopen");
+    let core = registry.core(first.profile.id.clone()).await.expect("core");
+    let saved = DeviceToken::from_bytes([6; 32]);
+    core.set_remote(first.pairing.endpoint.clone(), saved.expose().to_string())
+        .await
+        .expect("restore");
+    registry
+        .pair_desktop_with_link(link(port, fingerprint, CODE), "Pixel".into())
+        .await
+        .expect("re-pairs");
+    assert_eq!(replaced(&log), saved.expose());
+}
