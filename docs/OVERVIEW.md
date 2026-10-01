@@ -18,6 +18,11 @@ Overview:
       The primary screen. Flattens all repos and their PRs into a single row
       stream rendered by one virtualized `list`, styled to look like discrete
       per-repo containers.
+    repo_view: >
+      One repository on its own screen (desktop). The left pane becomes that
+      repository's pull requests and issues, split top and bottom; with
+      nothing selected the right pane shows the branch tree — trunks against
+      the default branch, pull requests against their base, stacks nested.
     pr_detail: >
       Master/detail right pane. Tabbed Conversation / Files / Checks view for a
       selected PR, including the comment composer and the PR-level actions:
@@ -103,6 +108,16 @@ Overview:
     patches. Patches are parsed into `DiffRow`s carrying old/new line numbers;
     those line numbers are what inline comments are anchored to when submitted.
 
+    Opening a repository's view (`o`, or its header's name) switches the
+    workspace's `Screen` to that repository without touching the feed entity,
+    so the feed's scroll survives the round trip. A `RepoBranches` entity
+    fetches the repository's default branch, stars and trunk refs, resolves
+    the trunks from `config.json`, then sends every trunk-vs-default and
+    pull-request-vs-base comparison as one aliased `Ref.compare` batch; it
+    fetches again whenever the feed's poll lands a refresh for the
+    repository. `build_tree` (pure, in `rostrum-core`) turns the trunks, the
+    current pull requests and the counts into the branch tree on every paint.
+
     Filter changes run the other way: every persisted toggle goes through
     `Store::edit_filter`, which applies the edit, folds it back into `Config`
     via `absorb_filter`, and writes the file. `feed_filter`/`absorb_filter` are
@@ -175,6 +190,11 @@ Features Index:
     entry_points: [crates/rostrum/src/feed/mod.rs, crates/rostrum-core/src/feed.rs]
     depends_on: [ui_foundation, github_sync]
     doc: docs/features/repo_feed.md
+  repo_view:
+    description: Per-repository view — pull requests and issues split in the sidebar, the branch divergence tree, configurable trunks.
+    entry_points: [crates/rostrum/src/repo_view/mod.rs, crates/rostrum-core/src/branches/mod.rs, crates/rostrum-core/src/navigation.rs]
+    depends_on: [repo_feed, pr_detail, github_sync, ui_foundation]
+    doc: docs/features/repo_view.md
   pr_detail:
     description: Conversation timeline, composer, and PR-level actions.
     entry_points: [crates/rostrum/src/detail/mod.rs]
@@ -255,7 +275,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 
 | Crate | gpui? | Responsibility |
 |---|---|---|
-| `rostrum-core` | no | Domain types, feed flattening, conversation model |
+| `rostrum-core` | no | Domain types, feed flattening, conversation model, branch tree, screen navigation |
 | `rostrum-db` | no | SQLite cache and draft persistence |
 | `rostrum-github` | no | GraphQL reads, REST mutations, auth, rate limiting, errors |
 | `rostrum-diff` | no | Unified-diff parsing, `DiffRow` model, syntax highlighting |
@@ -289,6 +309,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 | Handoff environment | tmux inherits rostrum's full env; `rostrum-git` uses an allowlist | The two spawn different things for different reasons: git's output is parsed and must be deterministic; the harness is the user's own tool and needs their `PATH`, `DISPLAY`, and keys |
 | Cache | SQLite via `sqlx` | Instant cold start, offline reads, ETag storage |
 | Async | Tokio bridged into GPUI's executor | GPUI's executor is not Tokio; `reqwest` requires a Tokio reactor |
+| Branch tree | Trunks configured per repository (default: whichever of `main`/`master`/`staging`/`develop` exist), counts from one aliased `Ref.compare` batch, tree built in `rostrum-core` | A commit graph would need the history GitHub's API pages through slowly; counts answer "how far apart" in one request, and a pure builder makes nesting, loops and unknown bases testable |
 | Mergeability | `mergeable` **and** `mergeStateStatus`, collapsed into one `MergeStatus` in `rostrum-core` | `mergeable` cannot distinguish "blocked by a required review" from "behind its base"; deriving the verdict once keeps the chip, the button, and its tooltip from disagreeing |
 
 ## Hard constraints
@@ -389,8 +410,8 @@ Each phase leaves a usable application.
 
 ## Status
 
-All five phases are complete and verified against the live API. 902 tests pass
-(154 of them in `rostrum-ffi`); clippy is clean across the workspace.
+All five phases are complete and verified against the live API. 1238 tests
+pass across the workspace; clippy is clean.
 
 The Android app's core, `rostrum-ffi`, exposes the same feed, detail, diff,
 review, desktop and notification behaviour to Kotlin through UniFFI, one

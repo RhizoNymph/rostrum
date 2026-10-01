@@ -97,6 +97,15 @@ position within its repo's contiguous run:
 result is indistinguishable from discrete containers, but there is exactly one
 scroll region and one virtualized list.
 
+## Opening one repository
+
+A repository header's **name** and its **open ›** affordance, and `o` on a
+selected pull request, raise `FeedEvent::OpenRepo`. The workspace swaps the
+left pane to that repository's own view and back; the feed entity is kept
+meanwhile, so its scroll position and measured rows survive. Clicking
+elsewhere on the header still collapses it — the two clicks stop propagation
+so they never do both. See `docs/features/repo_view.md`.
+
 ## Managing repositories
 
 Repositories are added and removed from the feed's **repos** popover, which writes
@@ -254,9 +263,9 @@ repositories, and is what everything below assumes.
 |---|---|
 | `crates/rostrum-core/src/feed.rs` | `FeedRow`, `flatten`, run-boundary computation, filter/sort |
 | `crates/rostrum-core/src/state.rs` | `AppState`, `RepoState`, `PrSummary` |
-| `crates/rostrum/src/feed/mod.rs` | Feed view entity, `ListState` ownership, splice logic |
-| `crates/rostrum/src/feed/rows.rs` | Per-variant row renderers |
-| `crates/rostrum/src/feed/nav.rs` | Keyboard navigation, selection actions |
+| `crates/rostrum/src/feed/mod.rs` | Feed view entity, `ListState` ownership, splice logic, per-variant row renderers, `FeedEvent` |
+| `crates/rostrum/src/feed/pr_row.rs` | `pr_row_content` — a pull request row's body, shared with the repository view — and `relative_time` |
+| `crates/rostrum/src/nav.rs` | Keyboard navigation over the feed |
 | `crates/rostrum/src/sync.rs` | `fetch_divergences` (the batched compare), `sync_all` |
 | `crates/rostrum-core/src/state.rs` | `divergence_query`, `apply_divergences` (by number), `carry_forward_divergence` — shared with the Android core |
 | `crates/rostrum-local/src/jobs.rs` | `run_local_job`, one job of a sync |
