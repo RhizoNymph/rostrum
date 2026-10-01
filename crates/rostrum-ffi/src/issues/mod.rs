@@ -6,11 +6,11 @@
 //! `Issue`, `rostrum-github`'s `IssueMutation` (one REST call each) and
 //! `IssueDraft` (no blank title reaches GitHub), `rostrum-db`'s issue cache.
 //!
-//! Phase 2 lands here: editing an issue's title and body, and paging the
-//! timeline back past its first 100 items ("load earlier"). Both extend
-//! [`IssueDetail`] and add methods beside the ones below; nothing here needs
-//! to change shape for them.
+//! Editing the title and description (with conflict detection) and paging
+//! the timeline back ("load earlier") are in [`edit`] and [`paging`].
 
+mod edit;
+mod paging;
 pub(crate) mod summary;
 mod types;
 
@@ -25,7 +25,7 @@ use rostrum_github::{
 pub use types::{CloseIssueAs, IssueCloseReason, IssueDetail, IssueStatus, IssueSummary};
 
 use crate::{
-    detail::render_timeline,
+    detail::{earlier_of, render_timeline},
     engine::{
         RostrumCore,
         state::{IssueKey, parse_repo},
@@ -61,14 +61,87 @@ async fn render(
     viewer: Option<User>,
 ) -> Result<IssueDetail, RostrumError> {
     let repo = key.repo.clone();
+    let (has_earlier, earlier_count) = earlier_of(&detail.conversation);
     Ok(tokio::task::spawn_blocking(move || IssueDetail {
         issue: summarize_issue(&repo, &detail.issue, viewer.map(|user| user.key()).as_ref()),
         timeline: render_timeline(&detail.conversation, &repo),
+        has_earlier,
+        earlier_count,
     })
     .await?)
 }
 
 impl RostrumCore {
+    /// The issue detail last fetched (with every earlier page loaded), from
+    /// memory or the cache.
+    pub(crate) async fn held_issue(
+        &self,
+        key: &IssueKey,
+    ) -> Result<Option<Arc<CoreIssueDetail>>, RostrumError> {
+        let lookup = key.clone();
+        if let Some(held) = self
+            .actor
+            .call(move |state| state.issue_details.get(&lookup).cloned())
+            .await?
+        {
+            return Ok(Some(held));
+        }
+        let Some(stored) = self.db.load_issue_detail(&key.repo, key.number).await? else {
+            return Ok(None);
+        };
+        let stored = Arc::new(stored);
+        let store = key.clone();
+        let kept = stored.clone();
+        self.actor
+            .call(move |state| {
+                // A fresher copy from the network wins over the cache.
+                if state.issue_details.get(&store).is_none() {
+                    state.issue_details.insert(store, kept);
+                }
+            })
+            .await?;
+        Ok(Some(stored))
+    }
+
+    /// Keep an issue detail in memory and the cache.
+    pub(crate) async fn keep_issue(
+        &self,
+        key: &IssueKey,
+        detail: Arc<CoreIssueDetail>,
+    ) -> Result<(), RostrumError> {
+        let store = key.clone();
+        self.actor
+            .call(move |state| {
+                state.writer.send(Write::IssueDetail {
+                    repo: store.repo.clone(),
+                    detail: Box::new((*detail).clone()),
+                });
+                state.issue_details.insert(store, detail);
+            })
+            .await
+    }
+
+    /// Fetch the newest page of an issue, keep the earlier pages already
+    /// held, and keep the result.
+    pub(crate) async fn fetch_issue(
+        &self,
+        key: &IssueKey,
+    ) -> Result<Arc<CoreIssueDetail>, RostrumError> {
+        let client = self.actor.try_call(|state| state.github()).await?;
+        let fresh = self
+            .github(client.issue_detail(&key.repo, key.number).await)
+            .await?;
+        let detail = Arc::new(match self.held_issue(key).await? {
+            Some(held) => CoreIssueDetail {
+                conversation: held.conversation.refreshed_by(fresh.conversation),
+                issue: fresh.issue,
+            },
+            None => fresh,
+        });
+        self.keep_issue(key, detail.clone()).await?;
+        Ok(detail)
+    }
+
     async fn viewer_now(&self) -> Result<Option<User>, RostrumError> {
         self.actor
             .call(|state| state.session.viewer().cloned())
@@ -78,7 +151,7 @@ impl RostrumCore {
     /// Send one issue mutation, then re-read the repository's issues so the
     /// feed shows GitHub's answer (a close drops the row). The re-read's
     /// failure is logged, not reported: the mutation itself succeeded.
-    async fn mutate_issue(
+    pub(crate) async fn mutate_issue(
         &self,
         key: IssueKey,
         mutation: IssueMutation,
@@ -91,7 +164,7 @@ impl RostrumCore {
         Ok(())
     }
 
-    async fn after_issue_change(&self, repo: &rostrum_core::RepoId) {
+    pub(crate) async fn after_issue_change(&self, repo: &rostrum_core::RepoId) {
         if let Err(error) = self.refresh_issues(repo).await {
             tracing::warn!(%repo, %error, "could not refresh issues after a change");
         }
@@ -107,22 +180,7 @@ impl RostrumCore {
         number: u32,
     ) -> Result<IssueDetail, RostrumError> {
         let key = IssueKey::parse(&repo, number)?;
-        let client = self.actor.try_call(|state| state.github()).await?;
-        let detail = Arc::new(
-            self.github(client.issue_detail(&key.repo, key.number).await)
-                .await?,
-        );
-        let store = key.clone();
-        let kept = detail.clone();
-        self.actor
-            .call(move |state| {
-                state.writer.send(Write::IssueDetail {
-                    repo: store.repo.clone(),
-                    detail: Box::new((*kept).clone()),
-                });
-                state.issue_details.insert(store, kept);
-            })
-            .await?;
+        let detail = self.fetch_issue(&key).await?;
         render(&key, detail, self.viewer_now().await?).await
     }
 
@@ -134,17 +192,8 @@ impl RostrumCore {
         number: u32,
     ) -> Result<Option<IssueDetail>, RostrumError> {
         let key = IssueKey::parse(&repo, number)?;
-        let lookup = key.clone();
-        let held = self
-            .actor
-            .call(move |state| state.issue_details.get(&lookup).cloned())
-            .await?;
-        let detail = match held {
-            Some(detail) => detail,
-            None => match self.db.load_issue_detail(&key.repo, key.number).await? {
-                Some(detail) => Arc::new(detail),
-                None => return Ok(None),
-            },
+        let Some(detail) = self.held_issue(&key).await? else {
+            return Ok(None);
         };
         render(&key, detail, self.viewer_now().await?)
             .await

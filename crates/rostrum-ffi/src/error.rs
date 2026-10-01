@@ -58,6 +58,17 @@ pub enum RostrumError {
         head: String,
     },
 
+    /// `edit_issue`: someone changed the issue's title or description after
+    /// `base_updated_at`, and saving would discard it. Their version is here:
+    /// show it, then reload it into the editor or call again with
+    /// `overwrite = true`.
+    #[error("the issue was edited elsewhere since it was opened")]
+    EditConflict {
+        title: String,
+        body: String,
+        updated_at: SystemTime,
+    },
+
     /// No desktop is paired, or `set_remote` has not been called this session.
     #[error("not paired with a desktop")]
     NotPaired,

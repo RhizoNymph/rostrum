@@ -26,6 +26,14 @@ pub struct PullDetail {
     pub unresolved_threads: u32,
     /// Your unsent inline comments on this pull request.
     pub pending_review: PendingReview,
+    /// Older comments, reviews, threads or events remain beyond the pages
+    /// loaded: show "Load earlier".
+    #[uniffi(default)]
+    pub has_earlier: bool,
+    /// How many remain, for "Load earlier (N more)"; `None` when nothing
+    /// does.
+    #[uniffi(default)]
+    pub earlier_count: Option<u32>,
 }
 
 /// The header, and the facts the Branch tab and the action bar decide on.

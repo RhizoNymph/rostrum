@@ -50,7 +50,15 @@ pub struct Iss {
     pub labels: Vec<String>,
     pub assignees: Vec<String>,
     pub comments: u32,
+    pub title: String,
+    pub body: String,
+    /// GitHub's `updatedAt`; an edit through the fake moves it to
+    /// [`EDITED_AT`].
+    pub updated_at: String,
 }
+
+/// When an issue edited through the fake was last updated.
+pub const EDITED_AT: &str = "2026-03-01T00:00:00Z";
 
 impl Iss {
     pub fn new(number: u32, author: &str) -> Self {
@@ -60,6 +68,9 @@ impl Iss {
             labels: Vec::new(),
             assignees: Vec::new(),
             comments: 0,
+            title: format!("Issue {number}"),
+            body: "It **breaks**.".into(),
+            updated_at: format!("2026-01-02T00:00:{:02}Z", number % 60),
         }
     }
 }
@@ -88,6 +99,10 @@ pub struct World {
     pub stars: u32,
     /// Who issues can be assigned to.
     pub assignees: Vec<String>,
+    /// Serve conversations (issue and pull request comments) in two pages:
+    /// the newest holds [`newest_comment`], the earlier one two older
+    /// comments.
+    pub paged: bool,
 }
 
 pub struct FakeGitHub {
@@ -222,7 +237,7 @@ fn graphql(world: &World, body: &Value) -> Value {
         let Some(issue) = found else {
             return json!({"data": {"repository": {"issue": null}}});
         };
-        return json!({"data": {"repository": {"issue": issue_detail_node(issue)}}});
+        return json!({"data": {"repository": {"issue": issue_detail_node(issue, world.paged, variables)}}});
     }
     if query.contains("defaultBranchRef") {
         let mut repository = serde_json::Map::new();
@@ -286,7 +301,7 @@ fn graphql(world: &World, body: &Value) -> Value {
         return json!({"data": {"repository": repository}});
     }
     if query.contains("reviewThreads") {
-        return json!({"data": {"repository": {"pullRequest": conversation()}}});
+        return json!({"data": {"repository": {"pullRequest": conversation(world.paged, variables)}}});
     }
     if query.contains("convertPullRequestToDraft") {
         return json!({"data": {"payload": {"pullRequest": {"id": variables["id"], "isDraft": true}}}});
@@ -334,12 +349,12 @@ fn issue_node(issue: &Iss) -> Value {
     json!({
         "id": format!("I_{}", issue.number),
         "number": issue.number,
-        "title": format!("Issue {}", issue.number),
+        "title": issue.title,
         "url": format!("https://github.com/octo/repo/issues/{}", issue.number),
         "state": "OPEN",
         "stateReason": null,
         "createdAt": format!("2026-01-01T00:00:{:02}Z", issue.number % 60),
-        "updatedAt": format!("2026-01-02T00:00:{:02}Z", issue.number % 60),
+        "updatedAt": issue.updated_at,
         "author": {"login": issue.author, "avatarUrl": null},
         "assignees": {"nodes": issue.assignees.iter().map(|login| json!({"login": login, "avatarUrl": null})).collect::<Vec<_>>()},
         "labels": {"nodes": issue.labels.iter().map(|name| json!({"name": name, "color": "d73a4a"})).collect::<Vec<_>>()},
@@ -348,48 +363,98 @@ fn issue_node(issue: &Iss) -> Value {
     })
 }
 
+/// Whether a paged document asked for `connection` (absent: yes).
+fn wants(variables: &Value, switch: &str) -> bool {
+    variables[switch].as_bool().unwrap_or(true)
+}
+
+fn comment(id: &str, body: &str, at: &str, login: &str) -> Value {
+    json!({"id": id, "body": body, "createdAt": at, "author": {"login": login, "avatarUrl": null}})
+}
+
+/// A conversation's comments connection: one page, or with `paged` the newest
+/// page (one comment, two more before cursor `older`) or the earlier one.
+fn comments_page(paged: bool, variables: &Value, single: Value) -> Value {
+    if !paged {
+        return json!({"totalCount": 1, "nodes": [single]});
+    }
+    match variables["commentsBefore"].as_str() {
+        None => json!({
+            "totalCount": 3,
+            "pageInfo": {"startCursor": "older", "hasPreviousPage": true},
+            "nodes": [single]
+        }),
+        Some(_) => json!({
+            "totalCount": 3,
+            "pageInfo": {"startCursor": "oldest", "hasPreviousPage": false},
+            "nodes": [
+                comment("IC_OLD1", "First!", "2026-01-01T12:00:00Z", "dave"),
+                comment("IC_OLD2", "Second", "2026-01-01T13:00:00Z", "erin")
+            ]
+        }),
+    }
+}
+
 /// [`issue_node`] with a body, one comment, and a closed (not planned) then
 /// reopened history with a cross-reference and an unassignment.
-fn issue_detail_node(issue: &Iss) -> Value {
+fn issue_detail_node(issue: &Iss, paged: bool, variables: &Value) -> Value {
     let mut node = issue_node(issue);
     let actor = json!({"login": "bob", "avatarUrl": null});
-    node["body"] = json!("It **breaks**.");
-    node["comments"] = json!({"totalCount": 1, "nodes": [
-        {"id": "IC_9", "body": "Same here", "createdAt": "2026-01-03T00:00:00Z", "author": {"login": "carol", "avatarUrl": null}}
-    ]});
-    node["timelineItems"] = json!({"nodes": [
-        {"__typename": "ClosedEvent", "createdAt": "2026-01-04T00:00:00Z", "actor": actor, "stateReason": "NOT_PLANNED"},
-        {"__typename": "ReopenedEvent", "createdAt": "2026-01-05T00:00:00Z", "actor": actor},
-        {"__typename": "UnassignedEvent", "createdAt": "2026-01-06T00:00:00Z", "actor": actor, "assignee": {"login": "dave"}},
-        {"__typename": "CrossReferencedEvent", "createdAt": "2026-01-07T00:00:00Z", "actor": actor,
-         "source": {"__typename": "PullRequest", "number": 1, "title": "Pull request 1", "repository": {"nameWithOwner": "octo/repo"}}}
-    ]});
+    node["body"] = json!(issue.body);
+    node.as_object_mut().expect("object").remove("comments");
+    if wants(variables, "withComments") {
+        node["comments"] = comments_page(
+            paged,
+            variables,
+            comment("IC_9", "Same here", "2026-01-03T00:00:00Z", "carol"),
+        );
+    }
+    if wants(variables, "withEvents") {
+        node["timelineItems"] = json!({"totalCount": 4, "nodes": [
+            {"__typename": "ClosedEvent", "createdAt": "2026-01-04T00:00:00Z", "actor": actor, "stateReason": "NOT_PLANNED"},
+            {"__typename": "ReopenedEvent", "createdAt": "2026-01-05T00:00:00Z", "actor": actor},
+            {"__typename": "UnassignedEvent", "createdAt": "2026-01-06T00:00:00Z", "actor": actor, "assignee": {"login": "dave"}},
+            {"__typename": "CrossReferencedEvent", "createdAt": "2026-01-07T00:00:00Z", "actor": actor,
+             "source": {"__typename": "PullRequest", "number": 1, "title": "Pull request 1", "repository": {"nameWithOwner": "octo/repo"}}}
+        ]});
+    }
     node
 }
 
-fn conversation() -> Value {
-    json!({
+fn conversation(paged: bool, variables: &Value) -> Value {
+    let mut node = json!({
         "state": "OPEN",
         "body": "Fixes the thing.",
         "createdAt": "2026-01-01T00:00:00Z",
         "author": {"login": "alice", "avatarUrl": null},
-        "comments": {"nodes": [
-            {"id": "IC_1", "body": "Looks **good**", "createdAt": "2026-01-02T00:00:00Z", "author": {"login": "bob", "avatarUrl": null}}
-        ]},
-        "reviews": {"nodes": []},
-        "reviewThreads": {"nodes": [{
+        "commits": {"nodes": [{"commit": {"statusCheckRollup": {"contexts": {"nodes": [
+            {"__typename": "CheckRun", "name": "ci", "conclusion": "SUCCESS", "status": "COMPLETED", "detailsUrl": null}
+        ]}}}}]}
+    });
+    if wants(variables, "withComments") {
+        node["comments"] = comments_page(
+            paged,
+            variables,
+            comment("IC_1", "Looks **good**", "2026-01-02T00:00:00Z", "bob"),
+        );
+    }
+    if wants(variables, "withReviews") {
+        node["reviews"] = json!({"totalCount": 0, "nodes": []});
+    }
+    if wants(variables, "withThreads") {
+        node["reviewThreads"] = json!({"totalCount": 1, "nodes": [{
             "id": "RT_1", "path": "src/lib.rs", "line": 11, "originalLine": 11, "diffSide": "RIGHT",
             "isResolved": false, "isOutdated": false,
             "comments": {"nodes": [{
                 "id": "RC_1", "databaseId": 555, "body": "why two?", "createdAt": "2026-01-03T00:00:00Z",
                 "author": {"login": "bob", "avatarUrl": null}, "pullRequestReview": null
             }]}
-        }]},
-        "timelineItems": {"nodes": []},
-        "commits": {"nodes": [{"commit": {"statusCheckRollup": {"contexts": {"nodes": [
-            {"__typename": "CheckRun", "name": "ci", "conclusion": "SUCCESS", "status": "COMPLETED", "detailsUrl": null}
-        ]}}}}]}
-    })
+        }]});
+    }
+    if wants(variables, "withEvents") {
+        node["timelineItems"] = json!({"totalCount": 0, "nodes": []});
+    }
+    node
 }
 
 fn rest(world: &mut World, request: &Request) -> (u16, String) {
@@ -465,6 +530,12 @@ fn issue_rest(world: &mut World, method: &str, path: &str, body: &str) -> Option
             ok(json!({"id": 1}))
         }
         ("PATCH", "") => {
+            if let Some(title) = body["title"].as_str() {
+                let issue = &mut world.issues[index];
+                issue.title = title.to_string();
+                issue.body = body["body"].as_str().unwrap_or_default().to_string();
+                issue.updated_at = EDITED_AT.into();
+            }
             if body["state"] == "closed" {
                 world.issues.remove(index);
             }

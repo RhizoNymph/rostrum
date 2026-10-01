@@ -128,6 +128,14 @@ fn kotlin_bindings_generate_from_the_built_library() {
         "enum class CloseIssueAs",
         "data class ClosedAs(",
         "data class CrossReferenced(",
+        // Editing an issue, and loading earlier conversation pages. The new
+        // record fields default, so existing constructors still compile.
+        "suspend fun `editIssue`(`repo`: kotlin.String, `number`: kotlin.UInt, `title`: kotlin.String, `body`: kotlin.String, `baseUpdatedAt`: java.time.Instant, `overwrite`: kotlin.Boolean): IssueDetail",
+        "suspend fun `loadEarlierIssue`(`repo`: kotlin.String, `number`: kotlin.UInt): IssueDetail",
+        "suspend fun `loadEarlierPull`(`repo`: kotlin.String, `number`: kotlin.UInt): PullDetail",
+        "class EditConflict(",
+        "val `hasEarlier`: kotlin.Boolean = false",
+        "val `earlierCount`: kotlin.UInt? = null",
         // Stacks, read only, as units of the pull request list.
         "sealed class PullItem",
         "data class StackSummary",

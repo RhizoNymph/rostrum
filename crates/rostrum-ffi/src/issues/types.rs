@@ -63,4 +63,12 @@ pub struct IssueSummary {
 pub struct IssueDetail {
     pub issue: IssueSummary,
     pub timeline: Vec<TimelineEntry>,
+    /// Older comments or events remain beyond the pages
+    /// loaded: show "Load earlier".
+    #[uniffi(default)]
+    pub has_earlier: bool,
+    /// How many remain, for "Load earlier (N more)"; `None` when nothing
+    /// does.
+    #[uniffi(default)]
+    pub earlier_count: Option<u32>,
 }
