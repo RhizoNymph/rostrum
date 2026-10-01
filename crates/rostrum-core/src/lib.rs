@@ -42,6 +42,7 @@ pub use review::{DraftAnchor, drafts_are_stale};
 pub use sort::{
     FeedOrder, FeedSort, ItemSortKey, KeyKind, RepoSortKey, Sort, SortDirection, SortKey,
 };
+pub use stack::{Continuation, ExtendError, ExtendPlan, continuations, plan_extend};
 pub use stack::{
     FeedUnit, MergeRollup, PlanError, PlanMember, RefName, Stack, StackError, StackGroup, StackIx,
     StackMembers, StackNumber, StackPlan, plan_stack,
