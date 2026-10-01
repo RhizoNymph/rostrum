@@ -10,6 +10,10 @@ import io.github.rhizonymph.rostrum.data.describe
 import io.github.rhizonymph.rostrum.data.logErr
 import io.github.rhizonymph.rostrum.data.model.FeedPreferences
 import io.github.rhizonymph.rostrum.data.model.FeedSnapshot
+import io.github.rhizonymph.rostrum.data.model.FeedTab
+import io.github.rhizonymph.rostrum.data.model.ItemSortKey
+import io.github.rhizonymph.rostrum.data.model.RepoSortKey
+import io.github.rhizonymph.rostrum.data.model.SortDirection
 import io.github.rhizonymph.rostrum.data.requiresSignIn
 import io.github.rhizonymph.rostrum.data.session.SessionState
 import io.github.rhizonymph.rostrum.data.session.isPaired
@@ -35,8 +39,8 @@ import java.time.Clock
 
 /**
  * The feed: paints the cached snapshot, refreshes, follows background
- * updates (keeping the highest revision), and drives the filter chips, the
- * search box and the filter sheet. Every change goes through the backend,
+ * updates (keeping the highest revision), and drives the tabs, the Sort
+ * sheet, the filter chips, the search box and the filter sheet. Every change goes through the backend,
  * which answers with the next snapshot.
  */
 @OptIn(FlowPreview::class)
@@ -221,6 +225,46 @@ class FeedViewModel(
                 is Outcome.Err -> failed("filter_cleared", result.error)
             }
         }
+    }
+
+    // --- tabs and sort -------------------------------------------------------------
+
+    /** Show pull requests or issues; the core persists the choice. */
+    fun selectTab(tab: FeedTab) {
+        if (_state.value.feed.dataOrNull()?.tab == tab) return
+        viewModelScope.launch {
+            when (val result = backend.setFeedTab(tab)) {
+                is Outcome.Ok -> {
+                    apply(result.value)
+                    RostrumLog.i(TAG, "feed_tab", "tab" to tab)
+                    reloadRoster()
+                }
+                is Outcome.Err -> failed("feed_tab", result.error)
+            }
+        }
+    }
+
+    fun openSort() {
+        _state.update { it.copy(sortOpen = true) }
+    }
+
+    fun closeSort() {
+        _state.update { it.copy(sortOpen = false) }
+    }
+
+    /** A new key starts at its default direction; the core decides it. */
+    fun chooseRepoSort(key: RepoSortKey) = change("repo_sort", "key" to key) { backend.setRepoSort(key, null) }
+
+    fun setRepoSortDirection(direction: SortDirection) {
+        val key = _state.value.feed.dataOrNull()?.sort?.repoKey ?: return
+        change("repo_sort", "key" to key, "direction" to direction) { backend.setRepoSort(key, direction) }
+    }
+
+    fun chooseItemSort(key: ItemSortKey) = change("item_sort", "key" to key) { backend.setItemSort(key, null) }
+
+    fun setItemSortDirection(direction: SortDirection) {
+        val key = _state.value.feed.dataOrNull()?.sort?.itemKey ?: return
+        change("item_sort", "key" to key, "direction" to direction) { backend.setItemSort(key, direction) }
     }
 
     // --- search --------------------------------------------------------------------

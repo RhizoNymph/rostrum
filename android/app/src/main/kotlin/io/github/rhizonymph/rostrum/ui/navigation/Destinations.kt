@@ -1,5 +1,6 @@
 package io.github.rhizonymph.rostrum.ui.navigation
 
+import io.github.rhizonymph.rostrum.data.model.IssueRef
 import io.github.rhizonymph.rostrum.data.model.PrRef
 import kotlinx.serialization.Serializable
 
@@ -31,6 +32,20 @@ sealed interface Destination {
     data class PullRequest(val repo: String, val number: Int, val tab: PrTab = PrTab.Conversation) : Destination {
         val pr: PrRef get() = PrRef(repo, number)
     }
+
+    /** One issue: header, labels, assignees, timeline, composer. */
+    @Serializable
+    data class Issue(val repo: String, val number: Int) : Destination {
+        val issue: IssueRef get() = IssueRef(repo, number)
+    }
+
+    /** The new-issue form, preset to [repo] when opened from a repository's screen. */
+    @Serializable
+    data class NewIssue(val repo: String? = null) : Destination
+
+    /** One repository's screen: its pull requests, issues and branches. */
+    @Serializable
+    data class Repo(val repo: String) : Destination
 
     /** One file's diff; previous/next move within the screen. */
     @Serializable

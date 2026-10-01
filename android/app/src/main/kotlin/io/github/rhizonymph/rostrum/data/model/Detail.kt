@@ -106,12 +106,19 @@ sealed interface TimelineKind {
 sealed interface TimelineEvent {
     data object Merged : TimelineEvent
     data object Closed : TimelineEvent
+
+    /** An issue closed with a reason. */
+    data class ClosedAs(val reason: IssueCloseReason) : TimelineEvent
     data object Reopened : TimelineEvent
     data object ReadyForReview : TimelineEvent
     data object ConvertedToDraft : TimelineEvent
     data object ForcePushed : TimelineEvent
     data class ReviewRequested(val reviewer: String) : TimelineEvent
     data class Assigned(val assignee: String) : TimelineEvent
+    data class Unassigned(val assignee: String) : TimelineEvent
+
+    /** Mentioned from another issue or pull request ([source] is `owner/name#N`). */
+    data class CrossReferenced(val source: String, val title: String) : TimelineEvent
     data class Labeled(val label: String) : TimelineEvent
     data class Unlabeled(val label: String) : TimelineEvent
     data class Renamed(val from: String, val to: String) : TimelineEvent

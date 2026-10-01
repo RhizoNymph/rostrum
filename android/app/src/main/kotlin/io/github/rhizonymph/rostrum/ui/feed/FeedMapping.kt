@@ -4,74 +4,27 @@ import io.github.rhizonymph.rostrum.data.BackendError
 import io.github.rhizonymph.rostrum.data.Outcome
 import io.github.rhizonymph.rostrum.data.model.ColorRole
 import io.github.rhizonymph.rostrum.data.model.FeedPreferences
+import io.github.rhizonymph.rostrum.data.model.FeedTab
 import io.github.rhizonymph.rostrum.data.model.MachineInfo
-import io.github.rhizonymph.rostrum.data.model.PrSummary
 import io.github.rhizonymph.rostrum.data.model.RepoSection
-import io.github.rhizonymph.rostrum.data.model.ReviewDecision
 import io.github.rhizonymph.rostrum.data.requiresPairing
-import io.github.rhizonymph.rostrum.ui.format.relativeAge
-import java.time.Instant
 
 /*
  * Pure decisions behind the feed's rows, header and filter sheet, kept out of
  * the composables so they are unit-tested.
  */
 
-/** An icon a row chip leads with. */
-enum class ChipIcon { Check }
-
-/** One chip under a feed row's meta line. */
-data class RowChip(
-    val text: String,
-    val role: ColorRole,
-    val mono: Boolean = false,
-    val icon: ChipIcon? = null,
-    val description: String? = null,
-)
-
-/**
- * The chips of a feed row, in the mockup's order: merge trouble, your review,
- * the review verdict, then distance from base.
- * Drafts are marked in the meta line instead.
- */
-fun rowChips(pr: PrSummary): List<RowChip> = buildList {
-    pr.mergeChip?.let { add(RowChip(it.text, it.role, description = it.tooltip)) }
-    if (pr.reviewRequested) add(RowChip("Your review", ColorRole.Accent, description = "Your review is requested"))
-    pr.reviewChip?.let {
-        val icon = if (pr.reviewDecision == ReviewDecision.Approved) ChipIcon.Check else null
-        add(RowChip(it.text, it.role, icon = icon, description = it.tooltip))
-    }
-    pr.behindChip?.let { add(RowChip(it.text, it.role, mono = true, description = it.tooltip)) }
-}
-
-/** `you` for your own pull requests, the author's login otherwise. */
-fun authorLabel(pr: PrSummary): String = when {
-    pr.isYours -> "you"
-    else -> pr.author?.login ?: "ghost"
-}
-
-/** How long ago the pull request was opened: `2h`. */
-fun ageLabel(pr: PrSummary, now: Instant): String = relativeAge(pr.createdAt, now)
-
-/** How a line count is coloured: zero counts are subdued. */
-enum class CountTone { Added, Removed, Zero }
-
-fun additionsTone(count: Int): CountTone = if (count == 0) CountTone.Zero else CountTone.Added
-
-fun deletionsTone(count: Int): CountTone = if (count == 0) CountTone.Zero else CountTone.Removed
-
-/** The letter in a repository's tile: the name's first letter. */
-fun repoInitial(repo: String): String =
-    repo.substringAfter('/').firstOrNull()?.uppercaseChar()?.toString() ?: "?"
-
 fun openCountText(count: Int): String = "$count open"
 
 fun hiddenReposText(count: Int): String =
     "$count empty ${if (count == 1) "repository" else "repositories"} hidden"
 
-/** Why a loaded repository shows nothing. */
-fun emptyBodyText(section: RepoSection): String =
-    if (section.openCount == 0) "No open pull requests" else "None match the filter"
+/** Why a loaded repository shows nothing, in the words of its tab. */
+fun emptyBodyText(section: RepoSection, tab: FeedTab = FeedTab.PullRequests): String = when {
+    section.openCount > 0 -> "None match the filter"
+    tab == FeedTab.Issues -> "No open issues"
+    else -> "No open pull requests"
+}
 
 /**
  * How many of the sheet's saved settings narrow the feed. Involvement only
@@ -103,8 +56,8 @@ fun authorsChipLabel(preferences: FeedPreferences, viewerLogin: String?): String
 }
 
 /** Under an author's name in the sheet: `you · 2 open`. */
-fun authorSubline(isViewer: Boolean, openPrs: Int): String =
-    if (isViewer) "you · $openPrs open" else "$openPrs open"
+fun authorSubline(isViewer: Boolean, openItems: Int): String =
+    if (isViewer) "you · $openItems open" else "$openItems open"
 
 /**
  * The desktop pill from pairing and the desktop's answer to `machineInfo`

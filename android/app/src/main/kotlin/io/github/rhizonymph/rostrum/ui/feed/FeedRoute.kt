@@ -10,14 +10,15 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import io.github.rhizonymph.rostrum.data.model.IssueRef
 import io.github.rhizonymph.rostrum.data.model.PrRef
 import io.github.rhizonymph.rostrum.ui.common.CollectMessages
 import io.github.rhizonymph.rostrum.ui.common.dataOrNull
 import io.github.rhizonymph.rostrum.ui.common.profileViewModel
 
 /**
- * The feed destination: binds [FeedViewModel] to [FeedScreen] and the filter
- * sheet, refreshes on the settings interval while the screen is started, and
+ * The feed destination: binds [FeedViewModel] to [FeedScreen], the Sort
+ * sheet and the filter sheet, refreshes on the settings interval while the screen is started, and
  * lets Back close the search field first.
  */
 @Composable
@@ -26,6 +27,9 @@ fun FeedRoute(
     onOpenPullRequest: (PrRef) -> Unit,
     onOpenProfiles: () -> Unit,
     modifier: Modifier = Modifier,
+    onOpenIssue: (IssueRef) -> Unit = {},
+    onOpenRepo: (String) -> Unit = {},
+    onNewIssue: () -> Unit = {},
 ) {
     val vm = profileViewModel { container, profile ->
         FeedViewModel(
@@ -44,9 +48,14 @@ fun FeedRoute(
     }
     BackHandler(enabled = state.search is SearchState.Open) { vm.closeSearch() }
 
-    val actions = remember(vm, onOpenPullRequest, onOpenProfiles) {
+    val actions = remember(vm, onOpenPullRequest, onOpenProfiles, onOpenIssue, onOpenRepo, onNewIssue) {
         FeedActions(
             openPullRequest = onOpenPullRequest,
+            openIssue = onOpenIssue,
+            openRepo = onOpenRepo,
+            newIssue = onNewIssue,
+            selectTab = vm::selectTab,
+            openSort = vm::openSort,
             openProfiles = onOpenProfiles,
             refresh = vm::refresh,
             retry = vm::retry,
@@ -74,7 +83,20 @@ fun FeedRoute(
         )
     }
 
+    val sortActions = remember(vm) {
+        SortSheetActions(
+            chooseRepoKey = vm::chooseRepoSort,
+            setRepoDirection = vm::setRepoSortDirection,
+            chooseItemKey = vm::chooseItemSort,
+            setItemDirection = vm::setItemSortDirection,
+            done = vm::closeSort,
+        )
+    }
+
     FeedScreen(state, actions, modifier, profileLabel)
+
+    val sort = state.feed.dataOrNull()?.sort
+    if (state.sortOpen && sort != null) FeedSortSheet(sort, sortActions)
 
     val filters = state.filters
     val preferences = state.feed.dataOrNull()?.preferences

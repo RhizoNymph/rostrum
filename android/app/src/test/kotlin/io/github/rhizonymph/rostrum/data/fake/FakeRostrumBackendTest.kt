@@ -16,6 +16,7 @@ import io.github.rhizonymph.rostrum.data.model.MergeMethod
 import io.github.rhizonymph.rostrum.data.model.MergeStatus
 import io.github.rhizonymph.rostrum.data.model.NotificationKind
 import io.github.rhizonymph.rostrum.data.model.PrRef
+import io.github.rhizonymph.rostrum.data.model.PullItem
 import io.github.rhizonymph.rostrum.data.model.PullState
 import io.github.rhizonymph.rostrum.data.model.RepoBody
 import io.github.rhizonymph.rostrum.data.model.ReviewEvent
@@ -51,7 +52,9 @@ class FakeRostrumBackendTest {
             assertTrue(feed.filterActive)
             val rostrum = feed.repos.first { it.repo == "RhizoNymph/rostrum" }
             val numbers = (rostrum.body as RepoBody.Pulls).pulls.map { it.number }
-            assertEquals(listOf(10, 9, 11), numbers)
+            // Stack 7 (#9 with #11 on top) sorts by its newest member under "created, newest first".
+            assertEquals(listOf(9, 11, 10), numbers)
+            assertInstanceOf(PullItem.Stack::class.java, (rostrum.body as RepoBody.Pulls).items.first())
             assertEquals(RepoBody.Collapsed, feed.repos.first { it.repo == "rust-lang/rust" }.body)
             assertEquals(2, feed.hiddenEmptyRepos)
         }

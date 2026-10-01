@@ -3,6 +3,11 @@ package io.github.rhizonymph.rostrum.data.ffi
 import io.github.rhizonymph.rostrum.data.BackendError
 import io.github.rhizonymph.rostrum.data.Outcome
 import io.github.rhizonymph.rostrum.data.model.GitHubStatus
+import io.github.rhizonymph.rostrum.data.model.SortDirection
+import io.github.rhizonymph.rostrum.data.model.RepoSortKey
+import io.github.rhizonymph.rostrum.data.model.ItemSortKey
+import io.github.rhizonymph.rostrum.data.model.IssueRef
+import io.github.rhizonymph.rostrum.data.model.FeedTab
 import io.github.rhizonymph.rostrum.data.model.MdBlockKind
 import io.github.rhizonymph.rostrum.data.model.PrRef
 import io.github.rhizonymph.rostrum.data.model.ProfileId
@@ -196,5 +201,33 @@ class HostSmokeTest {
         assertFalse(File(root, "profiles/${work.id.value}").exists())
         val gone = ProfileId.of("0123456789abcdef")!!
         assertEquals(BackendError.ProfileNotFound("0123456789abcdef"), profiles.setActiveProfile(gone).error())
+    }
+
+    @Test
+    @Order(11)
+    fun `tabs, sorts and the repository screen answer without a token`(): Unit = runBlocking {
+        val settings = backend.sortSettings().orFail()
+        assertEquals(RepoSortKey.entries.size, settings.repoOptions.size)
+        assertEquals(ItemSortKey.entries.size, settings.itemOptions.size)
+        val byTitle = backend.setItemSort(ItemSortKey.Title, null).orFail()
+        assertEquals(ItemSortKey.Title, byTitle.sort.itemKey)
+        assertEquals(SortDirection.Ascending, byTitle.sort.itemDirection)
+        val reversed = backend.setItemSort(ItemSortKey.Title, SortDirection.Descending).orFail()
+        assertEquals(SortDirection.Descending, reversed.sort.itemDirection)
+        assertEquals(ItemSortKey.Title, backend.clearFilter().orFail().sort.itemKey)
+
+        val issuesTab = backend.setFeedTab(FeedTab.Issues).orFail()
+        assertEquals(FeedTab.Issues, issuesTab.tab)
+        assertEquals(FeedTab.Issues, backend.cachedFeed().orFail().tab)
+        backend.setFeedTab(FeedTab.PullRequests).orFail()
+
+        val repo = backend.settings().orFail().repos.first()
+        val overview = backend.repoOverview(repo).orFail()
+        assertEquals(repo, overview.repo)
+        assertTrue(overview.pulls.isEmpty() && overview.issues.isEmpty())
+        assertTrue(backend.trunks(repo).orFail().detected)
+        assertInstanceOf(BackendError.InvalidInput::class.java, backend.setTrunks(repo, listOf("bad name")).error())
+        assertInstanceOf(BackendError.InvalidInput::class.java, backend.createIssue(repo, "  ", "", emptyList(), emptyList()).error())
+        assertEquals(BackendError.NotSignedIn, backend.issueDetail(IssueRef(repo, 1)).error())
     }
 }

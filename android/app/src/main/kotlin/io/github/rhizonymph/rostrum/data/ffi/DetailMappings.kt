@@ -65,12 +65,15 @@ internal fun FfiPullHeader.toModel() = PullHeader(
 internal fun FfiTimelineEvent.toModel(): TimelineEvent = when (this) {
     is FfiTimelineEvent.Merged -> TimelineEvent.Merged
     is FfiTimelineEvent.Closed -> TimelineEvent.Closed
+    is FfiTimelineEvent.ClosedAs -> TimelineEvent.ClosedAs(reason.toModel())
     is FfiTimelineEvent.Reopened -> TimelineEvent.Reopened
     is FfiTimelineEvent.ReadyForReview -> TimelineEvent.ReadyForReview
     is FfiTimelineEvent.ConvertedToDraft -> TimelineEvent.ConvertedToDraft
     is FfiTimelineEvent.ForcePushed -> TimelineEvent.ForcePushed
     is FfiTimelineEvent.ReviewRequested -> TimelineEvent.ReviewRequested(reviewer)
     is FfiTimelineEvent.Assigned -> TimelineEvent.Assigned(assignee)
+    is FfiTimelineEvent.Unassigned -> TimelineEvent.Unassigned(assignee)
+    is FfiTimelineEvent.CrossReferenced -> TimelineEvent.CrossReferenced(source, title)
     is FfiTimelineEvent.Labeled -> TimelineEvent.Labeled(label)
     is FfiTimelineEvent.Unlabeled -> TimelineEvent.Unlabeled(label)
     is FfiTimelineEvent.Renamed -> TimelineEvent.Renamed(from, to)

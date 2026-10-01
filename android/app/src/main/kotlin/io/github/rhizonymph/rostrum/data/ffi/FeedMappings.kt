@@ -13,6 +13,7 @@ import io.github.rhizonymph.rostrum.data.model.RepoBody
 import io.github.rhizonymph.rostrum.data.model.RepoLoad
 import io.github.rhizonymph.rostrum.data.model.RepoSection
 import io.github.rhizonymph.rostrum.data.model.Settings
+import io.github.rhizonymph.rostrum.data.model.TabCounts
 import uniffi.rostrum_ffi.AuthorChip as FfiAuthorChip
 import uniffi.rostrum_ffi.AuthorRoster as FfiAuthorRoster
 import uniffi.rostrum_ffi.BaseDivergence as FfiBaseDivergence
@@ -72,7 +73,8 @@ internal fun FfiRepoBody.toModel(): RepoBody = when (this) {
     is FfiRepoBody.Loading -> RepoBody.Loading
     is FfiRepoBody.Failed -> RepoBody.Failed(reason)
     is FfiRepoBody.Empty -> RepoBody.Empty
-    is FfiRepoBody.Pulls -> RepoBody.Pulls(pulls.map { it.toModel() })
+    is FfiRepoBody.Pulls -> RepoBody.Pulls(items.map { it.toModel() })
+    is FfiRepoBody.Issues -> RepoBody.Issues(issues.map { it.toModel() })
 }
 
 internal fun FfiBaseDivergence.toModel() = BaseDivergence(
@@ -122,6 +124,9 @@ internal fun FfiRepoSection.toModel() = RepoSection(
 
 internal fun FfiFeedSnapshot.toModel() = FeedSnapshot(
     revision = revision.toLong(),
+    tab = tab.toModel(),
+    tabCounts = TabCounts(tabCounts.pullRequests.toInt(), tabCounts.issues.toInt()),
+    sort = sort.toModel(),
     repos = repos.map { it.toModel() },
     hiddenEmptyRepos = hiddenEmptyRepos.toInt(),
     totalOpen = totalOpen.toInt(),
@@ -133,7 +138,7 @@ internal fun FfiFeedSnapshot.toModel() = FeedSnapshot(
     viewer = viewer?.toModel(),
 )
 
-internal fun FfiAuthorChip.toModel() = AuthorChip(login, avatarUrl, openPrs.toInt(), isViewer, selected)
+internal fun FfiAuthorChip.toModel() = AuthorChip(login, avatarUrl, openItems.toInt(), isViewer, selected)
 
 internal fun FfiAuthorRoster.toModel() = AuthorRoster(authors.map { it.toModel() }, hidden.toInt())
 

@@ -1,17 +1,23 @@
 package io.github.rhizonymph.rostrum.data
 
 import io.github.rhizonymph.rostrum.data.model.AuthorRoster
+import io.github.rhizonymph.rostrum.data.model.BranchTree
 import io.github.rhizonymph.rostrum.data.model.BranchUpdateMethod
+import io.github.rhizonymph.rostrum.data.model.CloseIssueAs
 import io.github.rhizonymph.rostrum.data.model.CommentAnchor
 import io.github.rhizonymph.rostrum.data.model.DesktopConfigPreview
 import io.github.rhizonymph.rostrum.data.model.DesktopGitHubToken
 import io.github.rhizonymph.rostrum.data.model.DesktopProbe
 import io.github.rhizonymph.rostrum.data.model.FeedPreferences
 import io.github.rhizonymph.rostrum.data.model.FeedSnapshot
+import io.github.rhizonymph.rostrum.data.model.FeedTab
 import io.github.rhizonymph.rostrum.data.model.FileDiff
 import io.github.rhizonymph.rostrum.data.model.FilesOverview
 import io.github.rhizonymph.rostrum.data.model.GitHubStatus
 import io.github.rhizonymph.rostrum.data.model.HandoffSession
+import io.github.rhizonymph.rostrum.data.model.IssueDetail
+import io.github.rhizonymph.rostrum.data.model.IssueRef
+import io.github.rhizonymph.rostrum.data.model.ItemSortKey
 import io.github.rhizonymph.rostrum.data.model.JobResult
 import io.github.rhizonymph.rostrum.data.model.LabelView
 import io.github.rhizonymph.rostrum.data.model.LocalOp
@@ -27,10 +33,15 @@ import io.github.rhizonymph.rostrum.data.model.PrRef
 import io.github.rhizonymph.rostrum.data.model.PullDetail
 import io.github.rhizonymph.rostrum.data.model.PullHeader
 import io.github.rhizonymph.rostrum.data.model.RemoteStatus
+import io.github.rhizonymph.rostrum.data.model.RepoOverview
+import io.github.rhizonymph.rostrum.data.model.RepoSortKey
 import io.github.rhizonymph.rostrum.data.model.ReviewEvent
 import io.github.rhizonymph.rostrum.data.model.Settings
+import io.github.rhizonymph.rostrum.data.model.SortDirection
+import io.github.rhizonymph.rostrum.data.model.SortSettings
 import io.github.rhizonymph.rostrum.data.model.SyncAllOp
 import io.github.rhizonymph.rostrum.data.model.SyncRun
+import io.github.rhizonymph.rostrum.data.model.TrunkSettings
 import io.github.rhizonymph.rostrum.data.model.UserRef
 import kotlinx.coroutines.flow.Flow
 
@@ -103,7 +114,7 @@ interface RostrumBackend {
     /** Add or remove one author from the filter (case-insensitive). */
     suspend fun toggleAuthor(login: String): Outcome<FeedSnapshot>
 
-    /** Reset the query and every preference to their defaults. */
+    /** Reset the query and every preference to their defaults. The sort is kept. */
     suspend fun clearFilter(): Outcome<FeedSnapshot>
 
     /** Collapse or expand a repository's container. Not persisted. */
@@ -114,6 +125,69 @@ interface RostrumBackend {
 
     /** Every feed change, including background ones (the core's `FeedObserver`). */
     val feedUpdates: Flow<FeedSnapshot>
+
+    /** Show the Pull requests or the Issues tab; persisted. */
+    suspend fun setFeedTab(tab: FeedTab): Outcome<FeedSnapshot>
+
+    // --- sort ----------------------------------------------------------------
+
+    suspend fun sortSettings(): Outcome<SortSettings>
+
+    /**
+     * Order repositories by [key]. With no [direction], a new key starts at its
+     * default direction and the current key keeps its own.
+     */
+    suspend fun setRepoSort(key: RepoSortKey, direction: SortDirection?): Outcome<FeedSnapshot>
+
+    /** Order pull requests and issues by [key]; [direction] as for [setRepoSort]. */
+    suspend fun setItemSort(key: ItemSortKey, direction: SortDirection?): Outcome<FeedSnapshot>
+
+    // --- issues --------------------------------------------------------------
+
+    /** The issue with its timeline, from GitHub. */
+    suspend fun issueDetail(issue: IssueRef): Outcome<IssueDetail>
+
+    /** The last fetched issue screen, if any; never contacts GitHub. */
+    suspend fun cachedIssueDetail(issue: IssueRef): Outcome<IssueDetail?>
+
+    suspend fun commentOnIssue(issue: IssueRef, body: String): Outcome<Unit>
+
+    suspend fun closeIssue(issue: IssueRef, reason: CloseIssueAs): Outcome<Unit>
+
+    suspend fun reopenIssue(issue: IssueRef): Outcome<Unit>
+
+    suspend fun addIssueLabel(issue: IssueRef, label: String): Outcome<Unit>
+
+    suspend fun removeIssueLabel(issue: IssueRef, label: String): Outcome<Unit>
+
+    /** Who issues in [repo] can be assigned to. */
+    suspend fun assignableUsers(repo: String): Outcome<List<UserRef>>
+
+    suspend fun addIssueAssignee(issue: IssueRef, login: String): Outcome<Unit>
+
+    suspend fun removeIssueAssignee(issue: IssueRef, login: String): Outcome<Unit>
+
+    /** Open an issue; answers its number. A blank title is refused. */
+    suspend fun createIssue(
+        repo: String,
+        title: String,
+        body: String,
+        labels: List<String>,
+        assignees: List<String>,
+    ): Outcome<Int>
+
+    // --- one repository ------------------------------------------------------
+
+    /** The repository's pull requests (stacks grouped) and issues, unfiltered. No network. */
+    suspend fun repoOverview(repo: String): Outcome<RepoOverview>
+
+    /** Its branches under its trunks, with ahead/behind. */
+    suspend fun branchTree(repo: String): Outcome<BranchTree>
+
+    suspend fun trunks(repo: String): Outcome<TrunkSettings>
+
+    /** Configure [repo]'s trunks; `null` returns to detection. Names are validated. */
+    suspend fun setTrunks(repo: String, names: List<String>?): Outcome<TrunkSettings>
 
     // --- one pull request ----------------------------------------------------
 

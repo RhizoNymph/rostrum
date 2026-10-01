@@ -1,5 +1,13 @@
 package io.github.rhizonymph.rostrum.ui.feed
 
+import io.github.rhizonymph.rostrum.ui.items.ChipIcon
+import io.github.rhizonymph.rostrum.ui.items.CountTone
+import io.github.rhizonymph.rostrum.ui.items.additionsTone
+import io.github.rhizonymph.rostrum.ui.items.ageLabel
+import io.github.rhizonymph.rostrum.ui.items.authorLabel
+import io.github.rhizonymph.rostrum.ui.items.deletionsTone
+import io.github.rhizonymph.rostrum.ui.items.repoInitial
+import io.github.rhizonymph.rostrum.ui.items.rowChips
 import io.github.rhizonymph.rostrum.data.BackendError
 import io.github.rhizonymph.rostrum.data.Outcome
 import io.github.rhizonymph.rostrum.data.RemoteErrorCode
@@ -150,8 +158,8 @@ class FeedMappingTest {
 
         @Test
         fun `author sublines`() {
-            assertEquals("you · 2 open", authorSubline(isViewer = true, openPrs = 2))
-            assertEquals("1 open", authorSubline(isViewer = false, openPrs = 1))
+            assertEquals("you · 2 open", authorSubline(isViewer = true, openItems = 2))
+            assertEquals("1 open", authorSubline(isViewer = false, openItems = 1))
         }
     }
 

@@ -42,6 +42,9 @@ class MainDispatcherExtension(
 val TEST_NOW: Instant = Instant.parse("2026-09-28T12:00:00Z")
 val TEST_CLOCK: Clock = Clock.fixed(TEST_NOW, ZoneOffset.UTC)
 
+/** The default sorts (repositories pushed ↓, items created ↓), as a snapshot carries them. */
+val TEST_SORT = io.github.rhizonymph.rostrum.data.fake.FakeSort().settings()
+
 /** A signed-in, paired fake on the test clock with no latency. */
 fun testBackend(signedIn: Boolean = true, paired: Boolean = true): FakeRostrumBackend =
     FakeRostrumBackend(clock = TEST_CLOCK, signedIn = signedIn, paired = paired)

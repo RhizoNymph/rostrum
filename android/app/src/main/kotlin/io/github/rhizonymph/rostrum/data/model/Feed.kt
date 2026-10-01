@@ -10,13 +10,19 @@ import java.time.Instant
 data class FeedSnapshot(
     /** Increases with every change; keep the highest. */
     val revision: Long,
-    /** Watched repositories in settings order, minus hidden empty ones. */
+    /** Which list the feed shows; everything below but [tabCounts] is for this tab. */
+    val tab: FeedTab,
+    /** Visible items per tab, for the tab bar. */
+    val tabCounts: TabCounts,
+    /** The saved repository and item sorts; the core already ordered [repos] by them. */
+    val sort: SortSettings,
+    /** Watched repositories in the repository sort, minus hidden empty ones. */
     val repos: List<RepoSection>,
     /** How many repositories `hideEmptyRepos` removed. */
     val hiddenEmptyRepos: Int,
-    /** Open pull requests across every repository, before filtering. */
+    /** Open items of the tab across every repository, before filtering. */
     val totalOpen: Int,
-    /** Pull requests the filter lets through, collapsed repositories included. */
+    /** Items of the tab the filter lets through, collapsed repositories included. */
     val visibleOpen: Int,
     /** The search box. Not persisted. */
     val query: String,
@@ -28,6 +34,17 @@ data class FeedSnapshot(
     /** Who the GitHub token belongs to, once a refresh has said. */
     val viewer: UserRef?,
 )
+
+/** The feed's two lists. */
+enum class FeedTab { PullRequests, Issues }
+
+/** Items the filter lets through, per tab. */
+data class TabCounts(val pullRequests: Int, val issues: Int) {
+    fun of(tab: FeedTab): Int = when (tab) {
+        FeedTab.PullRequests -> pullRequests
+        FeedTab.Issues -> issues
+    }
+}
 
 /** The feed filter's standing preferences, persisted in the settings file. */
 data class FeedPreferences(
@@ -54,9 +71,9 @@ data class RepoSection(
     /** `owner/name`. */
     val repo: String,
     val load: RepoLoad,
-    /** Open pull requests in this repository, before filtering. */
+    /** Open items of the tab in this repository, before filtering. */
     val openCount: Int,
-    /** Pull requests the filter lets through, whether or not collapsed. */
+    /** Items the filter lets through, whether or not collapsed. */
     val visibleCount: Int,
     val collapsed: Boolean,
     val body: RepoBody,
@@ -85,10 +102,40 @@ sealed interface RepoBody {
     /** The fetch failed and there is nothing cached to show instead. */
     data class Failed(val reason: String) : RepoBody
 
-    /** Loaded; no open pull requests, or none the filter lets through. */
+    /** Loaded; no open items, or none the filter lets through. */
     data object Empty : RepoBody
 
-    data class Pulls(val pulls: List<PrSummary>) : RepoBody
+    /** The Pull requests tab: single pull requests and stacks, in the item sort. */
+    data class Pulls(val items: List<PullItem>) : RepoBody {
+        /** Every pull request listed, stack members included, in display order. */
+        val pulls: List<PrSummary> get() = items.flatMap { it.pulls }
+    }
+
+    /** The Issues tab, in the item sort. */
+    data class Issues(val issues: List<IssueSummary>) : RepoBody
+}
+
+/** One entry of a pull request list: a pull request, or a stack sorted as one unit. */
+sealed interface PullItem {
+    /** For list keys. */
+    val key: String
+
+    /** The pull requests this item shows, in display order. */
+    val pulls: List<PrSummary>
+
+    data class Single(val pull: PrSummary) : PullItem {
+        override val pulls: List<PrSummary> get() = listOf(pull)
+
+        override val key: String get() = "pr:${pull.repo}#${pull.number}"
+    }
+
+    /** A stack's header and its visible members, bottom first. */
+    data class Stack(val stack: StackSummary, val members: List<PrSummary>) : PullItem {
+        override val pulls: List<PrSummary> get() = members
+
+        override val key: String
+            get() = "stack:${members.firstOrNull()?.let { "${it.repo}#${it.number}" } ?: stack.title}"
+    }
 }
 
 /** Everything a feed row shows for one pull request. */
@@ -151,8 +198,8 @@ data class AuthorRoster(
 data class AuthorChip(
     val login: String,
     val avatarUrl: String?,
-    /** Open pull requests they authored across the feed. */
-    val openPrs: Int,
+    /** Open items of the active tab they authored across the feed. */
+    val openItems: Int,
     val isViewer: Boolean,
     val selected: Boolean,
 )

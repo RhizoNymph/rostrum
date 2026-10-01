@@ -13,6 +13,9 @@ import io.github.rhizonymph.rostrum.data.model.ReviewState
 import io.github.rhizonymph.rostrum.data.model.ReviewThreadView
 import io.github.rhizonymph.rostrum.data.model.TimelineEntry
 import io.github.rhizonymph.rostrum.data.model.TimelineKind
+import io.github.rhizonymph.rostrum.ui.components.CommentCard
+import io.github.rhizonymph.rostrum.ui.components.EventRow
+import io.github.rhizonymph.rostrum.ui.components.eventIcon
 import io.github.rhizonymph.rostrum.ui.components.RostrumIcons
 import io.github.rhizonymph.rostrum.ui.format.relativeAge
 import io.github.rhizonymph.rostrum.ui.pr.ReplyDraft
