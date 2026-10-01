@@ -34,7 +34,8 @@ on it beneath, and pull requests stacked on those beneath them. Desktop only.
   repository; the feed's search and author filter do not narrow it.
 - Local worktree drift in the tree. `rostrum_local::local_state` can answer
   it per branch, but it fetches per branch; see *Deferred*.
-- The Android app.
+- The Android app's repository screen: see `docs/features/android_issues_repo.md`
+  (it reads `repoOverview`/`branchTree` from `rostrum-ffi`).
 
 ## Navigation
 

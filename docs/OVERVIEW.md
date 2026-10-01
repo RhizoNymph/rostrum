@@ -91,6 +91,11 @@ Overview:
       pairing. ViewModels depend on one Kotlin interface,
       `RostrumBackend`, shaped after `RostrumCore`; secrets are sealed with an
       Android Keystore key; WorkManager runs the notification check.
+    android_issues_repo: >
+      The phone's feed sort and Pull requests | Issues tabs, the issue screen
+      and new-issue form, stacks drawn together in the feed, and a
+      repository's own screen with its branch tree and trunks — all ordered
+      and assembled by the core, drawn by the app.
     android_profiles: >
       Several paired desktops on one phone, each a profile with its own
       repositories, filters, cache, drafts and GitHub account (a desktop's
@@ -330,6 +335,11 @@ Features Index:
     entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/RostrumApplication.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/RostrumBackend.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/ffi/FfiRostrumBackend.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/navigation/RostrumNavHost.kt]
     depends_on: [android_build, android_core, android_profiles]
     doc: docs/features/android_app.md
+  android_issues_repo:
+    description: Feed sort sheet and Pull requests | Issues tabs, issue screen and new-issue form, stacks in the feed (display), repository screen with branch tree and trunk editor, on Android.
+    entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/feed/FeedSortSheet.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/issue/IssueRoute.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/newissue/NewIssueRoute.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/repo/RepoRoute.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/items/ItemRows.kt]
+    depends_on: [android_app, android_core, feed_sort, issues, stacks, repo_view]
+    doc: docs/features/android_issues_repo.md
   android_profiles:
     description: One profile per paired desktop or pasted token; ProfileManager over the core's profile registry, per-profile secrets, switching, pairing into profiles, notifications across profiles.
     entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/profiles/ProfileManager.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/ffi/FfiProfileRegistry.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/app/RostrumApp.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/profiles/ProfileSwitcherSheet.kt]

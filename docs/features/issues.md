@@ -22,10 +22,8 @@ new one.
 
 ## Non-scope
 
-- The Android app. The model, decoding, requests, cache and draft rules all
-  live in gpui-free crates so `rostrum-ffi` can reuse them, but the phone has
-  no issue list yet; `rostrum-ffi` maps the new timeline events onto its
-  existing types and ignores `FeedRow::IssueRow`.
+- The Android app's issue screens: see `docs/features/android_issues_repo.md`.
+  They reuse the gpui-free model, requests and cache through `rostrum-ffi`.
 - Notifications for new issues. `Baseline` watches pull requests only.
 - Editing an issue's title or body, milestones, issue types, sub-issues,
   reactions, pinning, locking, transferring, and marking duplicates. GitHub's

@@ -35,8 +35,9 @@ and merges a whole stack at once. GitHub — through the `gh stack` extension
 
 ## Non-scope
 
-- **Android.** The phone gets stack members in the same contiguous order but
-  no header and no actions (`rostrum-ffi` ignores `FeedRow::StackHeader`).
+- **Stack actions on Android.** The phone draws a stack's header and members
+  (`PullItem.Stack`, see `docs/features/android_issues_repo.md`); its actions
+  come later, through the paired desktop.
 - **Editing a stack in place** (`gh stack modify`, adding to an existing
   stack, `gh stack sync`/`rebase`). Unstack and arrange again instead.
 - **Creating pull requests.** Every member already has one; `gh stack submit`
