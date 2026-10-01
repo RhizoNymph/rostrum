@@ -132,7 +132,14 @@ requests.
 
 The conversation timeline for a selected PR is a second, deeper query issued
 lazily on selection (comments, reviews with bodies, review threads with their
-comments, and timeline events).
+comments, and timeline events). Its four long connections, and an issue's
+comments and events, are paged backwards by cursor —
+`last: $pageSize, before: $…Before` with `pageInfo` and `totalCount`, each
+switched by `@include` so one document fetches the newest page or any earlier
+one. `graphql::Paged<T>` decodes such a connection into its nodes and a
+`PageState`; see `docs/features/issues.md#paging`. Verified live at
+`pageSize: 3` against rust-lang/rust#126600 and #162858 (the captured
+fixtures).
 
 ### Merge state is computed lazily
 
