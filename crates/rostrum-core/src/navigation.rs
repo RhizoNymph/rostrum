@@ -33,7 +33,7 @@ impl RepoScreen {
 }
 
 fn is_in(selection: &Selection, repo: &RepoId) -> bool {
-    &selection.repo == repo
+    selection.repo() == repo
 }
 
 impl Screen {
@@ -93,16 +93,16 @@ impl Screen {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::PrNumber;
+    use crate::{issue::IssueNumber, model::PrNumber};
 
     fn repo(raw: &str) -> RepoId {
         raw.parse().expect("valid repo id")
     }
 
     fn sel(raw: &str, number: u32) -> Option<Selection> {
-        Some(Selection {
+        Some(Selection::PullRequest {
             repo: repo(raw),
-            pr: PrNumber(number),
+            number: PrNumber(number),
         })
     }
 
@@ -127,6 +127,19 @@ mod tests {
         let mut selection = sel("a/b", 4);
         screen.enter_repo(repo("a/b"), &mut selection);
         assert_eq!(selection, sel("a/b", 4));
+    }
+
+    /// An issue is as much the repository's as a pull request is.
+    #[test]
+    fn an_issue_selected_in_the_entered_repository_is_kept() {
+        let issue = Some(Selection::Issue {
+            repo: repo("a/b"),
+            number: IssueNumber(12),
+        });
+        let mut screen = Screen::Feed;
+        let mut selection = issue.clone();
+        screen.enter_repo(repo("a/b"), &mut selection);
+        assert_eq!(selection, issue);
     }
 
     #[test]

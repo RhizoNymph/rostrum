@@ -28,7 +28,7 @@ const USER_AGENT: &str = concat!("rostrum/", env!("CARGO_PKG_VERSION"));
 const API_VERSION: &str = "2022-11-28";
 /// At 100 entries per page this is 10,000 files, well past GitHub's own 3,000
 /// file cap. It exists only so a malformed `Link` header cannot loop forever.
-const MAX_PAGES: usize = 100;
+pub(crate) const MAX_PAGES: usize = 100;
 
 /// Result of one repository refresh.
 #[derive(Debug)]
@@ -49,7 +49,7 @@ pub struct GitHubClient {
     /// Where GraphQL documents are posted.
     graphql_url: String,
     /// The root REST paths are appended to, without a trailing slash.
-    rest_base: String,
+    pub(crate) rest_base: String,
 }
 
 impl GitHubClient {
@@ -658,7 +658,7 @@ impl GitHubClient {
     }
 
     /// A REST request with the auth and versioning headers already applied.
-    fn rest(&self, method: Method, url: &str) -> RequestBuilder {
+    pub(crate) fn rest(&self, method: Method, url: &str) -> RequestBuilder {
         self.http
             .request(method, url)
             .bearer_auth(self.token.as_str())
@@ -668,7 +668,10 @@ impl GitHubClient {
 
     /// Send a request and read the whole response, keeping the status and
     /// headers that error classification needs.
-    async fn execute(&self, request: RequestBuilder) -> Result<RawResponse, GitHubError> {
+    pub(crate) async fn execute(
+        &self,
+        request: RequestBuilder,
+    ) -> Result<RawResponse, GitHubError> {
         let response = request.send().await?;
         let status = response.status();
         let headers = response.headers().clone();
@@ -682,14 +685,14 @@ impl GitHubClient {
 }
 
 /// A response read to completion, before it is interpreted.
-struct RawResponse {
-    status: StatusCode,
-    headers: HeaderMap,
-    body: String,
+pub(crate) struct RawResponse {
+    pub(crate) status: StatusCode,
+    pub(crate) headers: HeaderMap,
+    pub(crate) body: String,
 }
 
 impl RawResponse {
-    fn check_status(&self, resource: &str) -> Result<(), GitHubError> {
+    pub(crate) fn check_status(&self, resource: &str) -> Result<(), GitHubError> {
         match classify_status(self.status, &self.headers, &self.body, resource) {
             Some(err) => Err(err),
             None => Ok(()),
@@ -723,7 +726,7 @@ fn classify_merge_status(status: StatusCode, body: &str) -> Option<GitHubError> 
 /// A missing repository or pull request also answers 404 here, which this
 /// deliberately swallows: the alternative is a probe request before every
 /// removal, and the user is looking at the pull request they are editing.
-fn classify_label_removal(
+pub(crate) fn classify_label_removal(
     status: StatusCode,
     headers: &HeaderMap,
     body: &str,
@@ -743,7 +746,7 @@ fn classify_label_removal(
 /// and `help wanted` would produce a malformed request line — and an existing
 /// `%` must itself be escaped so an already-encoded-looking name like `%20`
 /// round-trips as the literal three characters it is.
-fn encode_path_segment(segment: &str) -> String {
+pub(crate) fn encode_path_segment(segment: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let mut encoded = String::with_capacity(segment.len());
     for byte in segment.as_bytes() {
@@ -779,7 +782,7 @@ fn rest_message(body: &str) -> String {
 /// The URL of the next page, from the RFC 5988 `Link` header GitHub paginates
 /// with. Following the header rather than incrementing a page counter is what
 /// keeps `per_page` and cursor-based endpoints working the same way.
-fn next_page_url(headers: &HeaderMap) -> Option<String> {
+pub(crate) fn next_page_url(headers: &HeaderMap) -> Option<String> {
     let link = headers.get(reqwest::header::LINK)?.to_str().ok()?;
     for entry in link.split(',') {
         let mut parts = entry.split(';');

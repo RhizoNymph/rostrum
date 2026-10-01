@@ -17,7 +17,7 @@ use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding,
     ListAlignment, ListState, Subscription, Window, actions, div, list, prelude::*, px, rems,
 };
-use rostrum_core::{PrNumber, RepoId, Selection};
+use rostrum_core::{IssueNumber, LoadState, PrNumber, RepoId, Selection};
 use rostrum_ui::{
     ActiveTheme, InputEvent, PopoverAnchor, TextInput,
     components::{Button, ButtonStyle, h_flex, v_flex},
@@ -75,6 +75,7 @@ pub struct RepoView {
     pub repo: RepoId,
     branches: Entity<RepoBranches>,
     pulls: ListState,
+    issues: ListState,
     focus_handle: FocusHandle,
     /// Whether the trunk editor popover is open.
     editing_trunks: bool,
@@ -91,7 +92,7 @@ impl RepoView {
         branches: Entity<RepoBranches>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let count = pull_count(&store, &repo, cx);
+        let (pulls, issues) = list_lengths(&store, &repo, cx);
         let trunk_input = cx.new(|cx| TextInput::new("branch name", cx).lines(1, 1));
         let subscriptions = vec![
             cx.observe(&store, |this, _, cx| this.store_changed(cx)),
@@ -106,7 +107,8 @@ impl RepoView {
             store,
             repo,
             branches,
-            pulls: ListState::new(count, ListAlignment::Top, px(400.)),
+            pulls: ListState::new(pulls, ListAlignment::Top, px(400.)),
+            issues: ListState::new(issues, ListAlignment::Top, px(400.)),
             focus_handle: cx.focus_handle(),
             editing_trunks: false,
             trunks_anchor: PopoverAnchor::default(),
@@ -116,13 +118,16 @@ impl RepoView {
         }
     }
 
-    /// Keep the list's item count equal to the repository's pull requests.
-    /// Rows are addressed by index and re-read on every paint, so only a
-    /// change in count needs the list told.
+    /// Keep each list's item count equal to the repository's pull requests
+    /// and issues. Rows are addressed by index and re-read on every paint, so
+    /// only a change in count needs a list told.
     fn store_changed(&mut self, cx: &mut Context<Self>) {
-        let count = pull_count(&self.store, &self.repo, cx);
-        if count != self.pulls.item_count() {
-            self.pulls.reset(count);
+        let (pulls, issues) = list_lengths(&self.store, &self.repo, cx);
+        if pulls != self.pulls.item_count() {
+            self.pulls.reset(pulls);
+        }
+        if issues != self.issues.item_count() {
+            self.issues.reset(issues);
         }
         cx.notify();
     }
@@ -132,17 +137,27 @@ impl RepoView {
     fn current_position(&self, cx: &App) -> Option<Position> {
         let store = self.store.read(cx);
         let selection = store.state.selection.as_ref()?;
-        if selection.repo != self.repo {
+        if selection.repo() != &self.repo {
             return None;
         }
         let repo = store.state.repo(&self.repo)?;
-        let index = repo.prs.iter().position(|pr| pr.number == selection.pr)?;
-        Some(Position::pull(index))
+        match selection {
+            Selection::PullRequest { number, .. } => repo
+                .prs
+                .iter()
+                .position(|pr| pr.number == *number)
+                .map(Position::pull),
+            Selection::Issue { number, .. } => repo
+                .issues
+                .iter()
+                .position(|issue| issue.number == *number)
+                .map(Position::issue),
+        }
     }
 
     fn navigate(&mut self, nav: Nav, cx: &mut Context<Self>) {
         let pulls = self.pulls.item_count();
-        let issues = issues::count();
+        let issues = self.issues.item_count();
         let Some(target) = step(pulls, issues, self.current_position(cx), nav) else {
             return;
         };
@@ -160,15 +175,34 @@ impl RepoView {
                     self.pulls.scroll_to_reveal_item(target.index);
                 }
             }
-            // Nothing to land on until issues arrive.
-            Section::Issues => {}
+            Section::Issues => {
+                let number = self
+                    .store
+                    .read(cx)
+                    .state
+                    .repo(&self.repo)
+                    .and_then(|repo| repo.issues.get(target.index))
+                    .map(|issue| issue.number);
+                if let Some(number) = number {
+                    self.select_issue(number, cx);
+                    self.issues.scroll_to_reveal_item(target.index);
+                }
+            }
         }
     }
 
     fn select_pull(&mut self, number: PrNumber, cx: &mut Context<Self>) {
         let repo = self.repo.clone();
         self.store.update(cx, |store, cx| {
-            store.state.selection = Some(Selection { repo, pr: number });
+            store.state.selection = Some(Selection::PullRequest { repo, number });
+            cx.notify();
+        });
+    }
+
+    fn select_issue(&mut self, number: IssueNumber, cx: &mut Context<Self>) {
+        let repo = self.repo.clone();
+        self.store.update(cx, |store, cx| {
+            store.state.selection = Some(Selection::Issue { repo, number });
             cx.notify();
         });
     }
@@ -235,7 +269,7 @@ impl RepoView {
             .state
             .selection
             .as_ref()
-            .is_some_and(|selection| selection.repo == self.repo);
+            .is_some_and(|selection| selection.repo() == &self.repo);
 
         v_flex()
             .flex_none()
@@ -325,10 +359,10 @@ impl RepoView {
         let Some(pull) = repo.prs.get(ix) else {
             return div().into_any_element();
         };
-        let selected =
-            store.state.selection.as_ref().is_some_and(|selection| {
-                selection.repo == self.repo && selection.pr == pull.number
-            });
+        let selected = store.state.selection.as_ref().is_some_and(|selection| {
+            matches!(selection, Selection::PullRequest { repo, number }
+                    if *repo == self.repo && *number == pull.number)
+        });
         let sync = store.sync_result(&self.repo, pull.number);
         let theme = cx.theme().clone();
         let content = pr_row_content(pull, sync, ix, &theme);
@@ -347,14 +381,46 @@ impl RepoView {
             .on_click(cx.listener(move |this, _, _window, cx| this.select_pull(number, cx)))
             .into_any_element()
     }
+
+    fn render_issue(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+        let store = self.store.read(cx);
+        let Some(issue) = store
+            .state
+            .repo(&self.repo)
+            .and_then(|repo| repo.issues.get(ix))
+        else {
+            return div().into_any_element();
+        };
+        let selected = store.state.selection.as_ref().is_some_and(|selection| {
+            matches!(selection, Selection::Issue { repo, number }
+                if *repo == self.repo && *number == issue.number)
+        });
+        let theme = cx.theme().clone();
+        let content = issues::issue_row_content(issue, &theme);
+        let number = issue.number;
+
+        div()
+            .id(("repo-issue", ix))
+            .px_3()
+            .py_2()
+            .border_b_1()
+            .border_color(theme.border)
+            .when(selected, |el| el.bg(theme.surface_selected))
+            .hover(|el| el.bg(theme.surface_hover))
+            .cursor_pointer()
+            .child(content)
+            .on_click(cx.listener(move |this, _, _window, cx| this.select_issue(number, cx)))
+            .into_any_element()
+    }
 }
 
-fn pull_count(store: &Entity<Store>, repo: &RepoId, cx: &App) -> usize {
+/// How many pull requests and issues the repository holds.
+fn list_lengths(store: &Entity<Store>, repo: &RepoId, cx: &App) -> (usize, usize) {
     store
         .read(cx)
         .state
         .repo(repo)
-        .map_or(0, |repo| repo.prs.len())
+        .map_or((0, 0), |repo| (repo.prs.len(), repo.issues.len()))
 }
 
 /// `1234` → `1.2k`, the way GitHub shows a star count.
@@ -378,6 +444,13 @@ impl Render for RepoView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let pulls = self.pulls.item_count();
+        let issue_count = self.issues.item_count();
+        let issues_load = self
+            .store
+            .read(cx)
+            .state
+            .repo(&self.repo)
+            .map_or(LoadState::Idle, |repo| repo.issues_load.clone());
         let loading = self
             .store
             .read(cx)
@@ -444,8 +517,33 @@ impl Render for RepoView {
                             .min_h_0()
                             .border_t_1()
                             .border_color(theme.border)
-                            .child(self.render_section_header("Issues", None, cx))
-                            .child(issues::placeholder(cx)),
+                            .child(self.render_section_header(
+                                "Issues",
+                                issues::header_count(&issues_load, issue_count),
+                                cx,
+                            ))
+                            .child(if issue_count == 0 {
+                                div()
+                                    .p_3()
+                                    .text_size(rems(0.78))
+                                    .text_color(theme.text_subtle)
+                                    .child(issues::empty_message(&issues_load))
+                                    .into_any_element()
+                            } else {
+                                div()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .child(
+                                        list(
+                                            self.issues.clone(),
+                                            cx.processor(|this, ix: usize, _window, cx| {
+                                                this.render_issue(ix, cx)
+                                            }),
+                                        )
+                                        .size_full(),
+                                    )
+                                    .into_any_element()
+                            }),
                     ),
             )
     }

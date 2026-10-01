@@ -23,9 +23,10 @@ pub struct AuthorEntry {
     pub key: LoginKey,
     /// Display identity — the casing GitHub returned, and the avatar.
     pub user: User,
-    /// Open pull requests this person authored across every watched repository.
-    /// Zero for the viewer when they have none open, and for a selection that
-    /// has outlived the pull request it was made from.
+    /// Open items this person authored across every watched repository —
+    /// pull requests for [`roster`], issues for [`issue_roster`]. Zero for the
+    /// viewer when they have none open, and for a selection that has outlived
+    /// the work it was made from.
     pub open_prs: usize,
     /// Most recent update across those pull requests; `None` when there are
     /// none. Drives the ordering of everyone below the viewer.
@@ -55,11 +56,38 @@ pub fn roster(
     viewer: Option<&User>,
     selected: &BTreeSet<LoginKey>,
 ) -> Vec<AuthorEntry> {
+    let authored = repos
+        .iter()
+        .flat_map(|repo| &repo.prs)
+        .map(|pr| (pr.author.as_ref(), pr.updated_at));
+    roster_from(authored, viewer, selected)
+}
+
+/// [`roster`] over the open issues instead of the pull requests, with the
+/// same ordering rules. The Issues tab offers the people who opened issues,
+/// since those are the authors its filter can match.
+pub fn issue_roster(
+    repos: &[RepoState],
+    viewer: Option<&User>,
+    selected: &BTreeSet<LoginKey>,
+) -> Vec<AuthorEntry> {
+    let authored = repos
+        .iter()
+        .flat_map(|repo| &repo.issues)
+        .map(|issue| (issue.author.as_ref(), issue.updated_at));
+    roster_from(authored, viewer, selected)
+}
+
+fn roster_from<'a>(
+    authored: impl Iterator<Item = (Option<&'a User>, DateTime<Utc>)>,
+    viewer: Option<&User>,
+    selected: &BTreeSet<LoginKey>,
+) -> Vec<AuthorEntry> {
     let viewer_key = viewer.map(User::key);
     let mut by_login: HashMap<LoginKey, AuthorEntry> = HashMap::new();
 
-    for pr in repos.iter().flat_map(|repo| &repo.prs) {
-        let Some(author) = pr.author.as_ref() else {
+    for (author, updated_at) in authored {
+        let Some(author) = author else {
             continue;
         };
         let key = author.key();
@@ -74,7 +102,7 @@ pub fn roster(
             latest: None,
         });
         entry.open_prs += 1;
-        entry.latest = entry.latest.max(Some(pr.updated_at));
+        entry.latest = entry.latest.max(Some(updated_at));
     }
 
     // The viewer and any stale selection are folded in afterwards so they
@@ -373,5 +401,31 @@ mod tests {
         let capped = visible(roster_of(&["a", "b"]), &selected, 0);
         assert_eq!(logins(&capped.shown), ["b"]);
         assert_eq!(capped.hidden, 1);
+    }
+
+    #[test]
+    fn the_issue_roster_counts_issue_authors_with_the_same_ordering() {
+        let mut state = repo(vec![pr(Some("alice"), "2026-01-03T00:00:00Z")]);
+        let mut older = crate::test_support::issue(1);
+        older.author = Some(User {
+            login: "bob".into(),
+            avatar_url: None,
+        });
+        older.updated_at = "2026-01-01T00:00:00Z".parse().expect("valid");
+        let mut newer = crate::test_support::issue(2);
+        newer.author = Some(User {
+            login: "carol".into(),
+            avatar_url: None,
+        });
+        newer.updated_at = "2026-01-02T00:00:00Z".parse().expect("valid");
+        state.issues = vec![older.clone(), newer, older];
+
+        let viewer = User {
+            login: "me".into(),
+            avatar_url: None,
+        };
+        let entries = issue_roster(&[state], Some(&viewer), &BTreeSet::new());
+        assert_eq!(logins(&entries), ["me", "carol", "bob"]);
+        assert_eq!(entries[2].open_prs, 2);
     }
 }

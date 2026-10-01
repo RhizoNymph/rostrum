@@ -51,7 +51,7 @@ impl BranchesPane {
     fn select(&mut self, number: PrNumber, cx: &mut Context<Self>) {
         let repo = self.repo.clone();
         self.store.update(cx, |store, cx| {
-            store.state.selection = Some(Selection { repo, pr: number });
+            store.state.selection = Some(Selection::PullRequest { repo, number });
             cx.notify();
         });
     }

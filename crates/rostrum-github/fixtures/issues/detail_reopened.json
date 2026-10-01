@@ -1,0 +1,230 @@
+{
+ "data": {
+  "rateLimit": {
+   "cost": 1,
+   "remaining": 4977,
+   "resetAt": "2026-10-01T17:22:01Z"
+  },
+  "repository": {
+   "issue": {
+    "id": "I_kwDOAAsO6M8AAAABUWzO3g",
+    "number": 163598,
+    "title": "Integer-tuple array comparisons retain extra chaining state for `!(a > b)`",
+    "url": "https://github.com/rust-lang/rust/issues/163598",
+    "state": "OPEN",
+    "stateReason": "REOPENED",
+    "body": "I tried this code:\n\ngodbolt:https://godbolt.org/z/vxnGqf87K\n\n```rust\n#[no_mangle]\n#[inline(never)]\npub fn direct(a: &[(i16, u16); 2], b: &[(i16, u16); 2]) -> bool {\n    a <= b\n}\n\n#[no_mangle]\n#[inline(never)]\npub fn negated(a: &[(i16, u16); 2], b: &[(i16, u16); 2]) -> bool {\n    !(a > b)\n}\n\n#[no_mangle]\n#[inline(never)]\npub fn manual(a: &[(i16, u16); 2], b: &[(i16, u16); 2]) -> bool {\n    for index in 0..2 {\n        if a[index].0 != b[index].0 {\n            return a[index].0 < b[index].0;\n        }\n        if a[index].1 != b[index].1 {\n            return a[index].1 < b[index].1;\n        }\n    }\n    true\n}\n```\n\n\n\nI expected to see this happen: for these concrete integer types, the two\npredicates describe the same total lexicographic order. The result should be\ncomputable with boolean comparisons, without retaining a separate \"equal\"\nresult encoding on a path where a difference has already been found.\n\nInstead, this happened:\n\n| Configuration | direct | negated | manual |\n|---|---:|---:|---:|\n| O2 | 66 bytes | 73 bytes | 66 bytes |\n| O3 | 113 bytes | 123 bytes | 66 bytes |\n| Os | 44 bytes | 48 bytes | 44 bytes |\n| Oz | 23 bytes | 23 bytes | 45 bytes |\n| O3, `-Cllvm-args=-vectorize-slp=false` | 113 bytes | 123 bytes | 66 bytes |\n\nThe optimized O3 IR for `negated` includes a result-encoding sequence of this\nshape (SSA names abbreviated):\n\n```llvm\n%signed_gt = icmp sgt i16 %a_signed, %b_signed\n%signed_result = zext i1 %signed_gt to i8\n%unsigned_gt = icmp ugt i16 %a_unsigned, %b_unsigned\n%unsigned_result = zext i1 %unsigned_gt to i8\n%inner = select i1 %unsigned_eq, i8 2, i8 %unsigned_result\n%result = select i1 %signed_eq, i8 %inner, i8 %signed_result\n%not_greater = icmp ne i8 %result, 1\n```\n\nThis becomes conditional moves, an immediate `2`, and a final compare/setne\nin the assembly. The boolean `direct` form does not keep this i8 encoding.\nDisabling SLP does not remove the difference. The `manual` control shows one\ncompact implementation at O3.\n\n\n\n### Meta\n\n\n```text\nrustc 1.101.0-nightly (21b707e3f 2026-09-30)\nbinary: rustc\ncommit-hash: 21b707e3f97e0b522ebd2f277a862339625ad83f\ncommit-date: 2026-09-30\nhost: x86_64-unknown-linux-gnu\nrelease: 1.101.0-nightly\nLLVM version: 23.1.1\n```",
+    "createdAt": "2026-10-01T10:58:49Z",
+    "updatedAt": "2026-10-01T14:09:54Z",
+    "author": {
+     "login": "Yanwords",
+     "avatarUrl": "https://avatars.githubusercontent.com/u/31776599?u=0e2f9f95d7aaaa27d5bf96e0ba0ff3e483456236&v=4"
+    },
+    "assignees": {
+     "nodes": []
+    },
+    "labels": {
+     "nodes": [
+      {
+       "name": "A-LLVM",
+       "color": "f7e101"
+      },
+      {
+       "name": "I-slow",
+       "color": "e10c02"
+      },
+      {
+       "name": "A-codegen",
+       "color": "f7e101"
+      },
+      {
+       "name": "I-heavy",
+       "color": "e10c02"
+      },
+      {
+       "name": "T-libs",
+       "color": "bfd4f2"
+      },
+      {
+       "name": "C-optimization",
+       "color": "f5f1fd"
+      }
+     ]
+    },
+    "milestone": null,
+    "comments": {
+     "totalCount": 4,
+     "nodes": [
+      {
+       "id": "IC_kwDOAAsO6M8AAAABYX5nNA",
+       "body": "The generated assembly for the `direct` and `negated` functions may be larger, but also has only half as many branches. Can you verify that the `manual` implementation is actually faster?\n\n@rustbot label -C-bug C-optimization",
+       "createdAt": "2026-10-01T11:46:31Z",
+       "author": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABYZtHiw",
+       "body": "For these fixed-input microbenchmarks, each item performs 50,000,000 non-inlined calls. Times below are the median of three native wall-clock runs.\n\n| Fixed input | direct | negated | manual |\n|---|---:|---:|---:|\n| All elements equal | 120.620 ms | 140.159 ms | 108.839 ms |\n| First signed field is less | 123.685 ms | 133.825 ms | 93.615 ms |\n| Last unsigned field is greater | 157.667 ms | 165.570 ms | 111.782 ms |\n\nEnvironment: AMD EPYC 7K62 48-Core Processor (guest-reported CPU model), 2 vCPUs, approximately 7.5 GiB RAM, Ubuntu 24.04.4 LTS, KVM VM, pinned to vCPU 1;\n\nCompiler: `rustc 1.101.0-nightly (21b707e3f 2026-09-30)`, LLVM 23.1.1, O3, codegen-units=1, LTO disabled.",
+       "createdAt": "2026-10-01T13:33:27Z",
+       "author": {
+        "login": "Yanwords",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/31776599?u=0e2f9f95d7aaaa27d5bf96e0ba0ff3e483456236&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABYZzYGQ",
+       "body": "Aight, thanks ^^\n\nI'll look into whether we can tweak something here to make this perform better, though I'm not sure if this is more of a codegen/implementation or llvm issue.\n\n@rustbot label -needs-triage A-llvm A-codegen I-slow I-heavy T-libs",
+       "createdAt": "2026-10-01T13:39:24Z",
+       "author": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABYaVx1w",
+       "body": "Thanks for the quick reply! I closed it by accident; the performance concern still stands, so I reopened it. The microbenchmark numbers are above, and I’m happy to share the harness/assembly or test a patch if useful.",
+       "createdAt": "2026-10-01T14:09:54Z",
+       "author": {
+        "login": "Yanwords",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/31776599?u=0e2f9f95d7aaaa27d5bf96e0ba0ff3e483456236&v=4"
+       }
+      }
+     ]
+    },
+    "timelineItems": {
+     "nodes": [
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-10-01T10:58:51Z",
+       "actor": {
+        "login": "Yanwords",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/31776599?u=0e2f9f95d7aaaa27d5bf96e0ba0ff3e483456236&v=4"
+       },
+       "label": {
+        "name": "C-bug"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-10-01T10:58:53Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "needs-triage"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-10-01T11:46:34Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "C-optimization"
+       }
+      },
+      {
+       "__typename": "UnlabeledEvent",
+       "createdAt": "2026-10-01T11:46:35Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "C-bug"
+       }
+      },
+      {
+       "__typename": "ClosedEvent",
+       "createdAt": "2026-10-01T13:32:40Z",
+       "actor": {
+        "login": "Yanwords",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/31776599?u=0e2f9f95d7aaaa27d5bf96e0ba0ff3e483456236&v=4"
+       },
+       "stateReason": "COMPLETED"
+      },
+      {
+       "__typename": "UnlabeledEvent",
+       "createdAt": "2026-10-01T13:32:41Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "needs-triage"
+       }
+      },
+      {
+       "__typename": "ReopenedEvent",
+       "createdAt": "2026-10-01T13:33:38Z",
+       "actor": {
+        "login": "Yanwords",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/31776599?u=0e2f9f95d7aaaa27d5bf96e0ba0ff3e483456236&v=4"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-10-01T13:39:27Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "A-codegen"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-10-01T13:39:27Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "A-LLVM"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-10-01T13:39:27Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "I-heavy"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-10-01T13:39:27Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "I-slow"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-10-01T13:40:06Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "T-libs"
+       }
+      }
+     ]
+    }
+   }
+  }
+ }
+}

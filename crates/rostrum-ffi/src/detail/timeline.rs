@@ -92,7 +92,7 @@ fn entry(index: usize, item: &TimelineItem, repo: &RepoId) -> TimelineEntry {
 fn event(kind: &EventKind) -> TimelineEvent {
     match kind {
         EventKind::Merged => TimelineEvent::Merged,
-        EventKind::Closed => TimelineEvent::Closed,
+        EventKind::Closed | EventKind::ClosedAs(_) => TimelineEvent::Closed,
         EventKind::Reopened => TimelineEvent::Reopened,
         EventKind::ReadyForReview => TimelineEvent::ReadyForReview,
         EventKind::ConvertedToDraft => TimelineEvent::ConvertedToDraft,
@@ -114,25 +114,21 @@ fn event(kind: &EventKind) -> TimelineEvent {
             to: to.clone(),
         },
         EventKind::Other(kind) => TimelineEvent::Other { kind: kind.clone() },
+        // Issue-only events. The phone shows pull requests alone today, so
+        // these travel as `Other` with the event's GraphQL type name.
+        EventKind::Unassigned { .. } => TimelineEvent::Other {
+            kind: "UnassignedEvent".into(),
+        },
+        EventKind::CrossReferenced { .. } => TimelineEvent::Other {
+            kind: "CrossReferencedEvent".into(),
+        },
     }
 }
 
-/// The words after the actor's login — the desktop's phrasing.
+/// The words after the actor's login — the desktop's phrasing, shared
+/// through [`EventKind::describe`].
 fn event_text(kind: &EventKind) -> String {
-    match kind {
-        EventKind::Merged => "merged this".into(),
-        EventKind::Closed => "closed this".into(),
-        EventKind::Reopened => "reopened this".into(),
-        EventKind::ReadyForReview => "marked ready for review".into(),
-        EventKind::ConvertedToDraft => "converted to draft".into(),
-        EventKind::HeadRefForcePushed => "force-pushed".into(),
-        EventKind::ReviewRequested { reviewer } => format!("requested a review from {reviewer}"),
-        EventKind::Assigned { assignee } => format!("assigned {assignee}"),
-        EventKind::Labeled { name } => format!("added the {name} label"),
-        EventKind::Unlabeled { name } => format!("removed the {name} label"),
-        EventKind::Renamed { from, to } => format!("renamed this from “{from}” to “{to}”"),
-        EventKind::Other(kind) => kind.clone(),
-    }
+    kind.describe()
 }
 
 /// A thread with its comments rendered.

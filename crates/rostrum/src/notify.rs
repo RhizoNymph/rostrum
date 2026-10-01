@@ -144,6 +144,8 @@ mod tests {
             id: name.parse().expect("valid repo id"),
             prs: values.iter().copied().map(pr).collect(),
             load: LoadState::Loaded { at: Utc::now() },
+            issues: Vec::new(),
+            issues_load: LoadState::Idle,
             collapsed: false,
         }
     }

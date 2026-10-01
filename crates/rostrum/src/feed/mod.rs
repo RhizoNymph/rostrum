@@ -406,7 +406,7 @@ impl FeedView {
             .state
             .selection
             .as_ref()
-            .map(|selection| selection.repo.clone());
+            .map(|selection| selection.repo().clone());
         if let Some(repo) = repo {
             cx.emit(FeedEvent::OpenRepo(repo));
         }
@@ -424,7 +424,7 @@ impl FeedView {
             .state
             .selection
             .as_ref()
-            .map(|selection| selection.repo.clone())
+            .map(|selection| selection.repo().clone())
         else {
             return;
         };
@@ -460,9 +460,9 @@ impl FeedView {
             let Some(pull) = repo_state.prs.get(pr.0) else {
                 return;
             };
-            store.state.selection = Some(Selection {
+            store.state.selection = Some(Selection::PullRequest {
                 repo: repo_state.id.clone(),
-                pr: pull.number,
+                number: pull.number,
             });
             cx.notify();
         });
@@ -479,6 +479,8 @@ impl FeedView {
             FeedRow::Spacer { .. } => div().h(px(10.)).into_any_element(),
             FeedRow::RepoHeader { repo } => self.render_repo_header(repo, chrome, cx),
             FeedRow::PrRow { repo, pr } => self.render_pr_row(repo, pr, chrome, ix, cx),
+            // The desktop feed is built for the pull request tab only.
+            FeedRow::IssueRow { .. } => div().into_any_element(),
             FeedRow::RepoEmpty { repo } => {
                 self.render_notice(repo, chrome, "No open pull requests", cx)
             }
@@ -602,7 +604,10 @@ impl FeedView {
             .state
             .selection
             .as_ref()
-            .is_some_and(|s| s.repo == state.id && s.pr == pull.number);
+            .is_some_and(|s| {
+                matches!(s, Selection::PullRequest { repo, number }
+                    if *repo == state.id && *number == pull.number)
+            });
 
         let sync = self.store.read(cx).sync_result(&state.id, pull.number);
         let theme = cx.theme().clone();
@@ -1065,6 +1070,8 @@ mod tests {
             id: name.parse().expect("valid repo id"),
             prs,
             load: rostrum_core::LoadState::Loaded { at: Utc::now() },
+            issues: Vec::new(),
+            issues_load: rostrum_core::LoadState::Idle,
             collapsed,
         }
     }

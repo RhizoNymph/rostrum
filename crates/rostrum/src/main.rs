@@ -14,7 +14,7 @@ use gpui::{
     WindowBounds, WindowOptions, actions, div, prelude::*, px, rems, size,
 };
 use gpui_platform::application;
-use rostrum_core::{RepoId, Screen};
+use rostrum_core::{RepoId, Screen, Selection};
 use rostrum_diff::Highlighter;
 use rostrum_ui::{
     ActiveTheme,
@@ -179,18 +179,21 @@ impl Workspace {
             (detail.repo.clone(), detail.number)
         });
 
-        match (selection, current) {
+        // The desktop has no issue detail pane yet, so an issue selection
+        // shows the same placeholder as no selection at all.
+        let selected_pr = match selection {
+            Some(Selection::PullRequest { repo, number }) => Some((repo, number)),
+            Some(Selection::Issue { .. }) | None => None,
+        };
+        match (selected_pr, current) {
             // Same pull request as before: leave the entity alone so its
             // loaded conversation and scroll position survive a refresh.
-            (Some(selection), Some((repo, number)))
-                if selection.repo == repo && selection.pr == number => {}
-            (Some(selection), _) => {
+            (Some(selected), Some(current)) if selected == current => {}
+            (Some((repo, number)), _) => {
                 let store = self.store.clone();
                 let highlighter = self.highlighter.clone();
                 self.detail =
-                    Some(cx.new(|cx| {
-                        PrDetail::new(store, selection.repo, selection.pr, highlighter, cx)
-                    }));
+                    Some(cx.new(|cx| PrDetail::new(store, repo, number, highlighter, cx)));
             }
             (None, Some(_)) => self.detail = None,
             (None, None) => {}
@@ -220,6 +223,7 @@ impl Render for Workspace {
         let repo_count = store.state.repos.len();
         let refreshing = store.is_refreshing();
         let warnings: Vec<String> = store.warnings.iter().map(|w| w.0.clone()).collect();
+        let issue_selected = matches!(store.state.selection, Some(Selection::Issue { .. }));
 
         v_flex()
             .size_full()
@@ -317,6 +321,18 @@ impl Render for Workspace {
                             .track_focus(&self.detail_focus)
                             .map(|el| match (self.detail.clone(), &self.repo) {
                                 (Some(detail), _) => el.child(detail),
+                                (None, _) if issue_selected => el.child(
+                                    div()
+                                        .size_full()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .text_size(rems(0.85))
+                                        .text_color(theme.text_subtle)
+                                        .child(
+                                            "Issue details are not available on the desktop yet",
+                                        ),
+                                ),
                                 (None, Some(panes)) => el.child(panes.branches.clone()),
                                 (None, None) => el.child(
                                     div()

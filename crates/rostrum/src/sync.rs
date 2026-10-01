@@ -305,7 +305,7 @@ impl Store {
             .state
             .selection
             .as_ref()
-            .is_some_and(|selection| &selection.repo == id)
+            .is_some_and(|selection| selection.repo() == id)
         {
             self.state.selection = None;
         }

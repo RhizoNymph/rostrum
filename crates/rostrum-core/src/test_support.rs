@@ -32,3 +32,22 @@ pub(crate) fn pull(number: u32) -> PullRequest {
         base_divergence: None,
     }
 }
+
+/// An open issue with every optional field empty.
+pub(crate) fn issue(number: u32) -> crate::issue::Issue {
+    use crate::issue::{Issue, IssueNumber, IssueState};
+    Issue {
+        number: IssueNumber(number),
+        node_id: NodeId(format!("I_{number}")),
+        title: format!("Issue {number}"),
+        url: String::new(),
+        state: IssueState::Open,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        author: None,
+        assignees: Vec::new(),
+        labels: Vec::new(),
+        comment_count: 0,
+        milestone: None,
+    }
+}

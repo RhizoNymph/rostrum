@@ -26,12 +26,15 @@ pub fn selected_row(
     repos: &[RepoState],
     selection: Option<&Selection>,
 ) -> Option<usize> {
-    let selection = selection?;
-    let repo_ix = repos.iter().position(|repo| repo.id == selection.repo)?;
+    // The feed lists pull requests only, so an issue selection owns no row.
+    let Some(Selection::PullRequest { repo, number }) = selection else {
+        return None;
+    };
+    let repo_ix = repos.iter().position(|state| &state.id == repo)?;
     let pr_ix = repos[repo_ix]
         .prs
         .iter()
-        .position(|pr| pr.number == selection.pr)?;
+        .position(|pr| pr.number == *number)?;
 
     let target = FeedRow::PrRow {
         repo: RepoIx(repo_ix),
@@ -102,14 +105,16 @@ mod tests {
             id: name.parse::<RepoId>().expect("valid repo id"),
             prs: numbers.iter().copied().map(pr).collect(),
             load: LoadState::Loaded { at: Utc::now() },
+            issues: Vec::new(),
+            issues_load: LoadState::Idle,
             collapsed: false,
         }
     }
 
     fn selection(repo: &str, number: u32) -> Selection {
-        Selection {
+        Selection::PullRequest {
             repo: repo.parse().expect("valid repo id"),
-            pr: PrNumber(number),
+            number: PrNumber(number),
         }
     }
 

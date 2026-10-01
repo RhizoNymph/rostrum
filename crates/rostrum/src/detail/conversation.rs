@@ -357,21 +357,7 @@ fn review_state_chip(state: ReviewState, theme: &Theme) -> (&'static str, gpui::
 }
 
 fn event_text(kind: &rostrum_core::EventKind) -> String {
-    use rostrum_core::EventKind as E;
-    match kind {
-        E::Merged => "merged this".into(),
-        E::Closed => "closed this".into(),
-        E::Reopened => "reopened this".into(),
-        E::ReadyForReview => "marked ready for review".into(),
-        E::ConvertedToDraft => "converted to draft".into(),
-        E::HeadRefForcePushed => "force-pushed".into(),
-        E::ReviewRequested { reviewer } => format!("requested a review from {reviewer}"),
-        E::Assigned { assignee } => format!("assigned {assignee}"),
-        E::Labeled { name } => format!("added the {name} label"),
-        E::Unlabeled { name } => format!("removed the {name} label"),
-        E::Renamed { from, to } => format!("renamed this from “{from}” to “{to}”"),
-        E::Other(kind) => kind.clone(),
-    }
+    kind.describe()
 }
 
 fn centered(message: impl Into<String>, color: gpui::Hsla) -> impl IntoElement {
