@@ -48,6 +48,37 @@ impl TrunkChoice {
         }
         names
     }
+
+    /// The explicit list this choice amounts to. `detected` is what
+    /// detection found besides the default branch, which is what `Detected`
+    /// means until the user edits it.
+    pub fn explicit(&self, detected: &[TrunkName]) -> Vec<TrunkName> {
+        match self {
+            Self::Detected => detected.to_vec(),
+            Self::Configured(names) => names.clone(),
+        }
+    }
+
+    /// This choice with `name` appended, unless it is already there.
+    ///
+    /// Editing a detected choice turns it into a configured one starting
+    /// from what was detected, so adding `qa` to an auto-detected
+    /// `main, staging` gives `staging, qa` rather than `qa` alone.
+    pub fn adding(&self, detected: &[TrunkName], name: TrunkName) -> Self {
+        let mut names = self.explicit(detected);
+        if !names.contains(&name) {
+            names.push(name);
+        }
+        Self::Configured(names)
+    }
+
+    /// This choice without `name`. Like [`Self::adding`], a detected choice
+    /// becomes the configured list it amounted to, less the name.
+    pub fn removing(&self, detected: &[TrunkName], name: &TrunkName) -> Self {
+        let mut names = self.explicit(detected);
+        names.retain(|existing| existing != name);
+        Self::Configured(names)
+    }
 }
 
 /// What GitHub reports about a repository for the branch view: its page,
@@ -245,6 +276,44 @@ mod tests {
         assert!(trunks.contains("main"));
         assert!(trunks.contains("staging"));
         assert!(!trunks.contains("develop"));
+    }
+
+    #[test]
+    fn adding_to_a_detected_choice_starts_from_what_was_detected() {
+        let detected = [name("staging")];
+        assert_eq!(
+            TrunkChoice::Detected.adding(&detected, name("qa")),
+            TrunkChoice::Configured(vec![name("staging"), name("qa")])
+        );
+    }
+
+    #[test]
+    fn adding_a_name_already_listed_changes_nothing_but_pins_the_list() {
+        let choice = TrunkChoice::Configured(vec![name("qa")]);
+        assert_eq!(choice.adding(&[], name("qa")), choice);
+        assert_eq!(
+            TrunkChoice::Detected.adding(&[name("qa")], name("qa")),
+            TrunkChoice::Configured(vec![name("qa")])
+        );
+    }
+
+    #[test]
+    fn removing_keeps_the_rest_in_order() {
+        let choice = TrunkChoice::Configured(vec![name("a"), name("b"), name("c")]);
+        assert_eq!(
+            choice.removing(&[], &name("b")),
+            TrunkChoice::Configured(vec![name("a"), name("c")])
+        );
+    }
+
+    /// Removing the last detected trunk leaves "default branch only", not
+    /// detection — which would bring it straight back.
+    #[test]
+    fn removing_the_last_detected_trunk_pins_an_empty_list() {
+        assert_eq!(
+            TrunkChoice::Detected.removing(&[name("staging")], &name("staging")),
+            TrunkChoice::Configured(Vec::new())
+        );
     }
 
     #[test]

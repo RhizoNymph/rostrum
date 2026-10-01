@@ -4,6 +4,7 @@ mod detail;
 mod feed;
 mod nav;
 mod notify;
+mod repo_view;
 mod sync;
 
 use std::rc::Rc;
@@ -13,6 +14,7 @@ use gpui::{
     WindowBounds, WindowOptions, actions, div, prelude::*, px, rems, size,
 };
 use gpui_platform::application;
+use rostrum_core::{RepoId, Screen};
 use rostrum_diff::Highlighter;
 use rostrum_ui::{
     ActiveTheme,
@@ -23,6 +25,7 @@ use crate::{
     detail::PrDetail,
     feed::{FeedEvent, FeedView},
     notify::Notifier,
+    repo_view::{RepoView, RepoViewEvent, branches::BranchesPane, model::RepoBranches},
     sync::AuthStatus,
     sync::Store,
 };
@@ -36,9 +39,26 @@ const FEED_WIDTH: f32 = 440.;
 /// takes the pane's descendants out of the feed's navigation bindings.
 const DETAIL_CONTEXT: &str = "Detail";
 
+/// The entities behind one repository's view, created on entering it and
+/// dropped on leaving, which cancels their requests.
+struct RepoPanes {
+    /// The left pane: pull requests and issues.
+    view: Entity<RepoView>,
+    /// The right pane when nothing is selected: the branch tree.
+    branches: Entity<BranchesPane>,
+    /// The branch data both panes read. Held so it lives as long as they do.
+    _model: Entity<RepoBranches>,
+    _subscription: Subscription,
+}
+
 struct Workspace {
     store: Entity<Store>,
     feed: Entity<FeedView>,
+    /// Which screen the left pane shows. The feed entity is kept while a
+    /// repository is open, so its scroll position survives the round trip.
+    screen: Screen,
+    /// Present exactly when `screen` is a repository.
+    repo: Option<RepoPanes>,
     /// Rebuilt whenever the selection changes; dropping the previous entity
     /// cancels its in-flight requests.
     detail: Option<Entity<PrDetail>>,
@@ -66,6 +86,7 @@ impl Workspace {
                 FeedEvent::FocusDetail => {
                     window.focus(&this.detail_focus, cx);
                 }
+                FeedEvent::OpenRepo(repo) => this.open_repo(repo.clone(), window, cx),
             }),
         ];
 
@@ -76,6 +97,8 @@ impl Workspace {
         Self {
             store,
             feed,
+            screen: Screen::Feed,
+            repo: None,
             detail: None,
             detail_focus: cx.focus_handle(),
             highlighter: Rc::new(Highlighter::new()),
@@ -84,8 +107,72 @@ impl Workspace {
         }
     }
 
+    /// Switch the left pane to `repo`'s own view.
+    fn open_repo(&mut self, repo: RepoId, window: &mut Window, cx: &mut Context<Self>) {
+        let screen = &mut self.screen;
+        self.store.update(cx, |store, cx| {
+            let mut selection = store.state.selection.take();
+            screen.enter_repo(repo.clone(), &mut selection);
+            store.state.selection = selection;
+            cx.notify();
+        });
+
+        let current = self
+            .repo
+            .as_ref()
+            .map(|panes| panes.view.read(cx).repo.clone());
+        if current.as_ref() != Some(&repo) {
+            tracing::info!(repo = %repo, "opened repository view");
+            let store = self.store.clone();
+            let model = cx.new(|cx| RepoBranches::new(store.clone(), repo.clone(), cx));
+            let view = cx.new(|cx| RepoView::new(store.clone(), repo.clone(), model.clone(), cx));
+            let branches = cx.new(|cx| BranchesPane::new(store, repo, model.clone(), cx));
+            let subscription =
+                cx.subscribe_in(&view, window, |this, _, event, window, cx| match event {
+                    RepoViewEvent::Back => this.close_repo(window, cx),
+                    RepoViewEvent::FocusDetail => window.focus(&this.detail_focus, cx),
+                });
+            self.repo = Some(RepoPanes {
+                view,
+                branches,
+                _model: model,
+                _subscription: subscription,
+            });
+        }
+        if let Some(panes) = &self.repo {
+            let focus = panes.view.focus_handle(cx);
+            window.focus(&focus, cx);
+        }
+        cx.notify();
+    }
+
+    /// Back to the multi-repository feed.
+    fn close_repo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let screen = &mut self.screen;
+        self.store.update(cx, |store, cx| {
+            let mut selection = store.state.selection.take();
+            screen.back(&mut selection);
+            store.state.selection = selection;
+            cx.notify();
+        });
+        if self.repo.take().is_some() {
+            tracing::info!("closed repository view");
+        }
+        let focus = self.feed.focus_handle(cx);
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
     /// Keep the detail pane in step with the store's selection.
     fn sync_detail(&mut self, cx: &mut Context<Self>) {
+        // A repository removed while its view is open leaves nothing to show.
+        if let Some(repo) = self.screen.repo()
+            && self.store.read(cx).state.repo(repo).is_none()
+        {
+            self.screen = Screen::Feed;
+            self.repo = None;
+        }
+
         let selection = self.store.read(cx).state.selection.clone();
         let current = self.detail.as_ref().map(|detail| {
             let detail = detail.read(cx);
@@ -215,7 +302,10 @@ impl Render for Workspace {
                             .flex_none()
                             .py_3()
                             .overflow_hidden()
-                            .child(self.feed.clone()),
+                            .map(|el| match &self.repo {
+                                Some(panes) => el.child(panes.view.clone()),
+                                None => el.child(self.feed.clone()),
+                            }),
                     )
                     .child(div().w(px(1.)).h_full().flex_none().bg(theme.border))
                     .child(
@@ -225,9 +315,10 @@ impl Render for Workspace {
                             .overflow_hidden()
                             .key_context(DETAIL_CONTEXT)
                             .track_focus(&self.detail_focus)
-                            .map(|el| match self.detail.clone() {
-                                Some(detail) => el.child(detail),
-                                None => el.child(
+                            .map(|el| match (self.detail.clone(), &self.repo) {
+                                (Some(detail), _) => el.child(detail),
+                                (None, Some(panes)) => el.child(panes.branches.clone()),
+                                (None, None) => el.child(
                                     div()
                                         .size_full()
                                         .flex()
@@ -260,6 +351,7 @@ fn main() {
         rostrum_ui::theme::init(cx);
         rostrum_ui::input::bind_keys(cx);
         feed::bind_keys(cx);
+        repo_view::bind_keys(cx);
         detail::bind_keys(cx);
 
         cx.bind_keys([
