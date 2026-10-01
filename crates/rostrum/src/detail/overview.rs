@@ -14,7 +14,7 @@
 use gpui::{AnyElement, Hsla, div, prelude::*, px, relative, rems};
 use rostrum_diff::{
     DiffFile, DirGroup, FileStatus, Tile,
-    overview::{change_map, churn, overview_stats, ranked_files},
+    overview::{change_map, max_churn, overview_stats, ranked_files, tile_heat},
 };
 use rostrum_ui::{
     ActiveTheme, Theme,
@@ -43,11 +43,7 @@ pub fn render(detail: &PrDetail, cx: &Context<PrDetail>) -> AnyElement {
     let stats = overview_stats(files);
     let map = change_map(files, MAX_DIRS, MAX_TILES);
     let ranked = ranked_files(files);
-    let max_churn = ranked
-        .first()
-        .map(|&ix| churn(&files[ix]))
-        .unwrap_or(0)
-        .max(1);
+    let max_churn = max_churn(files);
 
     v_flex()
         .id("diff-overview")
@@ -196,20 +192,12 @@ fn render_tile(
 /// Green for pure additions, red for pure deletions, blended in between;
 /// stronger for the files carrying more of the diff.
 fn tile_color(tile: &Tile, max_churn: u64, theme: &Theme) -> Hsla {
-    let churn = tile.additions + tile.deletions;
-    if churn == 0 {
-        return Hsla {
-            a: 0.25,
-            ..theme.text_subtle
-        };
-    }
-    let removed_ratio = tile.deletions as f32 / churn as f32;
-    let mixed = mix(theme.added, theme.removed, removed_ratio);
-    let intensity = (churn as f32 / max_churn as f32).sqrt();
-    Hsla {
-        a: 0.16 + 0.42 * intensity,
-        ..mixed
-    }
+    let heat = tile_heat(tile.additions, tile.deletions, max_churn);
+    let base = match heat.removed_ratio {
+        Some(ratio) => mix(theme.added, theme.removed, ratio),
+        None => theme.text_subtle,
+    };
+    Hsla { a: heat.alpha, ..base }
 }
 
 fn mix(a: Hsla, b: Hsla, t: f32) -> Hsla {

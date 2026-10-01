@@ -127,7 +127,9 @@ for all four.
 
 `Store::probe_merge_state` therefore re-queries a repository after a refresh
 that saw any `MergeStatus::Computing`, backing off 2s, 4s, 8s and giving up
-after three attempts per poll cycle. The budget matters: a token that may not
+after three attempts per poll cycle. The schedule is
+`rostrum_core::MergeProbeBudget` (and the trigger `needs_merge_probe`), shared
+with the Android core, which chases the same way. The budget matters: a token that may not
 read a repository's merge state sees `UNKNOWN` permanently, and without a bound
 that is an endless request loop rather than a slow one.
 
@@ -146,6 +148,17 @@ of this shape costs on the order of tens of points, so a thirty-repo feed
 refreshing every 60s stays comfortably inside it. The `rateLimit { cost remaining
 resetAt }` field is requested on every query and recorded.
 
+### Client endpoints and the viewer
+
+`GitHubClient::new` talks to api.github.com; `with_endpoints` takes a GraphQL
+URL and a REST root, for an Enterprise Server or a local stand-in (the
+Android core's integration tests use one). `viewer()` is a one-field query
+used to verify a token handed in from outside before anything relies on it.
+
+The conversation query also asks for `state`, so a detail view that
+outlives the feed (the pull request was merged or closed) says which. It
+decodes leniently: an unknown value is absent, not a failed conversation.
+
 ## Mutations and diffs — REST v3
 
 | Operation | Endpoint |
@@ -155,7 +168,7 @@ resetAt }` field is requested on every query and recorded.
 | Issue comment | `POST /repos/{o}/{r}/issues/{n}/comments` |
 | Submit review | `POST /repos/{o}/{r}/pulls/{n}/reviews` |
 | Reply in thread | `POST /repos/{o}/{r}/pulls/{n}/comments/{id}/replies` |
-| Merge | `PUT /repos/{o}/{r}/pulls/{n}/merge` |
+| Merge | `PUT /repos/{o}/{r}/pulls/{n}/merge` — `MergePullRequest`: method, optional title/message, optional expected head `sha` |
 | Close | `PATCH /repos/{o}/{r}/pulls/{n}` |
 | Convert to draft | GraphQL `convertPullRequestToDraft` — no REST equivalent |
 | Ready for review | GraphQL `markPullRequestReadyForReview` — no REST equivalent |
@@ -328,6 +341,17 @@ per-page ETag bookkeeping across a paginated response).
 
 `cache_http` stores it as a validator/payload pair, which is what a conditional
 cache entry is regardless of whether the validator came from an HTTP header.
+`Db::save_pull_request_files` / `load_pull_request_files` own the key and the
+rule (a blank sha stores nothing and matches nothing), so the desktop and the
+Android core cache diffs identically.
+
+A durable table beside the drafts, `notification_baseline`, holds the Android
+notification check's seen set (`rostrum_core::Baseline`). It survives cache
+schema bumps; a corrupt row is discarded, which only means the next check
+re-baselines. The migration opens with `BEGIN IMMEDIATE`: it reads the
+recorded versions before writing, and a deferred transaction would fail
+outright (`SQLITE_BUSY_SNAPSHOT`) if a previous session's last writes
+committed in between, where an immediate one waits for the lock.
 
 Config is separate and human-editable: `~/.config/rostrum/config.json` holds the
 repo list, poll intervals, clone paths, and the feed's standing preferences —
@@ -393,6 +417,9 @@ Two rules that matter in practice:
 | `crates/rostrum-github/src/rate_limit.rs` | Budget accounting, backoff |
 | `crates/rostrum-github/src/cache.rs` | SQLite schema, ETag storage |
 | `crates/rostrum/src/sync.rs` | `SyncEngine` entity, poll loop, reconciliation |
+| `crates/rostrum-core/src/probe.rs` | `MergeProbeBudget`, `needs_merge_probe` |
+| `crates/rostrum-db/src/files.rs` | Changed files cached per head sha |
+| `crates/rostrum-db/src/baseline.rs` | The notification seen set |
 
 ## Testing
 

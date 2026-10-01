@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 
 use crate::{
     feed::FeedFilter,
-    model::{PrNumber, PullRequest, RepoId},
+    model::{Divergence, PrNumber, PullRequest, RepoId},
 };
 
 /// Per-repository fetch status.
@@ -126,10 +126,42 @@ pub fn carry_forward_divergence(old: &[PullRequest], new: &mut [PullRequest]) {
     }
 }
 
+/// The numbers and `(base, head)` ref pairs of a repository's pull requests,
+/// in the shape `GitHubClient::divergences` takes and [`apply_divergences`]
+/// matches the answers back by.
+pub fn divergence_query(prs: &[PullRequest]) -> (Vec<PrNumber>, Vec<(String, String)>) {
+    prs.iter()
+        .map(|pr| (pr.number, (pr.base_ref.clone(), pr.head_ref.clone())))
+        .unzip()
+}
+
+/// Write a batch of divergence answers onto the pull requests they were asked
+/// about.
+///
+/// Matched by number rather than by position: a refresh may have landed while
+/// the batch was in flight, reordering or replacing the list, and a count
+/// written to the wrong row is worse than none. An unanswered entry (`None`,
+/// the cross-fork case) leaves whatever the pull request already had.
+pub fn apply_divergences(
+    prs: &mut [PullRequest],
+    numbers: &[PrNumber],
+    divergences: Vec<Option<Divergence>>,
+) {
+    let answered = numbers
+        .iter()
+        .zip(divergences)
+        .filter_map(|(number, divergence)| divergence.map(|d| (*number, d)));
+    for (number, divergence) in answered {
+        if let Some(pr) = prs.iter_mut().find(|pr| pr.number == number) {
+            pr.base_divergence = Some(divergence);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Divergence, MergeStateStatus, Mergeable, NodeId, PrNumber};
+    use crate::model::{MergeStateStatus, Mergeable, NodeId};
 
     fn repo_with(id: &str, numbers: &[u32]) -> RepoState {
         let mut state = RepoState::new(id.parse().expect("valid repo id"));
@@ -216,6 +248,45 @@ mod tests {
         assert_eq!(new[1].base_divergence, None);
         assert_eq!(new[2].number, PrNumber(1));
         assert_eq!(new[2].base_divergence, Some(Divergence::new(0, 4)));
+    }
+
+    #[test]
+    fn divergence_query_pairs_base_with_head_per_number() {
+        let mut prs = repo_with("a/b", &[4, 7]).prs;
+        prs[1].head_ref = "topic".into();
+        prs[1].base_ref = "develop".into();
+        let (numbers, pairs) = divergence_query(&prs);
+        assert_eq!(numbers, vec![PrNumber(4), PrNumber(7)]);
+        assert_eq!(
+            pairs,
+            vec![
+                ("main".to_string(), "feature".to_string()),
+                ("develop".to_string(), "topic".to_string()),
+            ]
+        );
+    }
+
+    /// Answers land on the pull request they were asked about even when the
+    /// list was reordered in between, and an unanswered entry keeps what the
+    /// pull request already had.
+    #[test]
+    fn divergences_apply_by_number_and_skip_unanswered_entries() {
+        let mut prs = repo_with("a/b", &[1, 2, 3]).prs;
+        prs[2].base_divergence = Some(Divergence::new(9, 9));
+        // Asked about 3, 1, 2 — in that order — and 3 went unanswered.
+        apply_divergences(
+            &mut prs,
+            &[PrNumber(3), PrNumber(1), PrNumber(2), PrNumber(99)],
+            vec![
+                None,
+                Some(Divergence::new(1, 0)),
+                Some(Divergence::new(0, 5)),
+                Some(Divergence::new(4, 4)),
+            ],
+        );
+        assert_eq!(prs[0].base_divergence, Some(Divergence::new(1, 0)));
+        assert_eq!(prs[1].base_divergence, Some(Divergence::new(0, 5)));
+        assert_eq!(prs[2].base_divergence, Some(Divergence::new(9, 9)));
     }
 
     #[test]

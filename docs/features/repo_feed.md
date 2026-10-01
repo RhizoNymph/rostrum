@@ -258,4 +258,5 @@ repositories, and is what everything below assumes.
 | `crates/rostrum/src/feed/rows.rs` | Per-variant row renderers |
 | `crates/rostrum/src/feed/nav.rs` | Keyboard navigation, selection actions |
 | `crates/rostrum/src/sync.rs` | `fetch_divergences` (the batched compare), `sync_all` |
+| `crates/rostrum-core/src/state.rs` | `divergence_query`, `apply_divergences` (by number), `carry_forward_divergence` — shared with the Android core |
 | `crates/rostrum-local/src/jobs.rs` | `run_local_job`, one job of a sync |

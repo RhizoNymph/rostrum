@@ -38,10 +38,40 @@ Overview:
       Narrowing the feed to chosen people — authored, or optionally also
       assigned/review-requested — and the persistence of every feed setting
       that is a standing preference rather than a half-finished search.
+    remote_protocol: >
+      The contract between a paired phone and `rostrumd`: pairing codes and
+      links, device tokens, certificate pinning, and the authenticated API for
+      local state, local jobs, sync-all and handoff sessions.
+    android_core: >
+      The phone app's Rust half. Wraps the gpui-free crates behind one UniFFI
+      object, so Kotlin renders snapshots and rows the core has already
+      filtered, highlighted and anchored, and never stores a secret in Rust.
     conflict_handoff: >
       When a local rebase or merge stops on conflicts and a handler is
       configured, leaves the worktree in place and spawns the handler in a
       named tmux session with a pre-gathered context bundle.
+    android_build: >
+      The Android app's toolchain. A Gradle project under `android/`
+      cross-compiles `rostrum-ffi` for each Android ABI with cargo-ndk,
+      generates its Kotlin bindings with UniFFI, packages both into a signed
+      APK, and publishes that APK for `rostrumd` to serve to phones. It also
+      owns the Compose theme foundation (palette, Material mapping, fonts).
+    android_app: >
+      The Android client. Jetpack Compose screens for the feed, a pull
+      request (conversation, files, checks, branch), the single-file diff with
+      inline comments and pending reviews, merging, settings, the paired
+      desktop (including copying its settings onto the phone), sign-in and
+      pairing. ViewModels depend on one Kotlin interface,
+      `RostrumBackend`, shaped after `RostrumCore`; secrets are sealed with an
+      Android Keystore key; WorkManager runs the notification check.
+    rostrumd: >
+      A headless desktop daemon, run as a systemd user service. Its plain-HTTP
+      page (LAN and tailnet) offers the Android APK and — from this computer or
+      over the tailnet only — generates pairing codes and revokes phones; its
+      HTTPS API (self-signed, pinned by fingerprint) serves the
+      remote_protocol routes by driving rostrum-local on the configured
+      clones. State is owned by two actors: pairing codes and devices, and
+      which clone is busy.
 
   data_flow: >
     At startup the app resolves a GitHub token (`gh auth token`, falling back to
@@ -78,6 +108,46 @@ Overview:
     conversion and updating a branch from its base are the exceptions: REST
     cannot express either one fully, so both go out as GraphQL mutations keyed by
     the pull request's node id.
+
+    On Android the same gpui-free crates run behind `rostrum-ffi`. Compose
+    calls suspend functions on one UniFFI object, `RostrumCore`, whose state
+    lives in an actor task; network I/O happens outside the actor and results
+    are applied back through it, SQLite writes are queued in state order on a
+    writer task, and feed changes reach Kotlin through a `FeedObserver` in
+    revision order. Tokens arrive from Kotlin (the Keystore) and never touch
+    disk on the Rust side. The paired desktop is reached through
+    `rostrum-remote`'s pinned client.
+
+    On Android, the Kotlin app reaches the same Rust crates through
+    `rostrum-ffi`: Kotlin calls the UniFFI-generated bindings, which call into
+    `librostrum_ffi.so` through JNA. The Gradle build produces the library and
+    the bindings together, from one pinned uniffi version.
+
+    Inside the app, every screen's ViewModel talks to `RostrumBackend` and
+    gets back `Outcome` values (never exceptions). At start-up
+    `SessionRepository` unseals the GitHub token and the desktop pairing from
+    app-private files and hands them to the backend, which keeps them in
+    memory only; sign-in and pairing results flow the other way and are
+    sealed again. The feed arrives as `FeedSnapshot`s, from calls and from the
+    backend's update flow, newest revision winning. `rostrum://pair` links and
+    notification taps enter through `MainActivity` into a link inbox that the
+    navigation host drains. The backend is `FfiRostrumBackend`: one
+    `RostrumCore` per process, each method one core call with its records
+    and `RostrumException`s mapped to the app's model; the core's feed
+    observer feeds the update flow. `FakeRostrumBackend` serves unit tests
+    and previews only.
+    The phone reaches the desktop's clones through rostrumd. Its page issues a
+    one-time code as a `rostrum://pair` link and QR code carrying the LAN and
+    tailnet addresses and the certificate fingerprint; the phone pins that
+    fingerprint, exchanges the code for a device token (and the desktop's
+    GitHub token), and presents the token on every API call. Each local call
+    re-reads rostrum's `config.json` for the clone, the conflict handler and
+    autostash, takes that clone's lease from the job coordinator (409 when it
+    is busy), and runs the same `rostrum_local` function the desktop's button
+    runs, in a task that outlives the request. Nothing is ever pushed. A
+    paired phone can also copy the desktop's watched repositories and feed
+    preferences (`GET /api/v1/config`) — never its clones, conflict handler,
+    refresh interval or notifications.
 
 Features Index:
   ui_foundation:
@@ -125,6 +195,35 @@ Features Index:
     entry_points: [crates/rostrum-handoff/src/lib.rs, crates/rostrum-git/src/context.rs]
     depends_on: [local_git]
     doc: docs/features/conflict_handoff.md
+  remote_protocol:
+    description: Phone ↔ desktop protocol — pairing, device tokens, pinned TLS client, API types.
+    entry_points: [crates/rostrum-remote/src/lib.rs, crates/rostrum-remote/src/client.rs]
+    depends_on: [local_git]
+    doc: docs/features/remote_protocol.md
+  android_core:
+    description: >
+      The Android app's Rust core behind UniFFI — one RostrumCore object serving
+      the feed, detail, diff rows, pending review, desktop pairing and jobs,
+      copying the desktop's config, and background notifications, all
+      render-ready for Compose.
+    entry_points: [crates/rostrum-ffi/src/lib.rs, crates/rostrum-ffi/src/engine/mod.rs]
+    depends_on: [repo_feed, pr_detail, diff_review, diff_overview, author_filter, github_sync, remote_protocol]
+    doc: docs/features/android_core.md
+  android_build:
+    description: Gradle project, cargo-ndk + UniFFI pipeline, signing, and APK publishing for the Android app.
+    entry_points: [android/scripts/build-apk.sh, android/app/build.gradle.kts, crates/rostrum-ffi/src/lib.rs]
+    depends_on: []
+    doc: docs/features/android_build.md
+  android_app:
+    description: Compose UI, RostrumBackend over the Rust core (FfiRostrumBackend), Keystore secrets, session, deep links, notifications.
+    entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/RostrumApplication.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/RostrumBackend.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/ffi/FfiRostrumBackend.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/navigation/RostrumNavHost.kt]
+    depends_on: [android_build, android_core]
+    doc: docs/features/android_app.md
+  rostrumd:
+    description: Desktop daemon — pairing page and APK download (HTTP), the phone's local-git API (HTTPS), systemd user service.
+    entry_points: [crates/rostrumd/src/main.rs, crates/rostrumd/src/app.rs, crates/rostrumd/src/api/mod.rs, crates/rostrumd/src/web/mod.rs]
+    depends_on: [remote_protocol, local_git, conflict_handoff, github_sync]
+    doc: docs/features/rostrumd.md
 ```
 
 ## Workspace layout
@@ -142,8 +241,11 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 | `rostrum-git` | no | Worktrees, clone status, divergence, pull/merge/rebase, conflict context via the `git` CLI |
 | `rostrum-handoff` | no | Context bundle rendering and tmux session spawning for conflict handoff |
 | `rostrum-local` | no | One pull request's local state (`local_state`) and one local operation on it (`run_local_job`), shared by every caller |
+| `rostrum-remote` | no | Phone ↔ desktop protocol: pairing, device tokens, API types, and (feature `client`) the pinned HTTPS client |
+| `rostrumd` | no | Desktop daemon: pairing page and APK download over HTTP, the paired phone's API over HTTPS, systemd user service |
 | `rostrum-config` | no | `config.json`: watched repositories, clones, feed preferences, conflict handler |
 | `rostrum-md` | no | `pulldown-cmark` → renderable markdown model |
+| `rostrum-ffi` | no | The Android app's core: `RostrumCore` over UniFFI (`cdylib`), plus the `uniffi-bindgen` binary |
 | `rostrum-ui` | yes | Theme, components, text/selection, markdown element |
 | `rostrum` | yes | Bootstrap, window, root views, `SyncEngine` |
 
@@ -162,6 +264,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 | Local writes | Never push | A local merge or rebase leaves the clone ahead, and that count is the cue to push. Keeps force-push out of the app entirely |
 | Feed distance | One batched `Ref.compare` per repository after each refresh | A GraphQL field cannot read a sibling's value, so the count cannot join the feed query; aliasing one `compare` per PR keeps it to one request, cost 1 |
 | Conflicts | Abort by default; leave and hand off to tmux when a handler is configured | Rostrum has no conflict editor. Either the clone is left as found, or something that can edit is running in a named session with the context gathered |
+| Phone access | `rostrumd`: an HTTPS API on a self-signed certificate the phone pins by fingerprint, and a plain-HTTP page whose pairing half answers only loopback and the tailnet | No CA and no certificate warning anywhere; the page opens in any browser; a pairing code — the key to the clones and the GitHub token — cannot be minted from the shared LAN |
 | Handoff environment | tmux inherits rostrum's full env; `rostrum-git` uses an allowlist | The two spawn different things for different reasons: git's output is parsed and must be deterministic; the harness is the user's own tool and needs their `PATH`, `DISPLAY`, and keys |
 | Cache | SQLite via `sqlx` | Instant cold start, offline reads, ETag storage |
 | Async | Tokio bridged into GPUI's executor | GPUI's executor is not Tokio; `reqwest` requires a Tokio reactor |
@@ -206,6 +309,31 @@ sudo apt install libxkbcommon-x11-dev
 then add `"x11"` back to the `gpui`/`gpui_platform` feature lists in the root
 `Cargo.toml`. GPUI picks whichever backend it finds at runtime.
 
+## Android build prerequisites
+
+The Android app (`android/`, see `docs/features/android_build.md`) needs the
+following on top of the Rust toolchain. `android/scripts/build-apk.sh` checks
+each one and names the fix for any that is missing.
+
+- Rust targets `aarch64-linux-android` and `x86_64-linux-android` for the
+  active toolchain (`rustup target add ...`).
+- `cargo-ndk` 4.1.2 (`cargo install cargo-ndk --version 4.1.2 --locked`).
+- Android SDK with platform `android-36` and build-tools, located by `sdk.dir`
+  in `android/local.properties` (written from `$ANDROID_HOME` or
+  `~/Android/Sdk` if missing).
+- Android NDK r30 (`30.0.16248370`, the `ndk` entry in
+  `android/gradle/libs.versions.toml`) in `<sdk>/ndk/<version>`, or
+  `$ANDROID_NDK_HOME`.
+- A JDK 21 that Gradle can detect (the daemon and the compile toolchain), plus
+  any Java to launch `gradlew`.
+- For signed release builds, `android/.env` pointing at the keystore outside
+  the repository (`~/.config/rostrum/android/release.jks`). Without it, release
+  builds fall back to the debug key.
+
+Use the rustup `cargo` (`~/.cargo/bin/cargo` or `$CARGO`), never the one on
+PATH. On this machine that is a shim that may run builds on a remote host
+without the NDK.
+
 ## Dependency sourcing
 
 `gpui`, `gpui_platform`, and `gpui_tokio` are pinned to one Zed git rev in the
@@ -240,8 +368,12 @@ Each phase leaves a usable application.
 
 ## Status
 
-All five phases are complete and verified against the live API. 598 tests pass;
-clippy is clean across the workspace.
+All five phases are complete and verified against the live API. 883 tests pass
+(137 of them in `rostrum-ffi`); clippy is clean across the workspace.
+
+The Android app's core, `rostrum-ffi`, exposes the same feed, detail, diff,
+review, desktop and notification behaviour to Kotlin through UniFFI; see
+`docs/features/android_core.md`.
 
 End-to-end verification (`cargo run -p rostrum --example review`) against real
 pull requests confirms the parser's added/removed line counts match GitHub's own
@@ -253,8 +385,9 @@ Deliberately not built:
 - **Cross-block text selection.** Selection works within a rendered markdown
   block and, in the diff, over whole lines. Dragging from one paragraph into the
   next does not extend the selection.
-- **Squash and rebase merges.** `MergeMethod` models all three and the API layer
-  sends whichever it is given, but the UI only offers a plain merge.
+- **Squash and rebase merges on the desktop.** `MergeMethod` models all three
+  and the API layer sends whichever it is given, but the desktop UI only offers
+  a plain merge. The Android core offers all three.
 - **Resolving review threads.** Threads render with their resolved state; there
   is no button to resolve one.
 - **Editing or deleting your own comments.**

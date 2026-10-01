@@ -55,6 +55,43 @@ pub fn churn(file: &DiffFile) -> u64 {
     u64::from(file.additions) + u64::from(file.deletions)
 }
 
+/// The largest single-file churn in the diff, at least 1 so it can divide:
+/// the scale every tile's heat and every ranked bar is measured against.
+pub fn max_churn(files: &[DiffFile]) -> u64 {
+    files.iter().map(churn).max().unwrap_or(0).max(1)
+}
+
+/// How strongly to colour a change-map tile.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TileHeat {
+    /// Blend from the added colour (0) to the removed colour (1) by the
+    /// tile's own mix; `None` for a tile with no line changes, which is drawn
+    /// in a neutral colour instead.
+    pub removed_ratio: Option<f32>,
+    /// Opacity: stronger for the tiles carrying more of the diff.
+    pub alpha: f32,
+}
+
+/// Green for pure additions, red for pure deletions, blended in between;
+/// opacity grows with the square root of the tile's churn relative to the
+/// largest file, so the hot spots pop without the small files vanishing.
+/// An aggregate tile can out-churn the largest single file; its intensity is
+/// capped rather than overflowing the scale.
+pub fn tile_heat(additions: u64, deletions: u64, max_churn: u64) -> TileHeat {
+    let churn = additions + deletions;
+    if churn == 0 {
+        return TileHeat {
+            removed_ratio: None,
+            alpha: 0.25,
+        };
+    }
+    let intensity = (churn as f32 / max_churn.max(1) as f32).sqrt().min(1.0);
+    TileHeat {
+        removed_ratio: Some(deletions as f32 / churn as f32),
+        alpha: 0.16 + 0.42 * intensity,
+    }
+}
+
 /// Layout weight: like [`churn`], but a zero-churn file (a pure rename, a mode
 /// change) still occupies a visible sliver instead of vanishing from the map.
 fn weight(file: &DiffFile) -> u64 {
@@ -209,6 +246,37 @@ mod tests {
 
     fn modified(path: &str, additions: u32, deletions: u32) -> DiffFile {
         file(path, additions, deletions, FileStatus::Modified)
+    }
+
+    #[test]
+    fn tile_heat_blends_by_mix_and_scales_by_churn() {
+        let largest = tile_heat(90, 10, 100);
+        assert_eq!(largest.removed_ratio, Some(0.1));
+        assert!((largest.alpha - 0.58).abs() < 1e-6);
+
+        let small = tile_heat(0, 1, 100);
+        assert_eq!(small.removed_ratio, Some(1.0));
+        assert!((small.alpha - (0.16 + 0.42 * 0.1)).abs() < 1e-6);
+
+        let rename = tile_heat(0, 0, 100);
+        assert_eq!(rename.removed_ratio, None);
+        assert!((rename.alpha - 0.25).abs() < 1e-6);
+
+        // An aggregate bigger than the largest file is capped, not overdrawn.
+        assert!((tile_heat(500, 0, 100).alpha - 0.58).abs() < 1e-6);
+    }
+
+    #[test]
+    fn max_churn_is_the_largest_file_and_never_zero() {
+        assert_eq!(max_churn(&[]), 1);
+        assert_eq!(
+            max_churn(&[
+                file("a", 0, 0, FileStatus::Renamed),
+                file("b", 3, 4, FileStatus::Modified),
+                file("c", 1, 1, FileStatus::Modified),
+            ]),
+            7
+        );
     }
 
     #[test]

@@ -1,0 +1,51 @@
+[package]
+name = "rostrum-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The Android app's Rust core, exposed to Kotlin through UniFFI"
+
+[lib]
+name = "rostrum_ffi"
+# `cdylib` is what the Android app loads; `lib` lets the integration tests and
+# the `uniffi-bindgen` binary link the same code.
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dependencies]
+rostrum-config.workspace = true
+rostrum-core.workspace = true
+rostrum-db.workspace = true
+rostrum-diff.workspace = true
+rostrum-github.workspace = true
+rostrum-md.workspace = true
+rostrum-remote = { workspace = true, features = ["client"] }
+
+chrono.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+# `sync`: the actor, writer and notifier are channels. Declared here rather
+# than relied on through another crate's feature selection.
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+# `tokio`: exported async functions run inside a Tokio context.
+uniffi = { workspace = true, features = ["tokio"] }
+
+# The bindgen (`cli`) is a host tool. Enabling it for Android would compile the
+# whole generator into the build for nothing, so the `uniffi-bindgen` binary
+# is a stub there; see `src/bin/uniffi-bindgen.rs`.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+uniffi = { workspace = true, features = ["cli"] }
+
+[dev-dependencies]
+rcgen.workspace = true
+rustls.workspace = true
+serde.workspace = true
+# The integration tests serve the desktop and GitHub stand-ins themselves.
+tokio = { workspace = true, features = ["net", "io-util"] }
+tokio-rustls.workspace = true

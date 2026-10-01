@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Duration, Utc};
 use rostrum_core::{
     CheckRun, CheckState, CommentId, Conversation, EventKind, Label, MergeStateStatus, Mergeable,
-    NodeId, PrNumber, PullRequest, RepoId, ReviewDecision, ReviewThread, Side, ThreadComment,
-    ThreadId, TimelineItem, User,
+    NodeId, PrNumber, PullRequest, PullState, RepoId, ReviewDecision, ReviewThread, Side,
+    ThreadComment, ThreadId, TimelineItem, User,
 };
 use rostrum_github::DraftComment;
 
@@ -104,6 +104,7 @@ fn conversation() -> Conversation {
             state: Some(CheckState::Success),
             url: None,
         }],
+        state: Some(PullState::Open),
     }
 }
 
@@ -868,4 +869,31 @@ async fn migrating_twice_over_one_database_is_idempotent() {
             .expect("load")
             .is_some()
     );
+}
+
+// --- opening beside a live writer -----------------------------------------
+
+/// A previous session can still be flushing its last writes when the next
+/// one opens the file. The migration must wait for the write lock rather
+/// than fail on a stale read snapshot.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn opening_beside_a_live_writer_waits_rather_than_failing() {
+    let dir = TempDir::new("concurrent-open");
+    let path = dir.path().join("cache.db");
+    let writer = Db::open(&path).await.expect("first open");
+
+    let busy = writer.clone();
+    let writing = tokio::spawn(async move {
+        for round in 0..200u32 {
+            busy.save_pull_requests(&repo("hot"), &[pr(round % 7 + 1)])
+                .await
+                .expect("background write");
+        }
+    });
+    for _ in 0..20 {
+        let reader = Db::open(&path).await.expect("open beside a writer");
+        reader.close().await;
+    }
+    writing.await.expect("writer finished");
+    writer.close().await;
 }

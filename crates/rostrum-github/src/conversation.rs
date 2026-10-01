@@ -9,8 +9,8 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use rostrum_core::{
-    CheckRun, CheckState, CommentId, Conversation, EventKind, ReviewId, ReviewState, ReviewThread,
-    Side, ThreadComment, ThreadId, TimelineItem,
+    CheckRun, CheckState, CommentId, Conversation, EventKind, PullState, ReviewId, ReviewState,
+    ReviewThread, Side, ThreadComment, ThreadId, TimelineItem,
 };
 use serde::Deserialize;
 
@@ -26,6 +26,7 @@ query($owner: String!, $name: String!, $number: Int!) {
   rateLimit { cost remaining resetAt }
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
+      state
       body
       createdAt
       author { login avatarUrl }
@@ -140,6 +141,10 @@ pub struct ConversationRepository {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationNode {
+    /// `OPEN`, `CLOSED` or `MERGED`. Optional so a response from before the
+    /// field was queried, or a value GitHub adds later, cannot fail the decode.
+    #[serde(default, deserialize_with = "lenient_state")]
+    pub state: Option<PullState>,
     /// Non-null in the schema, but empty for a pull request opened with no
     /// description, so the default keeps that from being an error case.
     #[serde(default)]
@@ -497,10 +502,26 @@ impl ConversationNode {
             items,
             threads,
             checks,
+            state: self.state,
         };
         conversation.sort();
         conversation
     }
+}
+
+/// Decode `state`, treating a value this build does not know as absent
+/// rather than failing the whole conversation over one field.
+fn lenient_state<'de, D>(deserializer: D) -> Result<Option<PullState>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<String>::deserialize(deserializer)?;
+    Ok(match raw.as_deref() {
+        Some("OPEN") => Some(PullState::Open),
+        Some("CLOSED") => Some(PullState::Closed),
+        Some("MERGED") => Some(PullState::Merged),
+        _ => None,
+    })
 }
 
 #[cfg(test)]
@@ -702,6 +723,37 @@ mod tests {
             .pull_request
             .expect("pull request present")
             .into_domain()
+    }
+
+    fn node_with_state(state: &str) -> ConversationNode {
+        serde_json::from_str(&format!(
+            r#"{{"state": {state}, "body": "", "createdAt": "2026-07-30T10:00:00Z"}}"#
+        ))
+        .expect("node decodes")
+    }
+
+    #[test]
+    fn the_pull_request_state_is_decoded_leniently() {
+        assert_eq!(
+            node_with_state(r#""MERGED""#).into_domain().state,
+            Some(PullState::Merged)
+        );
+        assert_eq!(
+            node_with_state(r#""CLOSED""#).into_domain().state,
+            Some(PullState::Closed)
+        );
+        assert_eq!(
+            node_with_state(r#""OPEN""#).into_domain().state,
+            Some(PullState::Open)
+        );
+        // Unknown and null values are absent, not a decode failure.
+        assert_eq!(node_with_state(r#""ARCHIVED""#).into_domain().state, None);
+        assert_eq!(node_with_state("null").into_domain().state, None);
+    }
+
+    #[test]
+    fn the_query_asks_for_the_state() {
+        assert!(PULL_REQUEST_CONVERSATION.contains("      state\n"));
     }
 
     #[test]

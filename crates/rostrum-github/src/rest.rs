@@ -173,6 +173,53 @@ impl MergeMethod {
     }
 }
 
+/// Body of `PUT /repos/{owner}/{repo}/pulls/{number}/merge`.
+///
+/// Everything but the method is optional and omitted when absent, so GitHub
+/// applies its own defaults: the pull request's title and description for a
+/// squash, its standard message for a merge commit.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct MergePullRequest {
+    pub merge_method: MergeMethod,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit_message: Option<String>,
+    /// The head the caller saw. GitHub refuses the merge when the branch has
+    /// moved since, so a push landing between reading and merging is never
+    /// merged unseen.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sha: Option<String>,
+}
+
+impl MergePullRequest {
+    pub fn new(method: MergeMethod) -> Self {
+        Self {
+            merge_method: method,
+            commit_title: None,
+            commit_message: None,
+            sha: None,
+        }
+    }
+
+    /// Guard the merge on the head the caller saw. A blank sha is ignored.
+    pub fn expecting_head(mut self, sha: impl Into<String>) -> Self {
+        self.sha = non_blank(sha.into());
+        self
+    }
+
+    /// Set the commit title and message. Blank text means GitHub's default.
+    pub fn with_message(mut self, title: Option<String>, message: Option<String>) -> Self {
+        self.commit_title = title.and_then(non_blank);
+        self.commit_message = message.and_then(non_blank);
+        self
+    }
+}
+
+fn non_blank(text: String) -> Option<String> {
+    (!text.trim().is_empty()).then_some(text)
+}
+
 /// The open/closed state of a pull request, as `PATCH .../pulls/{n}` takes it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -194,6 +241,42 @@ impl IssueState {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_plain_merge_sends_only_the_method() {
+        let body = serde_json::to_value(MergePullRequest::new(MergeMethod::Squash))
+            .expect("serialises");
+        assert_eq!(body, json!({ "merge_method": "squash" }));
+    }
+
+    #[test]
+    fn a_guarded_merge_sends_the_head_and_message() {
+        let request = MergePullRequest::new(MergeMethod::Merge)
+            .expecting_head("abc123")
+            .with_message(Some("Title".into()), Some("Body".into()));
+        assert_eq!(
+            serde_json::to_value(request).expect("serialises"),
+            json!({
+                "merge_method": "merge",
+                "sha": "abc123",
+                "commit_title": "Title",
+                "commit_message": "Body",
+            })
+        );
+    }
+
+    /// Blank strings mean "GitHub's default", which is the key being absent —
+    /// an empty `commit_title` would set an empty title.
+    #[test]
+    fn blank_merge_fields_are_omitted() {
+        let request = MergePullRequest::new(MergeMethod::Rebase)
+            .expecting_head("  ")
+            .with_message(Some(String::new()), Some(" \n".into()));
+        assert_eq!(
+            serde_json::to_value(request).expect("serialises"),
+            json!({ "merge_method": "rebase" })
+        );
+    }
 
     #[test]
     fn decodes_a_files_page() {

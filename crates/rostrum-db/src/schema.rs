@@ -43,6 +43,18 @@ CREATE TABLE IF NOT EXISTS drafts (
     PRIMARY KEY (repo, number)
 )";
 
+/// The notification check's memory of what it has already seen. Not cache:
+/// it is not a copy of anything GitHub holds, and dropping it with a cache
+/// schema bump would change what the next check reports. Losing it is still
+/// harmless — the next check re-establishes a baseline and reports nothing —
+/// so a corrupt row is discarded rather than surfaced.
+const CREATE_BASELINE: &str = "\
+CREATE TABLE IF NOT EXISTS notification_baseline (
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    payload    TEXT    NOT NULL,
+    updated_at TEXT    NOT NULL
+)";
+
 /// Statements recreating the cache from nothing. Safe to run repeatedly.
 const CREATE_CACHE: &[&str] = &[
     "\
@@ -80,10 +92,17 @@ CREATE TABLE IF NOT EXISTS cache_http (
 /// A cache version mismatch drops the cache tables; the drafts table is only
 /// ever created, never dropped.
 pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), DbError> {
-    let mut tx = pool.begin().await?;
+    // `IMMEDIATE`: the migration reads the recorded versions before it
+    // writes. A deferred transaction would take a read snapshot first and
+    // then fail outright (`SQLITE_BUSY_SNAPSHOT`, which the busy timeout does
+    // not retry) if another connection — a previous session still flushing
+    // its last writes — committed in between. Taking the write lock up front
+    // makes the open wait its turn instead.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     sqlx::query(CREATE_META).execute(&mut *tx).await?;
     sqlx::query(CREATE_DRAFTS).execute(&mut *tx).await?;
+    sqlx::query(CREATE_BASELINE).execute(&mut *tx).await?;
 
     match read_meta(&mut tx, DRAFT_SCHEMA_VERSION_KEY).await? {
         None => write_meta(&mut tx, DRAFT_SCHEMA_VERSION_KEY, DRAFT_SCHEMA_VERSION).await?,
