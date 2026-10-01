@@ -597,7 +597,7 @@ impl GitHubClient {
     /// 200 whose `data` is null. `resource` names what the document addresses,
     /// so a `NOT_FOUND` — which GraphQL reports inside `errors` rather than in
     /// the status line — comes back as [`GitHubError::NotFound`] naming it.
-    async fn graphql<T: DeserializeOwned>(
+    pub(crate) async fn graphql<T: DeserializeOwned>(
         &self,
         query: &str,
         variables: serde_json::Value,
