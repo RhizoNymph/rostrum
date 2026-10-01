@@ -62,7 +62,8 @@ Overview:
       first when arranging arbitrary pull requests), adds pull requests to the
       top of an existing stack (`gh stack link <stack> <pr>...`, rebasing onto
       the top first when they do not already chain), merges a whole stack
-      atomically (`gh stack merge`) and unstacks. Desktop only for now.
+      atomically (`gh stack merge`) and unstacks. A paired phone drives the
+      same operations through rostrumd; the phone's own UI is not built yet.
     author_filter: >
       Narrowing the feed to chosen people — authored, or optionally also
       assigned/review-requested — and the persistence of every feed setting
@@ -106,8 +107,9 @@ Overview:
       over the tailnet only — generates pairing codes and revokes phones; its
       HTTPS API (self-signed, pinned by fingerprint) serves the
       remote_protocol routes by driving rostrum-local on the configured
-      clones. State is owned by two actors: pairing codes and devices, and
-      which clone is busy.
+      clones, and drives stacks (make, arrange, add to stack, merge, unstack)
+      through rostrum-stack as polled jobs. State is owned by two actors:
+      pairing codes and devices, and which clone is busy (plus the jobs).
 
   data_flow: >
     At startup the app resolves a GitHub token (`gh auth token`, falling back to
@@ -234,6 +236,16 @@ Overview:
     preferences (`GET /api/v1/config`) — never its clones, conflict handler,
     refresh interval or notifications.
 
+    A phone drives stacks the same way it drives local jobs, but as jobs it
+    polls: a stack request names the repository and pull requests; rostrumd
+    takes the clone's lease, fetches the repository's open pull requests and
+    stacks from GitHub, validates with rostrum-core's `plan_stack` /
+    `plan_extend` (and, for a rewrite, that `confirm_rewrite` names exactly
+    the branches `rewrites()` returns), then runs `run_stack_job`,
+    `run_extend_job`, `merge_stack` or `unstack` with the configured clone,
+    conflict handler and the desktop's scratch-worktree directory, recording
+    progress and the outcome for `GET /api/v1/stacks/jobs/{id}`.
+
 Features Index:
   ui_foundation:
     description: Theme, components, text rendering, selection, markdown.
@@ -335,9 +347,9 @@ Features Index:
     depends_on: [android_core, android_app]
     doc: docs/features/android_profiles.md
   rostrumd:
-    description: Desktop daemon — pairing page and APK download (HTTP), the phone's local-git API (HTTPS), systemd user service.
-    entry_points: [crates/rostrumd/src/main.rs, crates/rostrumd/src/app.rs, crates/rostrumd/src/api/mod.rs, crates/rostrumd/src/web/mod.rs]
-    depends_on: [remote_protocol, local_git, conflict_handoff, github_sync]
+    description: Desktop daemon — pairing page and APK download (HTTP), the phone's local-git and stack API (HTTPS), systemd user service.
+    entry_points: [crates/rostrumd/src/main.rs, crates/rostrumd/src/app.rs, crates/rostrumd/src/api/mod.rs, crates/rostrumd/src/web/mod.rs, crates/rostrumd/src/stacks/mod.rs]
+    depends_on: [remote_protocol, local_git, conflict_handoff, github_sync, stacks]
     doc: docs/features/rostrumd.md
 ```
 

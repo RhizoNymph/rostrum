@@ -41,8 +41,10 @@ and merges a whole stack at once. GitHub — through the `gh stack` extension
 
 ## Non-scope
 
-- **Android.** The phone gets stack members in the same contiguous order but
-  no header and no actions (`rostrum-ffi` ignores `FeedRow::StackHeader`).
+- **Android UI.** The phone's feed gets stack members in the same contiguous
+  order but no header and no actions (`rostrum-ffi` ignores
+  `FeedRow::StackHeader`). The *operations* are reachable from a paired phone
+  through `rostrumd` (below); a phone screen for them is not built yet.
 - **Editing a stack in place** beyond adding to its top (`gh stack modify`,
   reordering or removing members, `gh stack sync`/`rebase`). Unstack and
   arrange again instead.
@@ -253,6 +255,32 @@ the all-or-nothing note.
 before going to GitHub, and fails outside a repository, so it needs a clone).
 The pull requests stay open with their current bases.
 
+### From a paired phone (`rostrumd`)
+
+The phone cannot run `gh`. `rostrumd` exposes Make stack, Arrange, Add to
+stack, Merge stack and Unstack as authenticated routes
+(`docs/features/remote_protocol.md`, "Stacks from a phone") and runs them
+with the functions above, unchanged: `run_stack_job`, `run_extend_job`,
+`merge_stack`, `unstack`, over `GhCli`, with the repository's configured
+clone and conflict handler and **the desktop's own scratch-worktree
+directory** (`~/.cache/rostrum/stack-worktrees`), so a conflict handed off
+from the phone can be finished, and the arrangement re-run, from either
+side.
+
+Validation is the desktop's: rostrumd fetches the repository's open pull
+requests and GitHub's stacks for the request and calls `plan_stack` /
+`plan_extend`. For a rewrite, the request's `confirm_rewrite` must equal
+`StackPlan::rewrites()` / `ExtendPlan::rewrites()` as a set — the same list
+the desktop's Arrange and Add to stack panels name — or nothing runs (409
+`rewrite_not_confirmed`); Make stack on a chain that would need a rewrite is
+refused the same way. A dry-run route returns that list for the phone to show.
+
+Each operation is a job the phone polls, holding the clone's lease in
+rostrumd's job coordinator: one job of any kind per clone at a time. (The
+desktop's own "one stack operation at a time" is per process; the desktop and
+the daemon do not coordinate, and git's own locks and the leased pushes are
+what keep a simultaneous run from both safe.)
+
 ## The push exception
 
 Rostrum's standing rule is that it never writes to a remote (OVERVIEW,
@@ -303,7 +331,7 @@ not a terminal, so gh-stack's interactive paths are never taken.
 | `crates/rostrum-core/src/stack/model.rs` | The types | `Stack`, `StackNumber`, `StackMembers`, `RefName`, `StackError` |
 | `crates/rostrum-core/src/stack/detect.rs` | Chain detection | `detect_chains` |
 | `crates/rostrum-core/src/stack/group.rs` | Groups, units, rollup | `stack_groups`, `StackGroup`, `units`, `FeedUnit`, `MergeRollup`, `StackIx` |
-| `crates/rostrum-core/src/stack/plan.rs` | Validating a request | `plan_stack`, `StackPlan`, `PlanMember`, `PlanError` |
+| `crates/rostrum-core/src/stack/plan.rs` | Validating a request; which members a rewrite touches | `plan_stack`, `StackPlan` (`rewrites`), `PlanMember`, `PlanError` |
 | `crates/rostrum-core/src/stack/extend.rs` | Validating an extension, chained-vs-rewrite, lines past a top | `plan_extend`, `ExtendPlan`, `ExtendError`, `continuations`, `Continuation` |
 | `crates/rostrum-core/src/stack/feed_tests.rs` | Stacks in `flatten`, including sorting | — |
 | `crates/rostrum-core/src/feed.rs` | `push_units`; `FeedRow::StackHeader`, `StackSlot`, `StackPlace`, `FeedStack`; one repository's rows for the repository view | `Feed::stack`, `repo_pull_rows` |
@@ -348,7 +376,11 @@ not a terminal, so gh-stack's interactive paths are never taken.
 - **Only `gh stack link`, `init`, `view`, `merge` and `unstack` are ever
   run.** Tests never run a mutating `gh stack` command: the runner is a trait
   and the tests assert the exact argv a double receives.
-- **One stack operation at a time**, across all repositories.
+- **One stack operation at a time**, across all repositories, in the desktop
+  app; one job per clone in `rostrumd`.
+- **A rewrite is confirmed by name.** The desktop's panels list
+  `rewrites()` and require the tick; a phone must send exactly that list as
+  `confirm_rewrite`.
 - **Callable without the UI.** `run_stack_job`, `run_extend_job`,
   `merge_stack` and `unstack` take plain inputs (a clone path, a validated
   plan or a stack number, an optional handler, a scratch directory, a
