@@ -129,7 +129,12 @@ impl IssueMutation {
     }
 
     pub fn call(&self, repo: &RepoId, number: IssueNumber) -> RestCall {
-        let issue = format!("/repos/{}/{}/issues/{}", repo.owner(), repo.name(), number.0);
+        let issue = format!(
+            "/repos/{}/{}/issues/{}",
+            repo.owner(),
+            repo.name(),
+            number.0
+        );
         let (method, path, body) = match self {
             Self::Comment(body) => (
                 Method::POST,
@@ -335,7 +340,9 @@ mod tests {
     #[test]
     fn adding_labels_posts_a_named_array() {
         assert_eq!(
-            call(IssueMutation::AddLabels(AddLabels::new(["C-bug", "P-high"]))),
+            call(IssueMutation::AddLabels(AddLabels::new([
+                "C-bug", "P-high"
+            ]))),
             RestCall {
                 method: Method::POST,
                 path: "/repos/rust-lang/rust/issues/42/labels".into(),
@@ -359,7 +366,9 @@ mod tests {
     #[test]
     fn assigning_posts_the_logins() {
         assert_eq!(
-            call(IssueMutation::AddAssignees(Assignees::new(["alice", "bob"]))),
+            call(IssueMutation::AddAssignees(Assignees::new([
+                "alice", "bob"
+            ]))),
             RestCall {
                 method: Method::POST,
                 path: "/repos/rust-lang/rust/issues/42/assignees".into(),

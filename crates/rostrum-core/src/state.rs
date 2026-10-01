@@ -368,7 +368,10 @@ mod tests {
     #[test]
     fn counts_open_issues_across_repos() {
         let state = AppState {
-            repos: vec![with_issues("a/b", &[], &[1, 2]), with_issues("c/d", &[], &[3])],
+            repos: vec![
+                with_issues("a/b", &[], &[1, 2]),
+                with_issues("c/d", &[], &[3]),
+            ],
             ..Default::default()
         };
         assert_eq!(state.total_open_issues(), 3);

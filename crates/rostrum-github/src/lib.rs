@@ -14,7 +14,8 @@ pub use conversation::PULL_REQUEST_CONVERSATION;
 pub use error::GitHubError;
 pub use graphql::{BranchUpdateMethod, DraftState};
 pub use issues::{
-    Assignees, CloseAs, CommentBody, CreateIssue, IssueMutation, IssueStateChange, RepoIssues,
+    Assignees, CloseAs, CommentBody, CreateIssue, DraftError, IssueDraft, IssueMutation,
+    IssueStateChange, RepoIssues,
 };
 pub use rest::{
     AddLabels, DraftComment, IssueState, MergeMethod, MergePullRequest, PullRequestFile,

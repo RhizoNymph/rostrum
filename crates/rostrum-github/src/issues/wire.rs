@@ -8,8 +8,8 @@
 
 use chrono::{DateTime, Utc};
 use rostrum_core::{
-    CommentId, Conversation, Issue, IssueDetail, IssueNumber, IssueState, Label, Milestone,
-    NodeId, TimelineItem,
+    CommentId, Conversation, Issue, IssueDetail, IssueNumber, IssueState, Label, Milestone, NodeId,
+    TimelineItem,
 };
 use serde::Deserialize;
 
@@ -233,14 +233,17 @@ impl IssueNode {
             body: body.unwrap_or_default(),
             created_at: issue.created_at,
         }];
-        items.extend(comments.into_iter().flatten().map(|comment| {
-            TimelineItem::Comment {
-                id: CommentId(comment.id),
-                author: comment.author.and_then(AuthorNode::into_user),
-                body: comment.body,
-                created_at: comment.created_at,
-            }
-        }));
+        items.extend(
+            comments
+                .into_iter()
+                .flatten()
+                .map(|comment| TimelineItem::Comment {
+                    id: CommentId(comment.id),
+                    author: comment.author.and_then(AuthorNode::into_user),
+                    body: comment.body,
+                    created_at: comment.created_at,
+                }),
+        );
         items.extend(
             events
                 .map(Connection::into_vec)
@@ -335,7 +338,8 @@ mod tests {
     const ZED: &str = include_str!("../../fixtures/issues/open_issues_zed.json");
     const ASSIGNED: &str = include_str!("../../fixtures/issues/open_issues_assigned.json");
     const MILESTONE: &str = include_str!("../../fixtures/issues/open_issues_milestone.json");
-    const CROSS_REFERENCED: &str = include_str!("../../fixtures/issues/detail_cross_referenced.json");
+    const CROSS_REFERENCED: &str =
+        include_str!("../../fixtures/issues/detail_cross_referenced.json");
     const DETAIL_ASSIGNED: &str = include_str!("../../fixtures/issues/detail_assigned.json");
     const NOT_PLANNED: &str = include_str!("../../fixtures/issues/detail_closed_not_planned.json");
     const REOPENED: &str = include_str!("../../fixtures/issues/detail_reopened.json");
@@ -467,9 +471,21 @@ mod tests {
             source: "rust-lang/rust#160794".into(),
             title: "`thread::current` may indirectly call `Arc::new_uninit_in(System)` which may call an untrusted alloc error hook".into(),
         }));
-        assert!(events.iter().any(|e| matches!(e, EventKind::Labeled { .. })));
-        assert!(events.iter().any(|e| matches!(e, EventKind::Unlabeled { .. })));
-        assert!(events.iter().any(|e| matches!(e, EventKind::Renamed { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, EventKind::Labeled { .. }))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, EventKind::Unlabeled { .. }))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, EventKind::Renamed { .. }))
+        );
         assert!(!events.iter().any(|e| matches!(e, EventKind::Other(_))));
     }
 
@@ -527,7 +543,11 @@ mod tests {
                 Some("DUPLICATE"),
                 IssueState::Closed(Some(CloseReason::Duplicate)),
             ),
-            (Some("CLOSED"), Some("SOMETHING_NEW"), IssueState::Closed(None)),
+            (
+                Some("CLOSED"),
+                Some("SOMETHING_NEW"),
+                IssueState::Closed(None),
+            ),
             (Some("ARCHIVED"), None, IssueState::Open),
             (None, None, IssueState::Open),
         ] {
@@ -564,8 +584,19 @@ mod tests {
     fn the_feed_document_asks_for_open_issues_with_every_listed_field() {
         assert!(OPEN_ISSUES.contains("issues(states: OPEN"));
         for field in [
-            "id", "number", "title", "state", "stateReason", "createdAt", "updatedAt",
-            "author", "assignees", "labels", "color", "comments { totalCount }", "milestone",
+            "id",
+            "number",
+            "title",
+            "state",
+            "stateReason",
+            "createdAt",
+            "updatedAt",
+            "author",
+            "assignees",
+            "labels",
+            "color",
+            "comments { totalCount }",
+            "milestone",
         ] {
             assert!(OPEN_ISSUES.contains(field), "{field}");
         }
