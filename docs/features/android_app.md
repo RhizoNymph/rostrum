@@ -35,8 +35,9 @@ inline commenting and pending reviews, merging, and the paired desktop
 - Copying the paired desktop's settings (repositories, pull requests per
   repository, feed preferences, stash default) onto the phone: offered right
   after pairing, and from Settings.
-- The feed's sort and Pull requests | Issues tabs, the issue screens, stacks
-  in the feed, and a repository's own screen: see
+- The feed's sort and Pull requests | Issues tabs, the issue screens (with
+  editing), stacks in the feed and their actions through the desktop,
+  "load earlier" on conversations, and a repository's own screen: see
   `docs/features/android_issues_repo.md`.
 
 ## Non-scope

@@ -21,18 +21,20 @@ trunks).
   planned, reopen); the new-issue form (repository, title, body with
   Write/Preview, labels, assignees), opened from a FAB on the Issues tab or
   the repository screen.
-- **Stacks, display only**: `PullItem.Stack` drawn as a header row (title,
-  trunk, members not open, rollup chip) above its members, bottom first,
-  each indented behind a chain glyph. The header's actions menu exists but
-  is hidden (`StackFlags.ACTIONS_ENABLED = false`).
+- **Stacks**: `PullItem.Stack` drawn as a header row (title, trunk, members
+  not open, rollup chip) above its members, bottom first, each indented
+  behind a chain glyph. The header's menu runs stack actions on the paired
+  desktop: Merge stack, Add pull requests, Unstack (a GitHub stack), Make
+  stack (a detected chain); Arrange picks pull requests on the repository
+  screen. Every action asks first and is then followed as a job.
+- **Editing an issue** (title and description, Write/Preview) with the
+  conflict check, and **"Load earlier"** on issue and pull request
+  conversations.
 - **Repository screen**: tapping a repository header's name opens it, with
   tabs for Pull requests, Issues and Branches; Back returns to the feed.
 
-## Non-scope (phase 2b)
+## Non-scope
 
-- Stack actions (merge, unstack, make stack) through the paired desktop.
-- Editing an issue's title and body; paging an issue's timeline back
-  ("load earlier").
 - Issues in background notifications (the core's check reads pull requests
   only).
 - Any ordering on the phone: the core orders repositories, items and stacks
@@ -90,6 +92,49 @@ into `StackHeader` + `Pull(stack = StackPlace)` rows; issues become
 `ItemRow.Issue`), drawn by `ItemRowContent`. The header's name opens the
 repository screen; the chevron still collapses.
 
+### Stack actions (`ui/stacks/`)
+
+`StackActionsViewModel(backend, session)` — one per feed and per repository
+screen — holds `flow: StackFlow?` and the Arrange `selection`:
+
+- `request(entry, repo, stack, members)` from a header's menu
+  (`ui/items/StackHeaderRow.kt`, `menuEntries`: a GitHub stack offers Merge,
+  Add, Unstack; a chain offers Make). Without a paired desktop it becomes
+  `NeedsDesktop`, whose dialog links to pairing.
+- **Merge**: `ConfirmMerge` lists the members with their merge chips, a
+  Merge/Squash/Rebase toggle and the all-or-nothing note → `mergeStack`.
+  **Unstack**: a confirmation → `unstack`. **Make**: the chain bottom first
+  on its trunk → `makeStack` (nothing rewritten).
+- **Add**: `PickExtend` loads `stackCandidates` (eligible ones pickable,
+  in pick order, each with its note) → `planStackRewrite(Extend)` →
+  `ConfirmRewrite` showing exactly the branches the desktop names →
+  `extendStack(…, confirmRewrite = those branches)`.
+- **Arrange** (repository screen, Pull requests tab): picking mode on the
+  rows (`RowCallbacks.picked`, a numbered badge), then `OrderArrange` (move
+  up/down, trunk, `checkStackPlan` re-run on each change) →
+  `planStackRewrite(Arrange)` → `ConfirmRewrite` → `arrangeStack`.
+- A `RewriteNotConfirmed` refusal turns the open `ConfirmRewrite` into the
+  desktop's new branches with its reason, to confirm again; `RemoteApi(BUSY)`
+  is a snackbar with the question kept; `NotPaired` is `NeedsDesktop`.
+- A started job is `StackFlow.Job`, polled with `stackJob` every second
+  until finished; the sheet shows progress, then the outcome (`jobOutcome`):
+  a handed-off conflict with its session and `tmux attach -t …`
+  (`CopyCommandRow`), a failure with the pull requests already pushed. The
+  outcome also goes to the snackbar; closing the sheet doesn't stop the job.
+
+### Editing and paging
+
+- `IssueViewModel.openEditor(field)` starts an `IssueEditor` from the issue
+  as shown, its `updatedAt` the base. `saveEdit` → `editIssue(…, base,
+  overwrite = false)`; `EditConflict` keeps the draft and opens the conflict
+  dialog: **Reload** drops the draft and re-reads the issue, **Overwrite**
+  resends with `overwrite = true` over GitHub's `updatedAt`. A blank title
+  can't be saved; Preview renders with `renderMarkdown`.
+- `loadEarlier()` on the issue and pull request ViewModels merges the next
+  earlier page (`loadEarlierIssue` / `loadEarlierPull`); the row ("Load
+  earlier (N more)", `components/LoadEarlierRow.kt`) sits after the
+  description, where earlier entries come in.
+
 ### Issue screen (`ui/issue/`)
 
 `IssueViewModel(backend, issue, clock)`: paints `cachedIssueDetail`, then
@@ -135,6 +180,12 @@ indent by depth; pull request rows open the pull request.
 | `ui/issue/IssueState.kt`, `IssueViewModel.kt`, `IssueScreen.kt`, `IssueRoute.kt` | The issue screen |
 | `ui/newissue/NewIssueState.kt`, `NewIssueViewModel.kt`, `NewIssueScreen.kt`, `NewIssueRoute.kt` | The new-issue form and its repository picker |
 | `ui/repo/RepoState.kt`, `RepoViewModel.kt`, `RepoScreen.kt`, `RepoRoute.kt` | The repository screen, branch tree, trunk editor |
+| `ui/stacks/StackFlow.kt`, `StackActionsViewModel.kt`, `StackActionSheets.kt` | Stack action flow states and texts, the ViewModel, the sheets and dialogs (`StackActionsHost`) |
+| `ui/issue/IssueEditSheet.kt` | The title/description editor and the conflict dialog |
+| `ui/components/LoadEarlierRow.kt` | "Load earlier (N more)" |
+| `data/IssuesApi.kt`, `data/StackActionsApi.kt` | The issue and stack-action parts of `RostrumBackend` |
+| `data/model/StackActions.kt`, `data/ffi/StackActionMappings.kt` | Stack action records and their mappings |
+| `data/fake/FakeHost.kt`, `FakeIssuesApi.kt`, `FakeStackActions.kt` | The fake's delegated issue API and stack actions (plans from base/head chains, refusals, polled jobs) |
 | `ui/components/PickerSheet.kt` | `PickerSheet`, `PickerOption`, `PickerKind`, `PickerState` |
 | `ui/components/TimelineItems.kt`, `CommentBar.kt`, `CardSegment.kt`, `NewIssueFab.kt` | Shared by pull requests, issues and the repository screen |
 | `ui/navigation/Destinations.kt` | `Issue(repo, number)`, `NewIssue(repo?)`, `Repo(repo)` |
@@ -144,7 +195,9 @@ Tests: `data/fake/FakeSortTest`, `FakeIssuesStacksTest`,
 `data/ffi/FfiMappingsTest` (sort, issues, stacks, repository records and
 new events), `HostSmokeTest` (sorts, tab, overview, trunk validation,
 blank-title refusal against the real core), `ui/feed/FeedTabsSortTest`,
-`ui/items/ItemRowsTest`, `ui/issue/IssueViewModelTest`,
+`ui/items/ItemRowsTest`, `ui/issue/IssueViewModelTest`, `IssueEditTest`,
+`ui/pr/PrLoadEarlierTest`, `ui/stacks/StackActionsViewModelTest`,
+`data/fake/FakeStackActionsEditTest`,
 `ui/newissue/NewIssueViewModelTest`, `ui/repo/RepoViewModelTest`.
 
 ## Invariants
@@ -160,4 +213,9 @@ blank-title refusal against the real core), `ui/feed/FeedTabsSortTest`,
   patched locally.
 - **The new-issue form sends nothing until Create**; labels and assignees
   belong to the chosen repository and are dropped when it changes.
-- **Stack actions stay hidden** until phase 2b (`StackFlags`).
+- **History is rewritten only as confirmed.** Arrange and Add send exactly
+  the branches the desktop's dry run named and the user saw; a different
+  set is refused and shown again.
+- **Every stack action asks first** and needs the paired desktop.
+- **An edit never silently overwrites**: a change on GitHub since the edit
+  began is a conflict the user resolves.
