@@ -1,0 +1,344 @@
+{
+ "data": {
+  "rateLimit": {
+   "cost": 1,
+   "remaining": 4978,
+   "resetAt": "2026-10-01T17:22:01Z"
+  },
+  "repository": {
+   "issue": {
+    "id": "I_kwDOAAsO6M8AAAABTfKWtQ",
+    "number": 163403,
+    "title": "Global allocators are unsoundly allowed to return memory from the global allocator",
+    "url": "https://github.com/rust-lang/rust/issues/163403",
+    "state": "CLOSED",
+    "stateReason": "NOT_PLANNED",
+    "body": "I've been thinking about this weird edge case that might happen to someone on accident when we introduce `unsafe trait GlobalAllocator: Allocator` to replace `GlobalAlloc`.\n\nA `GlobaAlloc` impl can call `Global.allocate()`/`alloc::alloc()`, and then return that memory. This causes the allocator to recurse if it is registered as the `#[global_allocator]`. \nThere is currently nothing in the docs of `GlobalAlloc` or `GlobalAllocator` that forbids this. The [section on reentrance](https://doc.rust-lang.org/nightly/std/alloc/trait.GlobalAlloc.html#re-entrance) does not talk about it as potentially unsound, but only as potentially causing infinite recursion.\n\n~~However, in situations where it **doesn't** recurse infinitely, Miri does not approve: [playground](https://play.rust-lang.org/?version=stable&mode=debug&edition=2024&gist=bb6374fe8c9bba1b585ea2053374412b)\nThis is because~~ the same pointer ends up being passed into `alloc::dealloc` twice. Note that it is not the `GlobalAlloc` implementation that is causing this to happen here. The way it is written should be perfectly sound, as long as it is only called directly via its methods.\nOnly the act of hooking it up to the `#[global_allocator]` machinery causes `alloc::dealloc` to be called twice on the same pointer. Because `#[global_allocator]` is a safe attribute, it must ensure that its calls to the methods of `GlobalAlloc` are sound, solely based on the contract established by the trait. \n\n-----\n\nAlso note that while in the case described above, the `GlobalAlloc` implementation is obvious nonsense (though permitted by the safety requirements), this becomes much less clear in generic code. For example, consider an allocator `MyAlloc<A, B>` that does something like this:\n- For small sizes, call allocator `A` with a larger size, and return that allocation.\n- For large sizes, call allocator `B`.\n\nNow, if we (or downstream) set `MyAlloc<Global, System>` as the global allocator, and call `Box::new(small_object)`, we get the same situation as above.\n\n-----\n\nThis is also relevant to prior discussions about a `NativeAllocator` wrapper for `Allocator`, which would get support from LLVM intrinsics to allow `Box` to be `noalias`. We believed that [the safety requirements of `StaticAllocator` are enough for that](https://rust-lang.zulipchat.com/#narrow/channel/136281-t-opsem/topic/Enabling.20compiler.20magic.20on.20custom.20allocators/with/611770145), but I suspect LLVM will also not be a fan of these \"logical double frees\".\n\ncc @RalfJung\n\n@rustbot label A-docs A-allocators I-unsound A-global-allocator-reentry T-libs T-opsem",
+    "createdAt": "2026-09-27T12:42:57Z",
+    "updatedAt": "2026-09-27T16:08:58Z",
+    "author": {
+     "login": "maxdexh",
+     "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+    },
+    "assignees": {
+     "nodes": []
+    },
+    "labels": {
+     "nodes": [
+      {
+       "name": "A-allocators",
+       "color": "f7e101"
+      },
+      {
+       "name": "A-docs",
+       "color": "f7e101"
+      },
+      {
+       "name": "C-bug",
+       "color": "f5f1fd"
+      },
+      {
+       "name": "T-libs",
+       "color": "bfd4f2"
+      },
+      {
+       "name": "T-opsem",
+       "color": "bfd4f2"
+      },
+      {
+       "name": "A-global-allocator-reentry",
+       "color": "f7e101"
+      }
+     ]
+    },
+    "milestone": null,
+    "comments": {
+     "totalCount": 14,
+     "nodes": [
+      {
+       "id": "IC_kwDOAAsO6M8AAAABXQzvTw",
+       "body": "Does this affect stabilization of `trait Allocator`?  cc @nia-e ",
+       "createdAt": "2026-09-27T13:01:59Z",
+       "author": {
+        "login": "theemathas",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/6120103?v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABXQ0JLw",
+       "body": "No (only an issue for `GlobalAlloc` already on stable, potentially made worse by `GlobalAllocator`)",
+       "createdAt": "2026-09-27T13:02:55Z",
+       "author": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABXQ2ftQ",
+       "body": "yeah this seems like it's just a thing we should put in the docs, but doesn't block stabilisation",
+       "createdAt": "2026-09-27T13:08:26Z",
+       "author": {
+        "login": "nia-e",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/12896469?u=775005069e5d927e885d9813ce764620d0eff8e1&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABXQ3nWQ",
+       "body": "The question is how exactly. The global allocator calling itself should generally be fine, as long as those allocations are not used for the returned allocation?",
+       "createdAt": "2026-09-27T13:11:04Z",
+       "author": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABXQ5hdA",
+       "body": "\"Note that calls to the `Allocator` methods on `Global` (and potentially other allocators), for non-zero-sized allocations, will be forwarded to the registered `GlobalAllocator` and it is the responsibility of the latter to ensure such calls do not recurse infinitely.\"",
+       "createdAt": "2026-09-27T13:15:33Z",
+       "author": {
+        "login": "nia-e",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/12896469?u=775005069e5d927e885d9813ce764620d0eff8e1&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABXQ6U3g",
+       "body": "They don't recurse infinitely in my miri example, otherwise there'd be no problem ^^",
+       "createdAt": "2026-09-27T13:17:29Z",
+       "author": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABXRAf1w",
+       "body": "Isn't that Miri error just an instance of <https://github.com/rust-lang/miri/issues/2686>?",
+       "createdAt": "2026-09-27T13:32:14Z",
+       "author": {
+        "login": "RalfJung",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/330628?u=562ead6e5c8da9a02015f73a9aefdb6c82d4e2cf&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABXRBmPA",
+       "body": "The issue you linked is of miri missing UB. I'm not familiar enough with how miri treats the global allocator, but to me, this looks nothing alike\n\nEdit: Also, the error is different from the one you get when passing `System` memory into `Global.deallocate`, if that's what you meant",
+       "createdAt": "2026-09-27T13:34:51Z",
+       "author": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABXRRnTA",
+       "body": "The example works fine with TB. I think this is the usual widening-allocator problem which a bachelor student is working on fixing in the next few months. Also see <https://github.com/rust-lang/miri/issues/2104>. That's basically the same issue as the above; a proper handling of the allocator will both fix some wrong-UB cases and some missing-UB cases.\n\nIs there some reason you think this code should have UB, other than \"Miri says so and I trust it blindly\"? ;)",
+       "createdAt": "2026-09-27T14:09:58Z",
+       "author": {
+        "login": "RalfJung",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/330628?u=562ead6e5c8da9a02015f73a9aefdb6c82d4e2cf&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABXRV4eA",
+       "body": "Oh interesting, I had no idea miri doesn't support that in SB. Yeah in that case, that's definitely what's causing the error; we are deallocating 100 bytes via a pointer miri believes to only be valid for 4.\n\nBut that was just meant as a demo. I thought this must be UB because the same pointer is returned from `alloc::alloc` twice, and passed into `alloc::dealloc` twice (with different layouts even). It is my understanding that these functions are special in that they \"restore\" provenance, but if this somehow works then sure ^^",
+       "createdAt": "2026-09-27T14:19:43Z",
+       "author": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABXRXWuQ",
+       "body": "I don't see why that would be UB. Each round through `alloc` adds a layer of provenance, and each round through `dealloc` peels away one layer. As long as everything is lined up properly, that should all be fine.\n\nBut it's definitely a fun testcase.",
+       "createdAt": "2026-09-27T14:23:06Z",
+       "author": {
+        "login": "RalfJung",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/330628?u=562ead6e5c8da9a02015f73a9aefdb6c82d4e2cf&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABXRXxvQ",
+       "body": "And LLVM is fine with this as well? I couldn't find any good info on what exactly the requirements for return position `noalias` would mean here in practice",
+       "createdAt": "2026-09-27T14:24:03Z",
+       "author": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABXSJyVg",
+       "body": "If things are properly nested I don't see why it should not be fine with it. Return-position `noalias` is poorly understood, but if it's something along the lines of \"pointer has a fresh never-before-seen provenance\" then that seems fine. with the nested case as well. Each level of nesting will generate its own fresh provenance.",
+       "createdAt": "2026-09-27T16:05:50Z",
+       "author": {
+        "login": "RalfJung",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/330628?u=562ead6e5c8da9a02015f73a9aefdb6c82d4e2cf&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABXSLJ6A",
+       "body": "Alright let's hope that llvm works that way 🙃 ",
+       "createdAt": "2026-09-27T16:08:58Z",
+       "author": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       }
+      }
+     ]
+    },
+    "timelineItems": {
+     "nodes": [
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-09-27T12:42:59Z",
+       "actor": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       },
+       "label": {
+        "name": "C-bug"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-09-27T12:43:00Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "needs-triage"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-09-27T12:43:02Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "A-allocators"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-09-27T12:43:02Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "A-docs"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-09-27T12:43:02Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "A-global-allocator-reentry"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-09-27T12:43:02Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "I-unsound"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-09-27T12:43:02Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "T-libs"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-09-27T12:43:02Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "T-opsem"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-09-27T12:43:05Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "I-prioritize"
+       }
+      },
+      {
+       "__typename": "RenamedTitleEvent",
+       "createdAt": "2026-09-27T12:43:33Z",
+       "actor": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       },
+       "previousTitle": "Global allocators can unsoundly return memory from the global allocator",
+       "currentTitle": "Global allocators are unsoundly allowed to return memory from the global allocator"
+      },
+      {
+       "__typename": "UnlabeledEvent",
+       "createdAt": "2026-09-27T13:23:10Z",
+       "actor": {
+        "login": "theemathas",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/6120103?v=4"
+       },
+       "label": {
+        "name": "needs-triage"
+       }
+      },
+      {
+       "__typename": "UnlabeledEvent",
+       "createdAt": "2026-09-27T16:05:59Z",
+       "actor": {
+        "login": "RalfJung",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/330628?u=562ead6e5c8da9a02015f73a9aefdb6c82d4e2cf&v=4"
+       },
+       "label": {
+        "name": "I-unsound"
+       }
+      },
+      {
+       "__typename": "UnlabeledEvent",
+       "createdAt": "2026-09-27T16:06:11Z",
+       "actor": {
+        "login": "RalfJung",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/330628?u=562ead6e5c8da9a02015f73a9aefdb6c82d4e2cf&v=4"
+       },
+       "label": {
+        "name": "I-prioritize"
+       }
+      },
+      {
+       "__typename": "ClosedEvent",
+       "createdAt": "2026-09-27T16:08:58Z",
+       "actor": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       },
+       "stateReason": "NOT_PLANNED"
+      }
+     ]
+    }
+   }
+  }
+ }
+}

@@ -1,0 +1,338 @@
+{
+ "data": {
+  "rateLimit": {
+   "cost": 1,
+   "remaining": 4982,
+   "resetAt": "2026-10-01T17:22:01Z"
+  },
+  "repository": {
+   "issue": {
+    "id": "I_kwDOAAsO6M8AAAABMBOC2Q",
+    "number": 160793,
+    "title": "Inappropriate `panic!`s in `Thread::new` on certain unix platforms",
+    "url": "https://github.com/rust-lang/rust/issues/160793",
+    "state": "OPEN",
+    "stateReason": null,
+    "body": "Found after discussing code surrounding #160219 on [zulip](https://rust-lang.zulipchat.com/#narrow/channel/136281-t-opsem/topic/.E2.9C.94.20Uninit.20Arc.20get_mut_unchecked.28.29.2Eas_mut_ptr.28.29.20UB.3F/with/615398995). \n\nEdit: It is inappropriate for `Thread::new` to ever panic, because we [guarantee](https://doc.rust-lang.org/beta/std/alloc/trait.GlobalAlloc.html#re-entrance) that `thread::current`, which uses it, does not call the global allocator reentrantly. The memory leak on unwind, which this issue was originally about, is not that important.\n\n----\n\nThe implementation of `Thread::new` manually initializes a struct behind `MaybeUninit`, which means that if `Parker::new_in_place` unwinds, the `name`'s memory (essentially `Option<CString>`), now held by the previously written `name` field behind `MaybeUninit`, is leaked.\n\nhttps://github.com/rust-lang/rust/blob/4667d75565e47ba5df36c0df598c556b543e8624/library/std/src/thread/thread.rs#L101-L108\n\nNote that this is possible, on certain unix platforms:\n\nhttps://github.com/rust-lang/rust/blob/4667d75565e47ba5df36c0df598c556b543e8624/library/std/src/sys/sync/thread_parking/pthread.rs#L24-L32\n\nwhich calls\n\nhttps://github.com/rust-lang/rust/blob/4667d75565e47ba5df36c0df598c556b543e8624/library/std/src/sys/pal/unix/sync/condvar.rs#L152-L175\n\nwhich uses `assert_eq` to ensure that the initialization of the `Condvar` succeeds ([it can fail](https://linux.die.net/man/3/pthread_cond_init), e.g. from resource exhaustion). Note that the method itself expects failures are possible here. It uses a guard struct to ensure that the resources of the condattr are not leaked on unwind.\n\n ------\n\nFurthermore, the implementation of `std::thread::current` seems to assume that `Thread::new` never unwinds, because it sets a flag to detect reentrance, which is never reset if an unwind occurs:\n\nhttps://github.com/rust-lang/rust/blob/4667d75565e47ba5df36c0df598c556b543e8624/library/std/src/thread/current.rs#L289-L301\n\n------\n~~The first issue should be fixable by reordering the fields' initialization logic, and the second one by adding a drop guard that unsets the busy state.~~",
+    "createdAt": "2026-08-09T08:11:23Z",
+    "updatedAt": "2026-10-01T16:21:50Z",
+    "author": {
+     "login": "maxdexh",
+     "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+    },
+    "assignees": {
+     "nodes": []
+    },
+    "labels": {
+     "nodes": [
+      {
+       "name": "P-high",
+       "color": "eb6420"
+      },
+      {
+       "name": "I-unsound",
+       "color": "e11d21"
+      },
+      {
+       "name": "C-bug",
+       "color": "f5f1fd"
+      },
+      {
+       "name": "T-libs",
+       "color": "bfd4f2"
+      },
+      {
+       "name": "O-unix",
+       "color": "6e6ec0"
+      },
+      {
+       "name": "A-thread",
+       "color": "f7e101"
+      },
+      {
+       "name": "I-memleak",
+       "color": "e10c02"
+      },
+      {
+       "name": "A-global-allocator-reentry",
+       "color": "f7e101"
+      }
+     ]
+    },
+    "milestone": null,
+    "comments": {
+     "totalCount": 7,
+     "nodes": [
+      {
+       "id": "IC_kwDOAAsO6M8AAAABN8NoQA",
+       "body": "@rustbot label I-memleak A-thread T-libs I-unsound A-global-allocator-reentry",
+       "createdAt": "2026-08-09T08:11:38Z",
+       "author": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABN8NpFA",
+       "body": "**Error**: Unknown labels: A-threads\n\n*Please file an issue on GitHub at [triagebot](https://github.com/rust-lang/triagebot) if there's a problem with this bot, or reach out on [#triagebot](https://rust-lang.zulipchat.com/#narrow/channel/224082-triagebot) on Zulip.*\n",
+       "createdAt": "2026-08-09T08:11:41Z",
+       "author": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABN8UKjw",
+       "body": "@RalfJung Sorry for the ping, but `GlobalAlloc` actually guarantees that `std::thread::current` [does not call the global allocator](https://doc.rust-lang.org/beta/std/alloc/trait.GlobalAlloc.html#re-entrance). This is apparently not the case, because if the assertion fails, we call `panic!`. So the global allocator and the panic hook are invoked. If the global allocator relies on not being called reentrantly by `thread::current`, I think this is unsound?",
+       "createdAt": "2026-08-09T08:40:22Z",
+       "author": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABN8lRSA",
+       "body": "Yeah that sounds like we are not holding the promise we are making. That guarantee was added in https://github.com/rust-lang/rust/pull/144465. It's largely a libs-api question, so I don't really have any further insights here.\nCc @orlp @Amanieu @joboet ",
+       "createdAt": "2026-08-09T09:56:01Z",
+       "author": {
+        "login": "RalfJung",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/330628?u=562ead6e5c8da9a02015f73a9aefdb6c82d4e2cf&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABN89oOw",
+       "body": "Cc https://github.com/rust-lang/rust/issues/160776 which this seems like it overlaps with (though finds different issues)",
+       "createdAt": "2026-08-09T11:35:35Z",
+       "author": {
+        "login": "Mark-Simulacrum",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/5047365?v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABN9q3Qg",
+       "body": "That one doesn't look like it can cause a reentrant call, just sketchy code and lack of tests \n\nEdit: Oh, it's your issue. Sorry 😅 ",
+       "createdAt": "2026-08-09T14:33:49Z",
+       "author": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABU3-8EQ",
+       "body": "@rustbot label O-unix -needs-triage",
+       "createdAt": "2026-09-16T10:16:44Z",
+       "author": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       }
+      }
+     ]
+    },
+    "timelineItems": {
+     "nodes": [
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-08-09T08:11:24Z",
+       "actor": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       },
+       "label": {
+        "name": "C-bug"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-08-09T08:11:26Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "needs-triage"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-08-09T08:11:51Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "A-thread"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-08-09T08:11:51Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "I-memleak"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-08-09T08:28:16Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "T-libs"
+       }
+      },
+      {
+       "__typename": "RenamedTitleEvent",
+       "createdAt": "2026-08-09T09:02:57Z",
+       "actor": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       },
+       "previousTitle": "Missing unwind handling around `Thread::new`",
+       "currentTitle": "Missing unwind handling around `Thread::new` on certain unix platforms"
+      },
+      {
+       "__typename": "CrossReferencedEvent",
+       "createdAt": "2026-08-09T09:12:58Z",
+       "actor": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       },
+       "source": {
+        "__typename": "Issue",
+        "number": 160794,
+        "title": "`thread::current` may indirectly call `Arc::new_uninit_in(System)` which may call an untrusted alloc error hook",
+        "repository": {
+         "nameWithOwner": "rust-lang/rust"
+        }
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-08-09T10:40:21Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "I-unsound"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-08-09T10:40:23Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "I-prioritize"
+       }
+      },
+      {
+       "__typename": "RenamedTitleEvent",
+       "createdAt": "2026-08-09T10:58:05Z",
+       "actor": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       },
+       "previousTitle": "Missing unwind handling around `Thread::new` on certain unix platforms",
+       "currentTitle": "Inappropriate `panic!`s in `Thread::new` on certain unix platforms"
+      },
+      {
+       "__typename": "CrossReferencedEvent",
+       "createdAt": "2026-08-10T09:33:55Z",
+       "actor": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       },
+       "source": {
+        "__typename": "Issue",
+        "number": 160837,
+        "title": "More global allocator reentrancy issues in `park` and `unpark`",
+        "repository": {
+         "nameWithOwner": "rust-lang/rust"
+        }
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-08-11T15:55:39Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "A-global-allocator-reentry"
+       }
+      },
+      {
+       "__typename": "CrossReferencedEvent",
+       "createdAt": "2026-08-11T17:42:23Z",
+       "actor": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       },
+       "source": {
+        "__typename": "Issue",
+        "number": 160930,
+        "title": "More global allocator reentrancy issues; this time `thread_local`",
+        "repository": {
+         "nameWithOwner": "rust-lang/rust"
+        }
+       }
+      },
+      {
+       "__typename": "UnlabeledEvent",
+       "createdAt": "2026-08-18T15:35:14Z",
+       "actor": {
+        "login": "nia-e",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/12896469?u=775005069e5d927e885d9813ce764620d0eff8e1&v=4"
+       },
+       "label": {
+        "name": "I-prioritize"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-08-18T15:35:14Z",
+       "actor": {
+        "login": "nia-e",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/12896469?u=775005069e5d927e885d9813ce764620d0eff8e1&v=4"
+       },
+       "label": {
+        "name": "P-high"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-09-16T10:16:47Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "O-unix"
+       }
+      },
+      {
+       "__typename": "UnlabeledEvent",
+       "createdAt": "2026-10-01T16:21:50Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "needs-triage"
+       }
+      }
+     ]
+    }
+   }
+  }
+ }
+}
