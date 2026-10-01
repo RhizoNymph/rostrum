@@ -5,8 +5,10 @@
 
 pub mod arrivals;
 pub mod authors;
+pub mod branches;
 pub mod feed;
 pub mod model;
+pub mod navigation;
 pub mod probe;
 pub mod review;
 pub mod state;
@@ -23,6 +25,7 @@ pub use model::{
     CheckState, Divergence, Label, LoginKey, MergeStateStatus, MergeStatus, Mergeable, NodeId,
     PrNumber, PullRequest, PullState, Relation, RepoId, ReviewDecision, Side, User,
 };
+pub use navigation::{RepoScreen, Screen};
 pub use probe::{MergeProbeBudget, needs_merge_probe};
 pub use review::{DraftAnchor, drafts_are_stale};
 pub use state::{

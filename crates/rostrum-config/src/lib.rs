@@ -7,7 +7,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rostrum_core::{FeedFilter, LoginKey, RepoId, model::ParseRepoIdError};
+use rostrum_core::{
+    FeedFilter, LoginKey, RepoId,
+    branches::{TrunkChoice, TrunkName},
+    model::ParseRepoIdError,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -77,6 +81,16 @@ pub struct Config {
     /// Widen the author selection from "opened by" to "waiting on".
     #[serde(default)]
     pub include_involved: bool,
+    /// Trunk branches per repository, keyed by `owner/name`, in display
+    /// order: `"trunks": {"owner/name": ["main", "staging"]}`.
+    ///
+    /// No entry means "detect": whichever of `main`, `master`, `staging` and
+    /// `develop` exist. An empty array means the default branch alone. The
+    /// default branch is always a trunk whether listed or not — everything is
+    /// measured from it. Kept as plain strings so the file stays
+    /// hand-editable; [`Config::trunk_choice`] validates them on the way out.
+    #[serde(default)]
+    pub trunks: BTreeMap<String, Vec<String>>,
 }
 
 impl Default for Config {
@@ -97,6 +111,7 @@ impl Default for Config {
             hide_drafts: false,
             authors: BTreeSet::new(),
             include_involved: false,
+            trunks: BTreeMap::new(),
         }
     }
 }
@@ -305,6 +320,7 @@ impl Config {
         let before = self.repos.len();
         self.repos.retain(|existing| existing != &name);
         self.clones.remove(&name);
+        self.trunks.remove(&name);
         self.repos.len() != before
     }
 
@@ -320,6 +336,45 @@ impl Config {
         self.clones
             .get(&id.to_string())
             .map(|path| expand_tilde(path))
+    }
+
+    /// How a repository's trunks are chosen, with the configured names
+    /// validated.
+    ///
+    /// A hand-written name git would reject is dropped with a warning rather
+    /// than failing the whole entry: one typo should not throw away the
+    /// rest of the list.
+    pub fn trunk_choice(&self, id: &RepoId) -> (TrunkChoice, Vec<Warning>) {
+        let Some(raw) = self.trunks.get(&id.to_string()) else {
+            return (TrunkChoice::Detected, Vec::new());
+        };
+        let mut names = Vec::new();
+        let mut warnings = Vec::new();
+        for entry in raw {
+            match TrunkName::parse(entry) {
+                Ok(name) if names.contains(&name) => {}
+                Ok(name) => names.push(name),
+                Err(err) => {
+                    warnings.push(Warning(format!("skipping trunk `{entry}` of {id}: {err}")))
+                }
+            }
+        }
+        (TrunkChoice::Configured(names), warnings)
+    }
+
+    /// Record a repository's trunk choice. `Detected` removes the entry, so
+    /// the file goes back to saying nothing about the repository.
+    pub fn set_trunk_choice(&mut self, id: &RepoId, choice: &TrunkChoice) {
+        let key = id.to_string();
+        match choice {
+            TrunkChoice::Detected => {
+                self.trunks.remove(&key);
+            }
+            TrunkChoice::Configured(names) => {
+                self.trunks
+                    .insert(key, names.iter().map(ToString::to_string).collect());
+            }
+        }
     }
 
     pub fn refresh_interval(&self) -> std::time::Duration {
@@ -713,6 +768,106 @@ mod tests {
         );
         assert_eq!(config.try_add_repo("c/d"), Ok(RepoId::new("c", "d")));
         assert_eq!(config.repos, ["a/b", "c/d"]);
+    }
+
+    // --- trunks ---------------------------------------------------------------
+
+    fn trunk(raw: &str) -> TrunkName {
+        TrunkName::parse(raw).expect("valid trunk name")
+    }
+
+    #[test]
+    fn a_repository_without_an_entry_detects_its_trunks() {
+        let config: Config =
+            serde_json::from_str(r#"{ "repos": ["a/b"] }"#).expect("older config should parse");
+        let (choice, warnings) = config.trunk_choice(&RepoId::new("a", "b"));
+        assert_eq!(choice, TrunkChoice::Detected);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn hand_written_trunks_parse_in_order() {
+        let config: Config = serde_json::from_str(
+            r#"{ "trunks": { "a/b": ["main", " staging ", "refs/heads/develop"] } }"#,
+        )
+        .expect("config should parse");
+        let (choice, warnings) = config.trunk_choice(&RepoId::new("a", "b"));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            choice,
+            TrunkChoice::Configured(vec![trunk("main"), trunk("staging"), trunk("develop")])
+        );
+        assert_eq!(
+            config.trunk_choice(&RepoId::new("c", "d")).0,
+            TrunkChoice::Detected
+        );
+    }
+
+    /// A typo drops that one name, with a warning, and keeps the rest.
+    #[test]
+    fn an_invalid_trunk_is_skipped_with_a_warning() {
+        let config: Config =
+            serde_json::from_str(r#"{ "trunks": { "a/b": ["main", "bad name", "main", "qa"] } }"#)
+                .expect("config should parse");
+        let (choice, warnings) = config.trunk_choice(&RepoId::new("a", "b"));
+        assert_eq!(
+            choice,
+            TrunkChoice::Configured(vec![trunk("main"), trunk("qa")])
+        );
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].0.contains("bad name"), "{warnings:?}");
+    }
+
+    /// An empty array is "the default branch only" and must survive a save,
+    /// distinct from having no entry.
+    #[test]
+    fn trunk_choices_round_trip_including_the_empty_list() {
+        let temp = TempConfig::new("trunks");
+        let mut config = Config::default();
+        let ab = RepoId::new("a", "b");
+        let cd = RepoId::new("c", "d");
+        config.set_trunk_choice(
+            &ab,
+            &TrunkChoice::Configured(vec![trunk("staging"), trunk("main")]),
+        );
+        config.set_trunk_choice(&cd, &TrunkChoice::Configured(Vec::new()));
+
+        let loaded = temp.round_trip(&config);
+        assert_eq!(
+            loaded.trunk_choice(&ab).0,
+            TrunkChoice::Configured(vec![trunk("staging"), trunk("main")])
+        );
+        assert_eq!(
+            loaded.trunk_choice(&cd).0,
+            TrunkChoice::Configured(Vec::new())
+        );
+        assert_eq!(
+            loaded.trunk_choice(&RepoId::new("e", "f")).0,
+            TrunkChoice::Detected
+        );
+    }
+
+    #[test]
+    fn going_back_to_detection_removes_the_entry() {
+        let mut config = Config::default();
+        let id = RepoId::new("a", "b");
+        config.set_trunk_choice(&id, &TrunkChoice::Configured(vec![trunk("qa")]));
+        config.set_trunk_choice(&id, &TrunkChoice::Detected);
+        assert!(config.trunks.is_empty());
+        let text = serde_json::to_string(&config).expect("serialise");
+        assert!(text.contains(r#""trunks":{}"#), "{text}");
+    }
+
+    #[test]
+    fn removing_a_repository_drops_its_trunks() {
+        let mut config = Config {
+            repos: vec!["a/b".into()],
+            ..Default::default()
+        };
+        let id = RepoId::new("a", "b");
+        config.set_trunk_choice(&id, &TrunkChoice::Configured(vec![trunk("qa")]));
+        assert!(config.remove_repo(&id));
+        assert!(config.trunks.is_empty());
     }
 
     #[test]
