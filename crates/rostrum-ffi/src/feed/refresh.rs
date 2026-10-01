@@ -7,13 +7,16 @@
 //! is applied back through it as it lands, and a fetch that lands after a
 //! newer one for the same repository is dropped.
 
-use std::time::Duration;
+use std::{
+    collections::HashSet,
+    time::{Duration, Instant},
+};
 
 use futures::{StreamExt, stream};
 use rostrum_core::{
-    MergeProbeBudget, RepoId, apply_divergences, divergence_query, needs_merge_probe,
+    Issue, MergeProbeBudget, RepoId, Stack, apply_divergences, divergence_query, needs_merge_probe,
 };
-use rostrum_github::{GitHubClient, GitHubError};
+use rostrum_github::{GitHubClient, GitHubError, RepoStacks};
 use tokio::task::AbortHandle;
 
 use crate::{
@@ -21,7 +24,7 @@ use crate::{
     error::RostrumError,
     feed::{
         FeedSnapshot,
-        state::{Applied, Fetched},
+        state::{Applied, Cached, Fetched},
     },
 };
 
@@ -72,11 +75,77 @@ impl Drop for ProbeSlot {
     }
 }
 
+/// After GitHub says a repository has no stacked pull requests, it is not
+/// asked again for this long, as the desktop does.
+const STACKS_UNAVAILABLE_FOR: Duration = Duration::from_secs(60 * 60);
+
 /// What a refresh needs from the state to run outside it.
 pub(crate) struct Plan {
     client: GitHubClient,
     limit: u32,
+    issue_limit: u32,
+    /// Whether issues and stacks are fetched too. The background
+    /// notification check reads pull requests alone.
+    full: bool,
+    /// Repositories whose stacks GitHub recently said are not enabled.
+    skip_stacks: HashSet<RepoId>,
     fetches: Vec<(RepoId, u64)>,
+}
+
+/// One repository's whole refresh.
+pub(crate) struct RepoFetch {
+    pulls: Result<Fetched, GitHubError>,
+    /// `None` when not asked for.
+    issues: Option<Result<Vec<Issue>, GitHubError>>,
+    stacks: Option<Result<RepoStacks, GitHubError>>,
+}
+
+/// Fetch a repository's open issues.
+pub(crate) async fn fetch_issues(
+    client: &GitHubClient,
+    repo: &RepoId,
+    limit: u32,
+) -> Result<Vec<Issue>, GitHubError> {
+    let fetched = client.open_issues(repo, limit).await?;
+    Ok(fetched.issues)
+}
+
+/// Pull requests and issues together, then stacks when there is something
+/// to stack and GitHub has not lately said stacks are off.
+async fn fetch_all(client: &GitHubClient, repo: &RepoId, plan: &PlanLimits) -> RepoFetch {
+    if !plan.full {
+        return RepoFetch {
+            pulls: fetch_repo(client, repo, plan.limit).await,
+            issues: None,
+            stacks: None,
+        };
+    }
+    let (pulls, issues) = tokio::join!(
+        fetch_repo(client, repo, plan.limit),
+        fetch_issues(client, repo, plan.issue_limit)
+    );
+    let stackable = pulls.as_ref().is_ok_and(|fetched| !fetched.prs.is_empty());
+    let stacks = if stackable && !plan.skip_stacks.contains(repo) {
+        Some(client.stacks(repo).await)
+    } else if stackable {
+        None
+    } else {
+        // Nothing open to stack: whatever was known is moot.
+        Some(Ok(RepoStacks::Available(Vec::new())))
+    };
+    RepoFetch {
+        pulls,
+        issues: Some(issues),
+        stacks,
+    }
+}
+
+/// The parts of a [`Plan`] each fetch reads.
+struct PlanLimits {
+    limit: u32,
+    issue_limit: u32,
+    full: bool,
+    skip_stacks: HashSet<RepoId>,
 }
 
 /// Fetch one repository's open pull requests and, in a second request, how
@@ -128,11 +197,79 @@ impl CoreState {
             return Err(RostrumError::invalid(format!("{id} is not watched")));
         }
         self.publish();
+        let now = Instant::now();
+        self.stacks_unavailable
+            .retain(|_, since| now.duration_since(*since) < STACKS_UNAVAILABLE_FOR);
         Ok(Plan {
             client,
             limit: self.config.prs_per_repo.clamp(1, 100),
+            issue_limit: self.config.issues_per_repo.clamp(1, 100),
+            full: !matches!(scope, Scope::Background),
+            skip_stacks: self.stacks_unavailable.keys().cloned().collect(),
             fetches,
         })
+    }
+
+    /// Apply a whole repository refresh: pull requests first (which decide
+    /// whether this fetch is the newest), then issues and stacks, each cached.
+    pub(crate) fn apply_repo_fetch(&mut self, repo: &RepoId, seq: u64, fetch: RepoFetch) {
+        if self.apply_fetch(repo, seq, fetch.pulls) == Applied::Stale {
+            return;
+        }
+        if let Some(meta) = self
+            .feed
+            .repos
+            .iter()
+            .find(|state| &state.id == repo)
+            .and_then(|state| state.meta.clone())
+        {
+            self.writer.send(Write::RepoMeta {
+                repo: repo.clone(),
+                meta,
+            });
+        }
+        if let Some(issues) = fetch.issues {
+            match issues {
+                Ok(issues) => {
+                    self.feed.apply_issues(repo, Ok(issues.clone()));
+                    self.writer.send(Write::Issues {
+                        repo: repo.clone(),
+                        issues,
+                    });
+                }
+                Err(error) => {
+                    tracing::warn!(%repo, %error, "issue refresh failed");
+                    self.note_github_error(&error);
+                    self.feed.apply_issues(repo, Err(&error));
+                }
+            }
+        }
+        let stacks: Option<Vec<Stack>> = match fetch.stacks {
+            Some(Ok(RepoStacks::Available(stacks))) => {
+                self.stacks_unavailable.remove(repo);
+                Some(stacks)
+            }
+            Some(Ok(RepoStacks::Unavailable)) => {
+                tracing::debug!(%repo, "stacked pull requests are not enabled");
+                self.stacks_unavailable.insert(repo.clone(), Instant::now());
+                Some(Vec::new())
+            }
+            // A failed read keeps what was known: a stack does not stop being
+            // one because one poll could not ask.
+            Some(Err(error)) => {
+                tracing::debug!(%repo, %error, "stacks read failed; keeping the last answer");
+                None
+            }
+            None => None,
+        };
+        if let Some(stacks) = stacks
+            && self.feed.apply_stacks(repo, stacks.clone())
+        {
+            self.writer.send(Write::Stacks {
+                repo: repo.clone(),
+                stacks,
+            });
+        }
     }
 
     /// Apply one repository's fetch: the list, the viewer it reported, the
@@ -237,6 +374,32 @@ async fn probe(me: WeakActor, client: GitHubClient, repo: RepoId, limit: u32, de
 }
 
 impl RostrumCore {
+    /// Re-read one repository's open issues and apply them, after an issue
+    /// changed. Pull requests are left alone.
+    pub(crate) async fn refresh_issues(&self, repo: &RepoId) -> Result<(), RostrumError> {
+        let (client, limit) = self
+            .actor
+            .try_call(|state| Ok((state.github()?, state.config.issues_per_repo.clamp(1, 100))))
+            .await?;
+        let outcome = fetch_issues(&client, repo, limit).await;
+        let id = repo.clone();
+        self.actor
+            .call(move |state| {
+                match outcome {
+                    Ok(issues) => {
+                        state.feed.apply_issues(&id, Ok(issues.clone()));
+                        state.writer.send(Write::Issues { repo: id, issues });
+                    }
+                    Err(error) => {
+                        state.note_github_error(&error);
+                        state.feed.apply_issues(&id, Err(&error));
+                    }
+                }
+                state.publish();
+            })
+            .await
+    }
+
     /// Fill the feed from SQLite, once. No network.
     pub(crate) async fn ensure_hydrated(&self) -> Result<(), RostrumError> {
         let pending = self
@@ -248,11 +411,29 @@ impl RostrumCore {
         };
         let mut cached = Vec::new();
         for id in ids {
-            match self.db.load_pull_requests(&id).await {
-                Ok(prs) if !prs.is_empty() => cached.push((id, prs)),
-                Ok(_) => {}
-                Err(error) => tracing::warn!(repo = %id, %error, "could not read the cache"),
-            }
+            let loaded = Cached {
+                prs: self
+                    .db
+                    .load_pull_requests(&id)
+                    .await
+                    .unwrap_or_else(|error| {
+                        tracing::warn!(repo = %id, %error, "could not read cached pull requests");
+                        Vec::new()
+                    }),
+                issues: self.db.load_issues(&id).await.unwrap_or_else(|error| {
+                    tracing::warn!(repo = %id, %error, "could not read cached issues");
+                    Vec::new()
+                }),
+                stacks: self.db.load_stacks(&id).await.unwrap_or_else(|error| {
+                    tracing::warn!(repo = %id, %error, "could not read cached stacks");
+                    Vec::new()
+                }),
+                meta: self.db.load_repo_meta(&id).await.unwrap_or_else(|error| {
+                    tracing::warn!(repo = %id, %error, "could not read cached repository facts");
+                    None
+                }),
+            };
+            cached.push((id, loaded));
         }
         self.actor
             .call(move |state| {
@@ -280,16 +461,26 @@ impl RostrumCore {
         let Plan {
             client,
             limit,
+            issue_limit,
+            full,
+            skip_stacks,
             fetches,
         } = plan;
         let repos: Vec<RepoId> = fetches.iter().map(|(repo, _)| repo.clone()).collect();
+        let limits = std::sync::Arc::new(PlanLimits {
+            limit,
+            issue_limit,
+            full,
+            skip_stacks,
+        });
 
         let fetching = client.clone();
         let mut landing = stream::iter(fetches)
             .map(|(repo, seq)| {
                 let client = fetching.clone();
+                let limits = limits.clone();
                 async move {
-                    let outcome = fetch_repo(&client, &repo, limit).await;
+                    let outcome = fetch_all(&client, &repo, &limits).await;
                     (repo, seq, outcome)
                 }
             })
@@ -297,12 +488,12 @@ impl RostrumCore {
 
         let mut rejected = None;
         while let Some((repo, seq, outcome)) = landing.next().await {
-            if let Err(error @ GitHubError::Unauthorized) = &outcome {
+            if let Err(error @ GitHubError::Unauthorized) = &outcome.pulls {
                 rejected = Some(error.to_string());
             }
             self.actor
                 .call(move |state| {
-                    state.apply_fetch(&repo, seq, outcome);
+                    state.apply_repo_fetch(&repo, seq, outcome);
                     state.publish();
                 })
                 .await?;

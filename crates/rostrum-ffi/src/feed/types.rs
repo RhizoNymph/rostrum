@@ -3,7 +3,12 @@
 
 use std::time::SystemTime;
 
-use crate::types::{CheckState, Chip, ColorRole, LabelView, MergeStatus, ReviewDecision, UserRef};
+use crate::{
+    issues::IssueSummary,
+    sort::SortSettings,
+    stacks::PullItem,
+    types::{CheckState, Chip, ColorRole, LabelView, MergeStatus, ReviewDecision, UserRef},
+};
 
 /// One render of the feed. Every call that changes the feed returns a fresh
 /// one; so does every background update, through [`FeedObserver`].
@@ -12,14 +17,22 @@ pub struct FeedSnapshot {
     /// Increases with every change. When snapshots can arrive from more than
     /// one place, keep the one with the highest revision.
     pub revision: u64,
-    /// Watched repositories in settings order, minus any hidden by
-    /// `hide_empty_repos`.
+    /// Which list the feed shows. Persisted.
+    pub tab: FeedTab,
+    /// What each tab's badge says: items the filter lets through, collapsed
+    /// repositories included.
+    pub tab_counts: TabCounts,
+    /// Both sorts and every choice for each.
+    pub sort: SortSettings,
+    /// Watched repositories in the repository sort, minus any hidden by
+    /// `hide_empty_repos` (on the active tab).
     pub repos: Vec<RepoSection>,
     /// How many repositories `hide_empty_repos` removed, for "3 empty hidden".
     pub hidden_empty_repos: u32,
-    /// Open pull requests across every repository, before filtering.
+    /// Open items of the active tab across every repository, before filtering.
     pub total_open: u32,
-    /// Pull requests the filter lets through, collapsed repositories included.
+    /// Items of the active tab the filter lets through, collapsed
+    /// repositories included.
     pub visible_open: u32,
     /// The search box. Not persisted.
     pub query: String,
@@ -53,11 +66,13 @@ pub struct FeedPreferences {
 pub struct RepoSection {
     /// `owner/name`.
     pub repo: String,
-    /// The last fetch's state, for the header's spinner or error mark.
+    /// The active tab's last fetch (pull requests and issues load
+    /// separately), for the header's spinner or error mark.
     pub load: RepoLoad,
-    /// Open pull requests in this repository, before filtering.
+    /// Open items of the active tab in this repository, before filtering.
     pub open_count: u32,
-    /// Pull requests the filter lets through, whether or not collapsed.
+    /// Items of the active tab the filter lets through, whether or not
+    /// collapsed.
     pub visible_count: u32,
     pub collapsed: bool,
     /// What goes under the header.
@@ -90,11 +105,49 @@ pub enum RepoBody {
     Failed {
         reason: String,
     },
-    /// Loaded; no open pull requests, or none the filter lets through.
+    /// Loaded; no open items, or none the filter lets through.
     Empty,
+    /// The Pull requests tab: lone pull requests and stacks, in the item
+    /// sort, a stack sorting as one unit.
     Pulls {
-        pulls: Vec<PrSummary>,
+        items: Vec<PullItem>,
     },
+    /// The Issues tab, in the item sort.
+    Issues {
+        issues: Vec<IssueSummary>,
+    },
+}
+
+/// The feed's two lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FeedTab {
+    PullRequests,
+    Issues,
+}
+
+/// Each tab's badge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct TabCounts {
+    pub pull_requests: u32,
+    pub issues: u32,
+}
+
+impl From<rostrum_core::FeedTab> for FeedTab {
+    fn from(tab: rostrum_core::FeedTab) -> Self {
+        match tab {
+            rostrum_core::FeedTab::PullRequests => Self::PullRequests,
+            rostrum_core::FeedTab::Issues => Self::Issues,
+        }
+    }
+}
+
+impl From<FeedTab> for rostrum_core::FeedTab {
+    fn from(tab: FeedTab) -> Self {
+        match tab {
+            FeedTab::PullRequests => Self::PullRequests,
+            FeedTab::Issues => Self::Issues,
+        }
+    }
 }
 
 /// Everything a feed row shows for one pull request.
@@ -169,8 +222,8 @@ pub struct AuthorChip {
     /// Display casing, as GitHub returned it.
     pub login: String,
     pub avatar_url: Option<String>,
-    /// Open pull requests they authored across the feed.
-    pub open_prs: u32,
+    /// Open items of the active tab they authored across the feed.
+    pub open_items: u32,
     pub is_viewer: bool,
     pub selected: bool,
 }

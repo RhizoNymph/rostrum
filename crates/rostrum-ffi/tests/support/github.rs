@@ -22,6 +22,8 @@ pub struct Pr {
     pub review_requests: Vec<String>,
     /// `(ahead, behind)` from the compare query.
     pub divergence: (u32, u32),
+    /// The branch it targets; `topic-N` stacks it on #N.
+    pub base: String,
 }
 
 impl Pr {
@@ -35,6 +37,29 @@ impl Pr {
             merge_state: "CLEAN",
             review_requests: Vec::new(),
             divergence: (1, 0),
+            base: "main".into(),
+        }
+    }
+}
+
+/// One open issue as the fake serves it, in `octo/repo`.
+#[derive(Clone, Debug)]
+pub struct Iss {
+    pub number: u32,
+    pub author: String,
+    pub labels: Vec<String>,
+    pub assignees: Vec<String>,
+    pub comments: u32,
+}
+
+impl Iss {
+    pub fn new(number: u32, author: &str) -> Self {
+        Self {
+            number,
+            author: author.into(),
+            labels: Vec::new(),
+            assignees: Vec::new(),
+            comments: 0,
         }
     }
 }
@@ -50,6 +75,19 @@ pub struct World {
     pub reject_token: bool,
     /// Refuse merges with this reason (HTTP 405).
     pub refuse_merge: Option<String>,
+    /// `octo/repo`'s open issues; other repositories have none. Closing one
+    /// through the REST call drops it, reopening is a no-op.
+    pub issues: Vec<Iss>,
+    /// `octo/repo`'s Stacks API answer (the JSON array); `None` answers 404,
+    /// as for a repository without stacks.
+    pub stacks: Option<Value>,
+    /// The default branch, and the other branches that exist, for the
+    /// branch-tree query.
+    pub default_branch: Option<String>,
+    pub branches: Vec<String>,
+    pub stars: u32,
+    /// Who issues can be assigned to.
+    pub assignees: Vec<String>,
 }
 
 pub struct FakeGitHub {
@@ -127,7 +165,7 @@ impl FakeGitHub {
 }
 
 fn answer(world: &Mutex<World>, request: &Request) -> (u16, String) {
-    let world = world.lock().expect("world");
+    let mut world = world.lock().expect("world");
     if world.reject_token {
         return (401, json!({"message": "Bad credentials"}).to_string());
     }
@@ -135,7 +173,7 @@ fn answer(world: &Mutex<World>, request: &Request) -> (u16, String) {
         let body: Value = serde_json::from_str(&request.body).expect("graphql body");
         return (200, graphql(&world, &body).to_string());
     }
-    rest(&world, request)
+    rest(&mut world, request)
 }
 
 fn find<'a>(world: &'a World, variables: &Value) -> Option<&'a Vec<Pr>> {
@@ -155,6 +193,65 @@ fn graphql(world: &World, body: &Value) -> Value {
     let query = body["query"].as_str().unwrap_or_default();
     let variables = &body["variables"];
     let viewer = json!({"login": world.viewer, "avatarUrl": null});
+
+    if query.contains("issues(states: OPEN") {
+        if find(world, variables).is_none() {
+            return json!({
+                "data": {"repository": null},
+                "errors": [{"type": "NOT_FOUND", "message": "Could not resolve to a Repository", "path": ["repository"]}]
+            });
+        }
+        let nodes: Vec<Value> = if variables["name"] == "repo" {
+            world.issues.iter().map(issue_node).collect()
+        } else {
+            Vec::new()
+        };
+        return json!({
+            "data": {
+                "rateLimit": {"cost": 1, "remaining": 4999, "resetAt": "2030-01-01T00:00:00Z"},
+                "repository": {"issues": {"nodes": nodes}}
+            }
+        });
+    }
+    if query.contains("issue(number:") {
+        let number = variables["number"].as_u64().unwrap_or_default();
+        let found = world
+            .issues
+            .iter()
+            .find(|issue| u64::from(issue.number) == number);
+        let Some(issue) = found else {
+            return json!({"data": {"repository": {"issue": null}}});
+        };
+        return json!({"data": {"repository": {"issue": issue_detail_node(issue)}}});
+    }
+    if query.contains("defaultBranchRef") {
+        let mut repository = serde_json::Map::new();
+        repository.insert("url".into(), json!("https://github.com/octo/repo"));
+        repository.insert("stargazerCount".into(), json!(world.stars));
+        repository.insert(
+            "defaultBranchRef".into(),
+            world
+                .default_branch
+                .as_ref()
+                .map_or(Value::Null, |name| json!({"name": name})),
+        );
+        let mut index = 0;
+        while let Some(qualified) = variables[format!("r{index}")].as_str() {
+            let name = qualified.trim_start_matches("refs/heads/");
+            let exists = world.default_branch.as_deref() == Some(name)
+                || world.branches.iter().any(|branch| branch == name);
+            repository.insert(
+                format!("r{index}"),
+                if exists {
+                    json!({"name": name})
+                } else {
+                    Value::Null
+                },
+            );
+            index += 1;
+        }
+        return json!({"data": {"repository": repository}});
+    }
 
     if query.contains("pullRequests(states: OPEN") {
         let Some(prs) = find(world, variables) else {
@@ -218,7 +315,7 @@ fn pr_node(pr: &Pr) -> Value {
         "author": {"login": pr.author, "avatarUrl": null},
         "headRefName": format!("topic-{}", pr.number),
         "headRefOid": pr.head_sha,
-        "baseRefName": "main",
+        "baseRefName": pr.base,
         "additions": 2,
         "deletions": 1,
         "changedFiles": 1,
@@ -231,6 +328,43 @@ fn pr_node(pr: &Pr) -> Value {
         "comments": {"totalCount": 0},
         "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}]}
     })
+}
+
+fn issue_node(issue: &Iss) -> Value {
+    json!({
+        "id": format!("I_{}", issue.number),
+        "number": issue.number,
+        "title": format!("Issue {}", issue.number),
+        "url": format!("https://github.com/octo/repo/issues/{}", issue.number),
+        "state": "OPEN",
+        "stateReason": null,
+        "createdAt": format!("2026-01-01T00:00:{:02}Z", issue.number % 60),
+        "updatedAt": format!("2026-01-02T00:00:{:02}Z", issue.number % 60),
+        "author": {"login": issue.author, "avatarUrl": null},
+        "assignees": {"nodes": issue.assignees.iter().map(|login| json!({"login": login, "avatarUrl": null})).collect::<Vec<_>>()},
+        "labels": {"nodes": issue.labels.iter().map(|name| json!({"name": name, "color": "d73a4a"})).collect::<Vec<_>>()},
+        "comments": {"totalCount": issue.comments},
+        "milestone": {"title": "v1"}
+    })
+}
+
+/// [`issue_node`] with a body, one comment, and a closed (not planned) then
+/// reopened history with a cross-reference and an unassignment.
+fn issue_detail_node(issue: &Iss) -> Value {
+    let mut node = issue_node(issue);
+    let actor = json!({"login": "bob", "avatarUrl": null});
+    node["body"] = json!("It **breaks**.");
+    node["comments"] = json!({"totalCount": 1, "nodes": [
+        {"id": "IC_9", "body": "Same here", "createdAt": "2026-01-03T00:00:00Z", "author": {"login": "carol", "avatarUrl": null}}
+    ]});
+    node["timelineItems"] = json!({"nodes": [
+        {"__typename": "ClosedEvent", "createdAt": "2026-01-04T00:00:00Z", "actor": actor, "stateReason": "NOT_PLANNED"},
+        {"__typename": "ReopenedEvent", "createdAt": "2026-01-05T00:00:00Z", "actor": actor},
+        {"__typename": "UnassignedEvent", "createdAt": "2026-01-06T00:00:00Z", "actor": actor, "assignee": {"login": "dave"}},
+        {"__typename": "CrossReferencedEvent", "createdAt": "2026-01-07T00:00:00Z", "actor": actor,
+         "source": {"__typename": "PullRequest", "number": 1, "title": "Pull request 1", "repository": {"nameWithOwner": "octo/repo"}}}
+    ]});
+    node
 }
 
 fn conversation() -> Value {
@@ -258,8 +392,11 @@ fn conversation() -> Value {
     })
 }
 
-fn rest(world: &World, request: &Request) -> (u16, String) {
+fn rest(world: &mut World, request: &Request) -> (u16, String) {
     let path = request.path.split('?').next().unwrap_or_default();
+    if let Some(answer) = issue_rest(world, request.method.as_str(), path, &request.body) {
+        return answer;
+    }
     match (request.method.as_str(), path) {
         ("GET", "/repos/octo/repo/pulls/1/files") => {
             (200, serde_json::to_string(&super::files()).expect("files"))
@@ -282,5 +419,60 @@ fn rest(world: &World, request: &Request) -> (u16, String) {
             (200, "[]".into())
         }
         _ => (404, json!({"message": "Not Found"}).to_string()),
+    }
+}
+
+/// The Stacks API, assignees, and every issue REST call, for `octo/repo`.
+fn issue_rest(world: &mut World, method: &str, path: &str, body: &str) -> Option<(u16, String)> {
+    let ok = |value: Value| Some((200, value.to_string()));
+    match (method, path) {
+        ("GET", "/repos/octo/repo/stacks") => {
+            return match &world.stacks {
+                Some(stacks) => ok(stacks.clone()),
+                None => Some((404, json!({"message": "Not Found"}).to_string())),
+            };
+        }
+        ("GET", "/repos/octo/repo/assignees") => {
+            return ok(Value::Array(
+                world
+                    .assignees
+                    .iter()
+                    .map(|login| json!({"login": login, "avatar_url": null}))
+                    .collect(),
+            ));
+        }
+        ("POST", "/repos/octo/repo/issues") => {
+            return Some((
+                201,
+                json!({"number": 99, "html_url": "https://github.com/octo/repo/issues/99"})
+                    .to_string(),
+            ));
+        }
+        _ => {}
+    }
+    let rest = path.strip_prefix("/repos/octo/repo/issues/")?;
+    let (number, tail) = rest.split_once('/').unwrap_or((rest, ""));
+    let number: u32 = number.parse().ok()?;
+    // Pull request #1's comment and label routes stay with the caller.
+    let index = world
+        .issues
+        .iter()
+        .position(|issue| issue.number == number)?;
+    let body: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+    match (method, tail) {
+        ("POST", "comments") => {
+            world.issues[index].comments += 1;
+            ok(json!({"id": 1}))
+        }
+        ("PATCH", "") => {
+            if body["state"] == "closed" {
+                world.issues.remove(index);
+            }
+            ok(json!({}))
+        }
+        ("POST", "labels") => ok(json!([])),
+        ("DELETE", tail) if tail.starts_with("labels/") => ok(json!([])),
+        ("POST", "assignees") | ("DELETE", "assignees") => ok(json!({})),
+        _ => None,
     }
 }

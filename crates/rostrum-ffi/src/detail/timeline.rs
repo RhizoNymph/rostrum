@@ -92,7 +92,10 @@ fn entry(index: usize, item: &TimelineItem, repo: &RepoId) -> TimelineEntry {
 fn event(kind: &EventKind) -> TimelineEvent {
     match kind {
         EventKind::Merged => TimelineEvent::Merged,
-        EventKind::Closed | EventKind::ClosedAs(_) => TimelineEvent::Closed,
+        EventKind::Closed => TimelineEvent::Closed,
+        EventKind::ClosedAs(reason) => TimelineEvent::ClosedAs {
+            reason: (*reason).into(),
+        },
         EventKind::Reopened => TimelineEvent::Reopened,
         EventKind::ReadyForReview => TimelineEvent::ReadyForReview,
         EventKind::ConvertedToDraft => TimelineEvent::ConvertedToDraft,
@@ -114,13 +117,12 @@ fn event(kind: &EventKind) -> TimelineEvent {
             to: to.clone(),
         },
         EventKind::Other(kind) => TimelineEvent::Other { kind: kind.clone() },
-        // Issue-only events. The phone shows pull requests alone today, so
-        // these travel as `Other` with the event's GraphQL type name.
-        EventKind::Unassigned { .. } => TimelineEvent::Other {
-            kind: "UnassignedEvent".into(),
+        EventKind::Unassigned { assignee } => TimelineEvent::Unassigned {
+            assignee: assignee.clone(),
         },
-        EventKind::CrossReferenced { .. } => TimelineEvent::Other {
-            kind: "CrossReferencedEvent".into(),
+        EventKind::CrossReferenced { source, title } => TimelineEvent::CrossReferenced {
+            source: source.clone(),
+            title: title.clone(),
         },
     }
 }
@@ -178,7 +180,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::types::ColorRole;
+    use crate::{issues::IssueCloseReason, types::ColorRole};
 
     fn at(secs: i64) -> chrono::DateTime<chrono::Utc> {
         DateTime::from_timestamp(secs, 0).expect("time")
@@ -260,6 +262,35 @@ mod tests {
             }
         );
         assert_eq!(text, "renamed this from “a” to “b”");
+    }
+
+    #[test]
+    fn issue_events_travel_typed() {
+        assert_eq!(
+            event(&EventKind::ClosedAs(rostrum_core::CloseReason::NotPlanned)),
+            TimelineEvent::ClosedAs {
+                reason: IssueCloseReason::NotPlanned
+            }
+        );
+        assert_eq!(
+            event(&EventKind::Unassigned {
+                assignee: "bob".into()
+            }),
+            TimelineEvent::Unassigned {
+                assignee: "bob".into()
+            }
+        );
+        assert_eq!(
+            event(&EventKind::CrossReferenced {
+                source: "a/b#3".into(),
+                title: "Fix".into()
+            }),
+            TimelineEvent::CrossReferenced {
+                source: "a/b#3".into(),
+                title: "Fix".into()
+            }
+        );
+        assert_eq!(event(&EventKind::Closed), TimelineEvent::Closed);
     }
 
     #[test]

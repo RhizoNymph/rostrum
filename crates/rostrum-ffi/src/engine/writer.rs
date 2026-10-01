@@ -5,7 +5,9 @@
 //! the same repository can never land on disk newest-first. A write whose
 //! durability the caller must wait for (a draft) carries an acknowledgement.
 
-use rostrum_core::{Baseline, Conversation, PrNumber, PullRequest, RepoId};
+use rostrum_core::{
+    Baseline, Conversation, Issue, IssueDetail, PrNumber, PullRequest, RepoId, RepoMeta, Stack,
+};
 use rostrum_db::Db;
 use rostrum_github::{DraftComment, PullRequestFile};
 use tokio::sync::{mpsc, oneshot};
@@ -37,6 +39,22 @@ pub(crate) enum Write {
         drafts: Vec<DraftComment>,
     },
     Baseline(Baseline),
+    Issues {
+        repo: RepoId,
+        issues: Vec<Issue>,
+    },
+    IssueDetail {
+        repo: RepoId,
+        detail: Box<IssueDetail>,
+    },
+    Stacks {
+        repo: RepoId,
+        stacks: Vec<Stack>,
+    },
+    RepoMeta {
+        repo: RepoId,
+        meta: RepoMeta,
+    },
 }
 
 /// Resolves once the write it was issued for is on disk (or failed).
@@ -130,6 +148,10 @@ async fn perform(db: &Db, write: Write) -> Result<(), RostrumError> {
             }
         }
         Write::Baseline(baseline) => db.save_baseline(&baseline).await,
+        Write::Issues { repo, issues } => db.save_issues(&repo, &issues).await,
+        Write::IssueDetail { repo, detail } => db.save_issue_detail(&repo, &detail).await,
+        Write::Stacks { repo, stacks } => db.save_stacks(&repo, &stacks).await,
+        Write::RepoMeta { repo, meta } => db.save_repo_meta(&repo, &meta).await,
     }
     .map_err(RostrumError::from)
 }

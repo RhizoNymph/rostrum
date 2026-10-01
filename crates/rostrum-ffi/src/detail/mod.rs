@@ -11,7 +11,7 @@ use std::sync::Arc;
 use rostrum_core::{Conversation, User};
 
 pub(crate) use header::header;
-pub(crate) use timeline::thread_view;
+pub(crate) use timeline::{thread_view, timeline as render_timeline};
 pub use types::{
     BranchUpdateMethod, CheckRunView, DraftAction, MergeMethod, MergeVerdict, PullDetail,
     PullHeader, ReviewThreadView, ThreadCommentView, TimelineEntry, TimelineEvent, TimelineKind,

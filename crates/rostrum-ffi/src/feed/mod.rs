@@ -8,13 +8,13 @@ mod types;
 
 use std::sync::Arc;
 
-use rostrum_core::{FeedFilter, LoginKey, authors::visible, roster};
+use rostrum_core::{LoginKey, authors::visible, issue_roster, roster};
 
 pub(crate) use refresh::{ProbeSlot, Probes, Scope};
-pub(crate) use state::{FeedState, count};
+pub(crate) use state::{FeedState, count, load_of};
 pub use types::{
-    AuthorChip, AuthorRoster, BaseDivergence, FeedObserver, FeedPreferences, FeedSnapshot,
-    PrSummary, RepoBody, RepoLoad, RepoSection,
+    AuthorChip, AuthorRoster, BaseDivergence, FeedObserver, FeedPreferences, FeedSnapshot, FeedTab,
+    PrSummary, RepoBody, RepoLoad, RepoSection, TabCounts,
 };
 
 use crate::{
@@ -99,11 +99,12 @@ impl RostrumCore {
             .await
     }
 
-    /// Reset the query and every preference to their defaults.
+    /// Reset the query and every filter preference to their defaults. The
+    /// sort is not a filter and is kept, as on the desktop.
     pub async fn clear_filter(&self) -> Result<FeedSnapshot, RostrumError> {
         self.actor
             .try_call(|state| {
-                let filter = FeedFilter::default();
+                let filter = state.feed.filter.cleared();
                 state.edit_config(|config| config.absorb_filter(&filter))?;
                 state.feed.filter = filter;
                 Ok(state.publish())
@@ -124,13 +125,34 @@ impl RostrumCore {
             .await
     }
 
-    /// The people the author filter can be pointed at. `limit` caps the
-    /// unselected tail; `None` returns everyone.
+    /// Show the Pull requests or the Issues list. Persisted.
+    pub async fn set_feed_tab(&self, tab: FeedTab) -> Result<FeedSnapshot, RostrumError> {
+        self.actor
+            .try_call(move |state| {
+                let tab = rostrum_core::FeedTab::from(tab);
+                state.edit_config(|config| config.feed_tab = tab)?;
+                state.feed.tab = tab;
+                Ok(state.publish())
+            })
+            .await
+    }
+
+    /// The people the author filter can be pointed at, for the active tab:
+    /// pull request authors, or issue authors. `limit` caps the unselected
+    /// tail; `None` returns everyone.
     pub async fn author_roster(&self, limit: Option<u32>) -> Result<AuthorRoster, RostrumError> {
         self.actor
             .call(move |state| {
                 let selected = state.feed.filter.authors.clone();
-                let entries = roster(&state.feed.repos, state.session.viewer(), &selected);
+                let viewer = state.session.viewer();
+                let entries = match state.feed.tab {
+                    rostrum_core::FeedTab::PullRequests => {
+                        roster(&state.feed.repos, viewer, &selected)
+                    }
+                    rostrum_core::FeedTab::Issues => {
+                        issue_roster(&state.feed.repos, viewer, &selected)
+                    }
+                };
                 let cap = limit.map_or(usize::MAX, |limit| limit as usize);
                 let shown = visible(entries, &selected, cap);
                 AuthorRoster {
@@ -141,7 +163,7 @@ impl RostrumCore {
                             selected: selected.contains(&entry.key),
                             login: entry.user.login,
                             avatar_url: entry.user.avatar_url,
-                            open_prs: count(entry.open_prs),
+                            open_items: count(entry.open_prs),
                             is_viewer: entry.is_viewer,
                         })
                         .collect(),

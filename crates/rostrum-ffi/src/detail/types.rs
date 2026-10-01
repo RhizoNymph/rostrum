@@ -4,6 +4,7 @@ use std::time::SystemTime;
 
 use crate::{
     feed::BaseDivergence,
+    issues::IssueCloseReason,
     markdown::MdBlock,
     review::PendingReview,
     types::{
@@ -131,17 +132,45 @@ pub enum TimelineKind {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum TimelineEvent {
     Merged,
+    /// Closed with no recorded reason: a pull request, or an issue closed
+    /// before GitHub kept reasons.
     Closed,
+    /// An issue closed as completed, not planned, or a duplicate.
+    ClosedAs {
+        reason: IssueCloseReason,
+    },
     Reopened,
     ReadyForReview,
     ConvertedToDraft,
     ForcePushed,
-    ReviewRequested { reviewer: String },
-    Assigned { assignee: String },
-    Labeled { label: String },
-    Unlabeled { label: String },
-    Renamed { from: String, to: String },
-    Other { kind: String },
+    ReviewRequested {
+        reviewer: String,
+    },
+    Assigned {
+        assignee: String,
+    },
+    Unassigned {
+        assignee: String,
+    },
+    /// Another issue or pull request mentioned this one. `source` is
+    /// `owner/name#number`.
+    CrossReferenced {
+        source: String,
+        title: String,
+    },
+    Labeled {
+        label: String,
+    },
+    Unlabeled {
+        label: String,
+    },
+    Renamed {
+        from: String,
+        to: String,
+    },
+    Other {
+        kind: String,
+    },
 }
 
 /// An inline review thread.
