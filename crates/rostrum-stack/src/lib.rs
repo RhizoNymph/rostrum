@@ -24,8 +24,9 @@ mod run;
 pub use error::StackOpError;
 pub use gh::{GhCli, GhOutput, GhRunner, GhStackCommand, MergeMethod, StackView};
 pub use job::{
-    LocalNote, LocalTracking, Progress, StackJob, StackOutcome, StackProgress, StackReport,
+    ExtendJob, LocalNote, LocalTracking, Progress, StackJob, StackOutcome, StackProgress,
+    StackReport,
 };
 pub use local_file::{LocalBranch, LocalStack, LocalStacks, STACK_FILE};
 pub use remote::{merge_stack, unstack};
-pub use run::run_stack_job;
+pub use run::{run_extend_job, run_stack_job};

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use futures::channel::mpsc::UnboundedSender;
 use rostrum_config::ConflictHandler;
-use rostrum_core::{PrNumber, StackPlan};
+use rostrum_core::{ExtendPlan, PrNumber, StackNumber, StackPlan};
 use rostrum_git::{BranchName, PushRejection};
 
 /// Make the pull requests of `plan` into a stack, from the clone at `clone`.
@@ -23,6 +23,21 @@ pub struct StackJob {
     /// Absent ⇒ it is aborted and the worktree removed.
     pub handler: Option<ConflictHandler>,
     /// Where scratch worktrees are created. Created if missing.
+    pub scratch_dir: PathBuf,
+}
+
+/// Add the pull requests of `plan` to the top of an existing stack, from the
+/// clone at `clone`.
+///
+/// Plain data, like [`StackJob`], so any caller — the desktop, or `rostrumd`
+/// for a paired phone — can build one from a validated
+/// [`ExtendPlan`](rostrum_core::ExtendPlan) and run it with
+/// [`crate::run_extend_job`].
+#[derive(Clone, Debug)]
+pub struct ExtendJob {
+    pub clone: PathBuf,
+    pub plan: ExtendPlan,
+    pub handler: Option<ConflictHandler>,
     pub scratch_dir: PathBuf,
 }
 
@@ -86,6 +101,11 @@ impl Progress {
 pub enum StackOutcome {
     /// The stack exists on GitHub.
     Stacked(StackReport),
+    /// The pull requests were added to the top of stack `stack`.
+    Extended {
+        stack: StackNumber,
+        report: StackReport,
+    },
     /// A rebase stopped on a conflict and was aborted. Nothing was pushed and
     /// no branch moved.
     Conflicted { number: PrNumber, message: String },
@@ -128,6 +148,13 @@ impl StackOutcome {
                 };
                 format!("Stack created{rewritten}{local}")
             }
+            Self::Extended { stack, report } => {
+                let rewritten = match report.rewritten.len() {
+                    0 => String::new(),
+                    n => format!("; {n} branch(es) rebased and pushed"),
+                };
+                format!("Stack {stack} extended{rewritten}")
+            }
             Self::Conflicted { number, message } => {
                 format!(
                     "Rebasing {number} stopped on a conflict and was aborted; nothing was pushed. {message}"
@@ -155,7 +182,7 @@ impl StackOutcome {
     }
 
     pub fn is_success(&self) -> bool {
-        matches!(self, Self::Stacked(_))
+        matches!(self, Self::Stacked(_) | Self::Extended { .. })
     }
 }
 
@@ -250,6 +277,23 @@ mod tests {
                 notes: vec![],
             })
             .is_success()
+        );
+    }
+
+    #[test]
+    fn an_extension_is_a_success_that_names_its_stack() {
+        let outcome = StackOutcome::Extended {
+            stack: StackNumber::new(7).expect("non-zero"),
+            report: StackReport {
+                rewritten: vec![PrNumber(3)],
+                local: LocalTracking::Skipped("x".into()),
+                notes: vec![],
+            },
+        };
+        assert!(outcome.is_success());
+        assert_eq!(
+            outcome.summary(),
+            "Stack 7 extended; 1 branch(es) rebased and pushed"
         );
     }
 
