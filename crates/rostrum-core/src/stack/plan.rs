@@ -193,6 +193,7 @@ mod tests {
             load: LoadState::Idle,
             collapsed: false,
             stacks: Vec::new(),
+            meta: None,
         }
     }
 

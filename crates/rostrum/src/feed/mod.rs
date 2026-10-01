@@ -35,6 +35,7 @@ use crate::{
 mod stacks;
 
 use stacks::{STACK_INDENT, stack_glyph};
+mod sort_menu;
 
 actions!(
     feed,
@@ -87,11 +88,12 @@ pub enum FeedEvent {
 /// Corner radius of a repo container, in pixels.
 const ROW_RADIUS: f32 = 8.;
 
-/// Which header popover is open. At most one: opening either closes the other.
+/// Which header popover is open. At most one: opening any closes the others.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HeaderPopover {
     Authors,
     Repos,
+    Sort,
 }
 
 pub struct FeedView {
@@ -103,6 +105,7 @@ pub struct FeedView {
     popover: Option<HeaderPopover>,
     authors_anchor: PopoverAnchor,
     repos_anchor: PopoverAnchor,
+    sort_anchor: PopoverAnchor,
     /// Why the last add attempt failed, shown under the input.
     repo_error: Option<String>,
     focus_handle: FocusHandle,
@@ -141,6 +144,7 @@ impl FeedView {
             popover: None,
             authors_anchor: PopoverAnchor::default(),
             repos_anchor: PopoverAnchor::default(),
+            sort_anchor: PopoverAnchor::default(),
             repo_error: None,
             focus_handle: cx.focus_handle(),
             feed,
@@ -929,7 +933,8 @@ impl FeedView {
                             .on_click(cx.listener(|this, _, _window, cx| this.toggle_drafts(cx))),
                     )
                     .child(self.authors_button(author_count, cx))
-                    .child(self.repos_button(repo_count, cx)),
+                    .child(self.repos_button(repo_count, cx))
+                    .child(self.sort_button(cx)),
             )
             .child(
                 h_flex()
@@ -1214,6 +1219,7 @@ mod tests {
             checks: None,
             base_divergence: None,
             is_cross_repository: false,
+            pushed_at: None,
         }
     }
 
@@ -1224,6 +1230,7 @@ mod tests {
             load: rostrum_core::LoadState::Loaded { at: Utc::now() },
             collapsed,
             stacks: Vec::new(),
+            meta: None,
         }
     }
 

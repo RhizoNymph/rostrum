@@ -422,6 +422,15 @@ pub struct PullRequest {
     pub is_draft: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// When the head branch last received commits, as best GitHub's GraphQL
+    /// API can say: the later of the head commit's `committedDate` and the
+    /// newest force-push event. See `docs/features/feed_sort.md` for why
+    /// neither alone is enough and what the combination still misses.
+    ///
+    /// `None` when neither is known, and for pull requests cached before this
+    /// field existed — defaulted for the same reason as `merge_state`.
+    #[serde(default)]
+    pub pushed_at: Option<DateTime<Utc>>,
     pub author: Option<User>,
     pub head_ref: String,
     /// Commit the pull request currently points at. Draft review comments are
@@ -657,6 +666,7 @@ mod tests {
             checks: None,
             base_divergence: None,
             is_cross_repository: false,
+            pushed_at: None,
         }
     }
 

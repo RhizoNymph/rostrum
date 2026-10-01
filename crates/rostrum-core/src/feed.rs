@@ -11,7 +11,8 @@ use std::collections::BTreeSet;
 
 use crate::{
     model::{LoginKey, PullRequest},
-    stack::{FeedUnit, StackGroup, StackIx, default_order, stack_groups, units},
+    sort::{FeedOrder, FeedSort, compare_groups, order_items, order_repos},
+    stack::{FeedUnit, StackGroup, StackIx, stack_groups, units},
     state::{LoadState, RepoState},
 };
 
@@ -147,6 +148,13 @@ pub struct FeedFilter {
     /// `authors` is empty, which is what lets it be a plain checkbox rather
     /// than a third selection mode.
     pub include_involved: bool,
+    /// How repositories, and the items within each, are ordered.
+    ///
+    /// Not a filter — it never hides anything, and [`FeedFilter::is_active`]
+    /// ignores it — but it lives here because it is the same kind of
+    /// standing feed preference and persists through the same
+    /// `feed_filter`/`absorb_filter` pair. A "clear filter" must keep it.
+    pub sort: FeedSort,
 }
 
 impl Default for FeedFilter {
@@ -157,6 +165,7 @@ impl Default for FeedFilter {
             hide_empty_repos: true,
             authors: BTreeSet::new(),
             include_involved: false,
+            sort: FeedSort::default(),
         }
     }
 }
@@ -189,6 +198,15 @@ impl FeedFilter {
 
     pub fn is_active(&self) -> bool {
         !self.query.is_empty() || self.hide_drafts || !self.authors.is_empty()
+    }
+
+    /// Every filter reset to its default, keeping the sort: clearing what is
+    /// hidden says nothing about the order of what is shown.
+    pub fn cleared(&self) -> Self {
+        Self {
+            sort: self.sort,
+            ..Self::default()
+        }
     }
 
     /// Add or remove a login from the selection, reporting the state it landed
@@ -269,25 +287,47 @@ impl Feed {
     }
 }
 
-/// Build the feed's row stream.
+/// Build the feed's row stream, in the order `filter.sort` asks for.
 ///
 /// Pure: the only inputs are state and filter, which makes every invariant
 /// below directly testable without a window.
+///
+/// Repositories appear in `filter.sort.repos` order and items within each in
+/// `filter.sort.items` order. Indices stay positional — a `RepoIx` still
+/// indexes `repos` — so sorting changes which order rows come in, never what
+/// a row points at.
 pub fn flatten(repos: &[RepoState], filter: &FeedFilter) -> Feed {
+    flatten_in(repos, filter, FeedOrder::Sorted(filter.sort))
+}
+
+/// [`flatten`] in an explicit order.
+///
+/// [`FeedOrder::AsListed`] is for a client that orders the feed itself — the
+/// Android core keeps the user's own repository order and the fetched item
+/// order until it grows a sort control of its own.
+pub fn flatten_in(repos: &[RepoState], filter: &FeedFilter, order: FeedOrder) -> Feed {
     let mut rows = Vec::new();
     let mut hidden_repos = 0;
     let mut stacks = Vec::new();
 
-    for (ix, repo) in repos.iter().enumerate() {
-        let repo_ix = RepoIx(ix);
+    let repo_order = match order {
+        FeedOrder::AsListed => (0..repos.len()).map(RepoIx).collect(),
+        FeedOrder::Sorted(sort) => order_repos(repos, sort.repos),
+    };
 
-        let visible: Vec<PrIx> = repo
+    for repo_ix in repo_order {
+        let repo = &repos[repo_ix.0];
+
+        let mut visible: Vec<PrIx> = repo
             .prs
             .iter()
             .enumerate()
             .filter(|(_, pr)| filter.accepts(pr))
             .map(|(pr_ix, _)| PrIx(pr_ix))
             .collect();
+        if let FeedOrder::Sorted(sort) = order {
+            order_items(&repo.prs, &mut visible, sort.items);
+        }
 
         // A repository is only hidden once it has actually loaded. One that is
         // still loading or has failed must stay visible — otherwise a broken
@@ -314,7 +354,7 @@ pub fn flatten(repos: &[RepoState], filter: &FeedFilter) -> Feed {
                     _ => FeedRow::RepoEmpty { repo: repo_ix },
                 });
             } else {
-                push_units(&mut rows, &mut stacks, repo_ix, repo, &visible);
+                push_units(&mut rows, &mut stacks, repo_ix, repo, &visible, order);
             }
         }
 
@@ -330,16 +370,27 @@ pub fn flatten(repos: &[RepoState], filter: &FeedFilter) -> Feed {
 
 /// One repository's pull request rows: lone pull requests as they are, and
 /// each stack as a header followed by its visible members, bottom first.
+///
+/// A stack sorts as one unit, filed under [`compare_groups`]'s value for it:
+/// the bottom member's for text keys, the newest or oldest member's for time
+/// keys. `visible` arrives already in item order, and the sort is stable, so
+/// lone pull requests keep exactly the order [`order_items`] gave them.
 fn push_units(
     rows: &mut Vec<FeedRow>,
     stacks: &mut Vec<FeedStack>,
     repo_ix: RepoIx,
     repo: &RepoState,
     visible: &[PrIx],
+    order: FeedOrder,
 ) {
     let groups = stack_groups(repo);
     let mut ordered = units(visible, &groups);
-    default_order(&mut ordered);
+    if let FeedOrder::Sorted(sort) = order {
+        let members = |unit: &FeedUnit| -> Vec<&PullRequest> {
+            unit.members().iter().filter_map(|ix| repo.prs.get(ix.0)).collect()
+        };
+        ordered.sort_by(|a, b| compare_groups(&members(a), &members(b), sort.items));
+    }
 
     for unit in ordered {
         match unit {
@@ -385,6 +436,13 @@ mod tests {
     };
     use chrono::Utc;
 
+    /// One fixed instant for every fixture pull request: the feed sorts by
+    /// creation time, and `Utc::now()` per call would make the order of
+    /// otherwise-identical fixtures depend on the clock.
+    fn fixed_time() -> chrono::DateTime<Utc> {
+        chrono::DateTime::from_timestamp(1_700_000_000, 0).expect("valid timestamp")
+    }
+
     fn pr(number: u32, draft: bool) -> PullRequest {
         PullRequest {
             number: PrNumber(number),
@@ -392,8 +450,8 @@ mod tests {
             title: format!("PR {number}"),
             url: String::new(),
             is_draft: draft,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            created_at: fixed_time(),
+            updated_at: fixed_time(),
             author: None,
             head_ref: "feature".into(),
             head_sha: "abc123".into(),
@@ -411,6 +469,7 @@ mod tests {
             checks: None,
             base_divergence: None,
             is_cross_repository: false,
+            pushed_at: None,
         }
     }
 
@@ -421,6 +480,7 @@ mod tests {
             load,
             collapsed: false,
             stacks: Vec::new(),
+            meta: None,
         }
     }
 

@@ -6,6 +6,7 @@ use crate::{
     feed::FeedFilter,
     model::{Divergence, PrNumber, PullRequest, RepoId},
     stack::Stack,
+    repo_meta::RepoMeta,
 };
 
 /// Per-repository fetch status.
@@ -51,6 +52,10 @@ pub struct RepoState {
     /// the cache of it). Detected chains are not stored: they are derived
     /// from `prs` every time the feed is built.
     pub stacks: Vec<Stack>,
+    /// The repository's own facts — owner, push and creation times, stars —
+    /// for sorting repositories. `None` until the first refresh or cache
+    /// read supplies them; the sort places unknown values last.
+    pub meta: Option<RepoMeta>,
 }
 
 impl RepoState {
@@ -61,6 +66,7 @@ impl RepoState {
             load: LoadState::Idle,
             collapsed: false,
             stacks: Vec::new(),
+            meta: None,
         }
     }
 }
@@ -198,6 +204,7 @@ mod tests {
                 checks: None,
                 base_divergence: None,
                 is_cross_repository: false,
+                pushed_at: None,
             })
             .collect();
         state.load = LoadState::Loaded { at: Utc::now() };

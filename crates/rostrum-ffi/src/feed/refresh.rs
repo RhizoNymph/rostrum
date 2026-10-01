@@ -101,6 +101,7 @@ pub(crate) async fn fetch_repo(
     Ok(Fetched {
         prs: fetched.pull_requests,
         viewer: fetched.viewer,
+        meta: fetched.meta,
     })
 }
 

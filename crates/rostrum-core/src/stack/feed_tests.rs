@@ -1,16 +1,27 @@
 //! Stacks in the flattened feed: a header, then the members bottom first,
-//! contiguous inside their repository's run.
+//! contiguous inside their repository's run — and, under a sort, ordered as
+//! one unit.
+//!
+//! The structural tests lay the feed out as listed, so they say nothing about
+//! sorting; the sort tests at the bottom use real `FeedSort` keys.
 
 use chrono::Utc;
 
 use crate::{
-    feed::{Chrome, FeedFilter, FeedRow, PrIx, RepoIx, StackPlace, StackSlot, flatten},
+    feed::{Chrome, Feed, FeedFilter, FeedRow, PrIx, RepoIx, StackPlace, StackSlot, flatten_in},
     model::{PrNumber, PullRequest, RepoId},
+    sort::{FeedOrder, FeedSort, ItemSortKey, Sort, SortDirection},
     state::{LoadState, RepoState},
     test_support::pull,
 };
 
 use super::{RefName, Stack, StackIx, StackMembers, StackNumber};
+
+/// The feed in the order state lists it: repositories as given, items as
+/// fetched.
+fn listed(repos: &[RepoState], filter: &FeedFilter) -> Feed {
+    flatten_in(repos, filter, FeedOrder::AsListed)
+}
 
 fn link(number: u32, head: &str, base: &str) -> PullRequest {
     let mut pr = pull(number);
@@ -26,6 +37,7 @@ fn repo(name: &str, prs: Vec<PullRequest>, stacks: Vec<Stack>) -> RepoState {
         load: LoadState::Loaded { at: Utc::now() },
         collapsed: false,
         stacks,
+        meta: None,
     }
 }
 
@@ -68,7 +80,7 @@ fn a_detected_chain_renders_as_a_header_and_its_members_bottom_first() {
         ],
         vec![],
     );
-    let feed = flatten(&[state], &FeedFilter::default());
+    let feed = listed(&[state], &FeedFilter::default());
     assert_eq!(
         feed.rows(),
         &[
@@ -97,7 +109,7 @@ fn a_github_stack_uses_github_order_and_marks_the_middle() {
         ],
         vec![github("o/r", 3, &[6, 7, 5])],
     );
-    let feed = flatten(&[state], &FeedFilter::default());
+    let feed = listed(&[state], &FeedFilter::default());
     assert_eq!(
         &feed.rows()[1..5],
         &[
@@ -116,7 +128,7 @@ fn a_github_stack_uses_github_order_and_marks_the_middle() {
 #[test]
 fn stack_rows_stay_inside_the_repository_container() {
     let state = repo("o/r", vec![link(1, "a", "main"), link(2, "b", "a")], vec![]);
-    let feed = flatten(
+    let feed = listed(
         &[state, repo("p/q", vec![pull(4)], vec![])],
         &FeedFilter::default(),
     );
@@ -136,7 +148,7 @@ fn stack_rows_stay_inside_the_repository_container() {
 fn stack_indices_are_global_across_repositories() {
     let first = repo("o/r", vec![link(1, "a", "main"), link(2, "b", "a")], vec![]);
     let second = repo("p/q", vec![link(1, "a", "main"), link(2, "b", "a")], vec![]);
-    let feed = flatten(&[first, second], &FeedFilter::default());
+    let feed = listed(&[first, second], &FeedFilter::default());
     let headers: Vec<_> = feed
         .rows()
         .iter()
@@ -166,7 +178,7 @@ fn a_filtered_member_leaves_the_rest_of_its_stack_under_the_header() {
         hide_drafts: true,
         ..Default::default()
     };
-    let feed = flatten(&[state], &filter);
+    let feed = listed(&[state], &filter);
     assert_eq!(
         &feed.rows()[1..4],
         &[
@@ -187,7 +199,7 @@ fn one_visible_member_is_marked_only() {
         query: "PR 2".into(),
         ..Default::default()
     };
-    let feed = flatten(&[state], &filter);
+    let feed = listed(&[state], &filter);
     assert_eq!(
         &feed.rows()[1..3],
         &[header(0), row(1, Some((0, StackPlace::Only)))]
@@ -209,7 +221,7 @@ fn a_stack_filtered_out_entirely_has_no_header() {
         query: "PR 3".into(),
         ..Default::default()
     };
-    let feed = flatten(&[state], &filter);
+    let feed = listed(&[state], &filter);
     assert!(feed.stacks().is_empty());
     assert_eq!(feed.rows()[1], row(2, None));
 }
@@ -218,7 +230,7 @@ fn a_stack_filtered_out_entirely_has_no_header() {
 fn a_collapsed_repository_has_no_stack_rows() {
     let mut state = repo("o/r", vec![link(1, "a", "main"), link(2, "b", "a")], vec![]);
     state.collapsed = true;
-    let feed = flatten(&[state], &FeedFilter::default());
+    let feed = listed(&[state], &FeedFilter::default());
     assert_eq!(feed.len(), 2);
     assert!(feed.stacks().is_empty());
 }
@@ -226,7 +238,7 @@ fn a_collapsed_repository_has_no_stack_rows() {
 #[test]
 fn a_github_stack_with_only_merged_members_left_has_no_header() {
     let state = repo("o/r", vec![pull(9)], vec![github("o/r", 1, &[1, 2])]);
-    let feed = flatten(&[state], &FeedFilter::default());
+    let feed = listed(&[state], &FeedFilter::default());
     assert!(feed.stacks().is_empty());
 }
 
@@ -243,7 +255,7 @@ fn every_member_is_rendered_exactly_once() {
         ],
         vec![github("o/r", 2, &[3, 4])],
     );
-    let feed = flatten(&[state], &FeedFilter::default());
+    let feed = listed(&[state], &FeedFilter::default());
     let mut seen: Vec<usize> = feed
         .rows()
         .iter()
@@ -255,4 +267,111 @@ fn every_member_is_rendered_exactly_once() {
     seen.sort_unstable();
     assert_eq!(seen, vec![0, 1, 2, 3, 4]);
     assert_eq!(feed.stacks().len(), 2);
+}
+
+// --- sorting a stack as one unit ---------------------------------------------
+
+fn at(secs: i64) -> chrono::DateTime<Utc> {
+    chrono::DateTime::from_timestamp(secs, 0).expect("valid")
+}
+
+/// A chain whose bottom (#1, "zeta") is the oldest and whose top (#2,
+/// "alpha") is the newest, beside a lone #3 ("middle") created in between.
+fn sortable() -> RepoState {
+    let mut bottom = link(1, "a", "main");
+    bottom.title = "zeta".into();
+    bottom.created_at = at(100);
+    let mut top = link(2, "b", "a");
+    top.title = "alpha".into();
+    top.created_at = at(300);
+    let mut lone = link(3, "z", "main");
+    lone.title = "middle".into();
+    lone.created_at = at(200);
+    repo("o/r", vec![lone, top, bottom], vec![])
+}
+
+fn sorted(key: ItemSortKey, direction: SortDirection) -> Vec<FeedRow> {
+    let filter = FeedFilter {
+        sort: FeedSort {
+            items: Sort::with_direction(key, direction),
+            ..FeedSort::default()
+        },
+        ..FeedFilter::default()
+    };
+    let feed = flatten_in(&[sortable()], &filter, FeedOrder::Sorted(filter.sort));
+    feed.rows()[1..feed.len() - 1].to_vec()
+}
+
+/// Rows of `sortable()`: index 0 is the lone #3, 1 the top #2, 2 the bottom #1.
+fn stack_then_lone() -> Vec<FeedRow> {
+    vec![
+        header(0),
+        row(2, Some((0, StackPlace::Bottom))),
+        row(1, Some((0, StackPlace::Top))),
+        row(0, None),
+    ]
+}
+
+fn lone_then_stack() -> Vec<FeedRow> {
+    vec![
+        row(0, None),
+        header(0),
+        row(2, Some((0, StackPlace::Bottom))),
+        row(1, Some((0, StackPlace::Top))),
+    ]
+}
+
+#[test]
+fn newest_first_files_a_stack_under_its_newest_member() {
+    // The top (300) is newer than the lone pull request (200).
+    assert_eq!(
+        sorted(ItemSortKey::Created, SortDirection::Descending),
+        stack_then_lone()
+    );
+}
+
+#[test]
+fn oldest_first_files_a_stack_under_its_oldest_member() {
+    // The bottom (100) is older than the lone pull request (200).
+    assert_eq!(
+        sorted(ItemSortKey::Created, SortDirection::Ascending),
+        stack_then_lone()
+    );
+}
+
+#[test]
+fn alphabetical_files_a_stack_under_its_bottom_member() {
+    // "middle" < "zeta" (the bottom), even though the top's "alpha" would
+    // sort first on its own.
+    assert_eq!(
+        sorted(ItemSortKey::Title, SortDirection::Ascending),
+        lone_then_stack()
+    );
+    assert_eq!(
+        sorted(ItemSortKey::Title, SortDirection::Descending),
+        stack_then_lone()
+    );
+}
+
+#[test]
+fn members_stay_bottom_first_whatever_the_sort() {
+    for key in [
+        ItemSortKey::Created,
+        ItemSortKey::Title,
+        ItemSortKey::Updated,
+    ] {
+        for direction in [SortDirection::Ascending, SortDirection::Descending] {
+            let rows = sorted(key, direction);
+            let members: Vec<usize> = rows
+                .iter()
+                .filter_map(|row| match row {
+                    FeedRow::PrRow {
+                        pr, stack: Some(_), ..
+                    } => Some(pr.0),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(members, vec![2, 1], "{key:?} {direction:?}");
+        }
+    }
 }

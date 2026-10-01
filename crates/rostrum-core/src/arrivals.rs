@@ -191,6 +191,7 @@ mod tests {
             load: LoadState::Loaded { at: Utc::now() },
             collapsed: false,
             stacks: Vec::new(),
+            meta: None,
         }
     }
 
@@ -307,8 +308,16 @@ mod tests {
         assert!(baseline.is_empty());
 
         // The first *completed* load is still the baseline, not three arrivals.
-        assert!(baseline.observe(&[loaded("a/b", &[1, 2, 3])], None).is_empty());
-        assert!(baseline.observe(&[loaded("a/b", &[1, 2, 3])], None).is_empty());
+        assert!(
+            baseline
+                .observe(&[loaded("a/b", &[1, 2, 3])], None)
+                .is_empty()
+        );
+        assert!(
+            baseline
+                .observe(&[loaded("a/b", &[1, 2, 3])], None)
+                .is_empty()
+        );
 
         let arrivals = baseline.observe(&[loaded("a/b", &[1, 2, 3, 4])], None);
         assert_eq!(arrivals.len(), 1);
@@ -386,7 +395,11 @@ mod tests {
     fn someone_elses_review_request_is_not_mine() {
         let me = LoginKey::new("me");
         let mut baseline = Baseline::new();
-        assert!(baseline.observe(&[loaded("a/b", &[1])], Some(&me)).is_empty());
+        assert!(
+            baseline
+                .observe(&[loaded("a/b", &[1])], Some(&me))
+                .is_empty()
+        );
         let other = requesting(loaded("a/b", &[1]), "someone", &[1]);
         assert!(baseline.observe(&[other], Some(&me)).is_empty());
     }
@@ -405,7 +418,11 @@ mod tests {
         );
 
         let asked = requesting(loaded("a/b", &[1, 2]), "me", &[1, 2]);
-        assert!(baseline.observe(std::slice::from_ref(&asked), None).is_empty());
+        assert!(
+            baseline
+                .observe(std::slice::from_ref(&asked), None)
+                .is_empty()
+        );
 
         let arrivals = baseline.observe(&[asked], Some(&me));
         assert_eq!(kinds(&arrivals), vec![(2, ArrivalKind::ReviewRequested)]);
@@ -420,7 +437,11 @@ mod tests {
         assert!(baseline.observe(&[loaded("a/b", &[1])], None).is_empty());
 
         let asked = requesting(loaded("a/b", &[1]), "me", &[1]);
-        assert!(baseline.observe(std::slice::from_ref(&asked), Some(&me)).is_empty());
+        assert!(
+            baseline
+                .observe(std::slice::from_ref(&asked), Some(&me))
+                .is_empty()
+        );
         assert!(baseline.observe(&[asked], Some(&me)).is_empty());
     }
 
@@ -429,7 +450,10 @@ mod tests {
         let me = LoginKey::new("me");
         let mut baseline = Baseline::new();
         baseline.observe(
-            &[requesting(loaded("a/b", &[1, 2]), "me", &[2]), loaded("c/d", &[7])],
+            &[
+                requesting(loaded("a/b", &[1, 2]), "me", &[2]),
+                loaded("c/d", &[7]),
+            ],
             Some(&me),
         );
 
@@ -438,7 +462,10 @@ mod tests {
         assert_eq!(restored, baseline);
 
         let arrivals = restored.observe(
-            &[requesting(loaded("a/b", &[1, 2, 3]), "me", &[2]), loaded("c/d", &[7])],
+            &[
+                requesting(loaded("a/b", &[1, 2, 3]), "me", &[2]),
+                loaded("c/d", &[7]),
+            ],
             Some(&me),
         );
         assert_eq!(kinds(&arrivals), vec![(3, ArrivalKind::Opened)]);

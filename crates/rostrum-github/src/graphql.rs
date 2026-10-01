@@ -14,12 +14,21 @@ use serde::Deserialize;
 
 use crate::error::GraphQlError;
 
+pub mod sort_fields;
+
+use sort_fields::{ForcePushNode, RepoMetaNode, head_pushed_at};
+
 /// Open pull requests for one repository, most recently updated first.
 pub const OPEN_PULL_REQUESTS: &str = r#"
 query($owner: String!, $name: String!, $first: Int!) {
   rateLimit { cost remaining resetAt }
   viewer { login avatarUrl }
   repository(owner: $owner, name: $name) {
+    pushedAt
+    createdAt
+    updatedAt
+    stargazerCount
+    owner { __typename login }
     pullRequests(states: OPEN, first: $first, orderBy: {field: UPDATED_AT, direction: DESC}) {
       nodes {
         id
@@ -53,7 +62,10 @@ query($owner: String!, $name: String!, $first: Int!) {
         labels(first: 10) { nodes { name color } }
         comments { totalCount }
         commits(last: 1) {
-          nodes { commit { statusCheckRollup { state } } }
+          nodes { commit { committedDate statusCheckRollup { state } } }
+        }
+        timelineItems(last: 1, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
+          nodes { ... on HeadRefForcePushedEvent { createdAt } }
         }
       }
     }
@@ -500,6 +512,9 @@ pub struct RateLimit {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepositoryNode {
+    /// The repository's own facts, for sorting repositories.
+    #[serde(flatten)]
+    pub meta: RepoMetaNode,
     pub pull_requests: Connection<PrNode>,
 }
 
@@ -546,6 +561,10 @@ pub struct PrNode {
     pub labels: Option<Connection<LabelNode>>,
     pub comments: Option<TotalCount>,
     pub commits: Option<Connection<CommitEdge>>,
+    /// The newest force push of the head branch, if any; half of
+    /// [`head_pushed_at`].
+    #[serde(default)]
+    pub timeline_items: Option<Connection<ForcePushNode>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -600,6 +619,11 @@ pub struct CommitEdge {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitNode {
+    /// The head commit's committer date; the other half of
+    /// [`head_pushed_at`]. Optional so a response from before it was
+    /// requested still decodes.
+    #[serde(default)]
+    pub committed_date: Option<DateTime<Utc>>,
     /// `null` when no CI is configured for the head commit.
     pub status_check_rollup: Option<StatusCheckRollup>,
 }
@@ -611,13 +635,21 @@ pub struct StatusCheckRollup {
 
 impl PrNode {
     pub fn into_domain(self) -> PullRequest {
-        let checks = self
+        let head = self
             .commits
             .map(Connection::into_vec)
             .unwrap_or_default()
             .into_iter()
             .next()
-            .and_then(|edge| edge.commit.status_check_rollup)
+            .map(|edge| edge.commit);
+        let pushed_at = head_pushed_at(
+            head.as_ref().and_then(|commit| commit.committed_date),
+            self.timeline_items
+                .map(Connection::into_vec)
+                .unwrap_or_default(),
+        );
+        let checks = head
+            .and_then(|commit| commit.status_check_rollup)
             .and_then(|rollup| rollup.state);
 
         PullRequest {
@@ -628,6 +660,7 @@ impl PrNode {
             is_draft: self.is_draft,
             created_at: self.created_at,
             updated_at: self.updated_at,
+            pushed_at,
             author: self.author.and_then(AuthorNode::into_user),
             head_ref: self.head_ref_name,
             head_sha: self.head_ref_oid.unwrap_or_default(),

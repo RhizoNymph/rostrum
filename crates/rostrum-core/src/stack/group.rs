@@ -250,6 +250,7 @@ mod tests {
             load: LoadState::Idle,
             collapsed: false,
             stacks,
+            meta: None,
         }
     }
 

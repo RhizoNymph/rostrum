@@ -70,6 +70,12 @@ mod tests {
         RepoState, flatten,
     };
 
+    /// One fixed instant for every fixture: the feed sorts by creation time,
+    /// and `Utc::now()` per call would order identical fixtures by the clock.
+    fn fixed_time() -> chrono::DateTime<Utc> {
+        chrono::DateTime::from_timestamp(1_700_000_000, 0).expect("valid timestamp")
+    }
+
     fn pr(number: u32) -> PullRequest {
         PullRequest {
             number: PrNumber(number),
@@ -77,8 +83,8 @@ mod tests {
             title: format!("PR {number}"),
             url: String::new(),
             is_draft: false,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            created_at: fixed_time(),
+            updated_at: fixed_time(),
             author: None,
             head_ref: "feature".into(),
             head_sha: "deadbeef".into(),
@@ -96,6 +102,7 @@ mod tests {
             checks: None,
             base_divergence: None,
             is_cross_repository: false,
+            pushed_at: None,
         }
     }
 
@@ -106,6 +113,7 @@ mod tests {
             load: LoadState::Loaded { at: Utc::now() },
             collapsed: false,
             stacks: Vec::new(),
+            meta: None,
         }
     }
 

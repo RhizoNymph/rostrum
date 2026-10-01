@@ -34,6 +34,12 @@ Overview:
       rebase on it — one at a time from the detail pane, or across every open
       pull request from the feed. Drives the `git` command line; never writes
       to a remote.
+    feed_sort: >
+      Ordering the feed: repository containers by pushed, updated, created,
+      owner, name or stars, and the items in each by pushed, updated,
+      created, author or title, each either way. Pure comparisons in
+      rostrum-core (with a hook for groups that sort as one unit), applied by
+      `flatten`, persisted with the other feed preferences.
     author_filter: >
       Narrowing the feed to chosen people — authored, or optionally also
       assigned/review-requested — and the persistence of every feed setting
@@ -97,6 +103,10 @@ Overview:
     `AppState` holds the canonical `Vec<RepoState>`. Whenever it changes, the
     feed's flat `Vec<FeedRow>` is rebuilt and pushed into `ListState` via
     `splice`, which is what actually drives re-render of the scrolling feed.
+    `flatten` lays repositories and their items out in the order
+    `FeedFilter::sort` names; the feed query carries the repository facts
+    (push and creation times, stars, owner) those orders read, and they are
+    cached beside the pull requests so a sorted feed opens in order.
 
     Selecting a PR creates a `PrDetail` entity, which lazily fetches the
     conversation timeline and, on first visit to the Files tab, the changed-file
@@ -108,7 +118,8 @@ Overview:
     via `absorb_filter`, and writes the file. `feed_filter`/`absorb_filter` are
     inverses and the only reader/writer of those fields, so what is saved and
     what is restored cannot drift apart. The search query is the one filter
-    excluded, deliberately.
+    excluded, deliberately. The two feed sorts ride the same funnel, but are
+    not filters: they never count as an active filter and survive "clear".
 
     Mutations (comment, review, merge) go out over REST, are applied optimistically
     to local state where safe, and are reconciled by the next poll. Draft
@@ -119,7 +130,9 @@ Overview:
     On Android the same gpui-free crates run behind `rostrum-ffi`. A
     `ProfileRegistry` keeps one profile per paired desktop (or GitHub token),
     each its own data directory and its own `RostrumCore`; the feed shows the
-    active profile and the notification job walks them all. Compose calls
+    active profile and the notification job walks them all. The phone lays
+    its feed out with `FeedOrder::AsListed` — repositories in the user's own
+    settings order — until it grows a sort control. Compose calls
     suspend functions on the active profile's `RostrumCore`, whose state
     lives in an actor task; network I/O happens outside the actor and results
     are applied back through it, SQLite writes are queued in state order on a
@@ -172,7 +185,7 @@ Features Index:
     doc: docs/features/ui_foundation.md
   repo_feed:
     description: Flattened, virtualized multi-repo PR feed.
-    entry_points: [crates/rostrum/src/feed/mod.rs, crates/rostrum-core/src/feed.rs]
+    entry_points: [crates/rostrum/src/feed.rs, crates/rostrum-core/src/feed.rs]
     depends_on: [ui_foundation, github_sync]
     doc: docs/features/repo_feed.md
   pr_detail:
@@ -200,6 +213,11 @@ Features Index:
     entry_points: [crates/rostrum-git/src/lib.rs, crates/rostrum-local/src/lib.rs, crates/rostrum/src/sync.rs]
     depends_on: [pr_detail, repo_feed]
     doc: docs/features/local_git.md
+  feed_sort:
+    description: Repository and item sorts — keys, directions, group aggregation, the Sort popover, persistence.
+    entry_points: [crates/rostrum-core/src/sort/mod.rs, crates/rostrum-core/src/sort/compare.rs, crates/rostrum/src/feed/sort_menu.rs]
+    depends_on: [repo_feed, github_sync, author_filter]
+    doc: docs/features/feed_sort.md
   author_filter:
     description: Author/involvement filtering of the feed, and persisted feed settings.
     entry_points: [crates/rostrum-core/src/authors.rs, crates/rostrum-config/src/lib.rs]
@@ -255,7 +273,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 
 | Crate | gpui? | Responsibility |
 |---|---|---|
-| `rostrum-core` | no | Domain types, feed flattening, conversation model |
+| `rostrum-core` | no | Domain types, feed flattening and sorting, conversation model |
 | `rostrum-db` | no | SQLite cache and draft persistence |
 | `rostrum-github` | no | GraphQL reads, REST mutations, auth, rate limiting, errors |
 | `rostrum-diff` | no | Unified-diff parsing, `DiffRow` model, syntax highlighting |
@@ -389,7 +407,7 @@ Each phase leaves a usable application.
 
 ## Status
 
-All five phases are complete and verified against the live API. 902 tests pass
+All five phases are complete and verified against the live API. 1151 tests pass
 (154 of them in `rostrum-ffi`); clippy is clean across the workspace.
 
 The Android app's core, `rostrum-ffi`, exposes the same feed, detail, diff,

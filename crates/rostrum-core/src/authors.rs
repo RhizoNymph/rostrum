@@ -194,6 +194,7 @@ mod tests {
             checks: None,
             base_divergence: None,
             is_cross_repository: false,
+            pushed_at: None,
         }
     }
 

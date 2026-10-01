@@ -1,0 +1,241 @@
+{
+  "data": {
+    "rateLimit": {
+      "cost": 1,
+      "remaining": 4975,
+      "resetAt": "2026-10-01T17:22:01Z"
+    },
+    "viewer": {
+      "login": "RhizoNymph",
+      "avatarUrl": "https://avatars.githubusercontent.com/u/82485126?u=119e7e32d874b130afd1e85f19976ed44acadfe7&v=4"
+    },
+    "repository": {
+      "pushedAt": "2026-09-30T02:40:01Z",
+      "createdAt": "2019-10-03T15:24:53Z",
+      "updatedAt": "2026-10-01T15:16:28Z",
+      "stargazerCount": 46491,
+      "owner": {
+        "__typename": "Organization",
+        "login": "cli"
+      },
+      "pullRequests": {
+        "nodes": [
+          {
+            "id": "PR_kwDODKw3uc7ydmf8",
+            "number": 13894,
+            "title": "Support nested skill discovery without skills directories",
+            "url": "https://github.com/cli/cli/pull/13894",
+            "isDraft": true,
+            "createdAt": "2026-07-16T10:38:21Z",
+            "updatedAt": "2026-09-23T21:49:50Z",
+            "author": {
+              "login": "tommaso-moro",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/37270480?u=e3977755cafe4d9d73d5b79b21516a279899edbf&v=4"
+            },
+            "headRefName": "tommaso-moro-skill-install-nested-discovery",
+            "headRefOid": "8f44336ccb889465115aa85319c275c8dec1c3b7",
+            "baseRefName": "trunk",
+            "additions": 503,
+            "deletions": 105,
+            "changedFiles": 7,
+            "mergeable": "CONFLICTING",
+            "mergeStateStatus": "DIRTY",
+            "reviewDecision": "REVIEW_REQUIRED",
+            "assignees": {
+              "nodes": []
+            },
+            "reviewRequests": {
+              "nodes": [
+                {
+                  "requestedReviewer": null
+                },
+                {
+                  "requestedReviewer": null
+                },
+                {
+                  "requestedReviewer": {
+                    "login": "babakks",
+                    "avatarUrl": "https://avatars.githubusercontent.com/u/36728931?v=4"
+                  }
+                },
+                {
+                  "requestedReviewer": null
+                },
+                {
+                  "requestedReviewer": null
+                }
+              ]
+            },
+            "labels": {
+              "nodes": []
+            },
+            "comments": {
+              "totalCount": 3
+            },
+            "commits": {
+              "nodes": [
+                {
+                  "commit": {
+                    "committedDate": "2026-07-31T09:22:39Z",
+                    "statusCheckRollup": {
+                      "state": "SUCCESS"
+                    }
+                  }
+                }
+              ]
+            },
+            "timelineItems": {
+              "nodes": [
+                {
+                  "createdAt": "2026-07-31T09:22:59Z"
+                }
+              ]
+            }
+          },
+          {
+            "id": "PR_kwDODKw3uc75yy7C",
+            "number": 14044,
+            "title": "ci: add Linux binary release for loong64, ppc64le, and riscv64",
+            "url": "https://github.com/cli/cli/pull/14044",
+            "isDraft": true,
+            "createdAt": "2026-08-03T02:21:12Z",
+            "updatedAt": "2026-09-23T21:42:29Z",
+            "author": {
+              "login": "MingcongBai",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/5006263?u=33575cf0ef368fb050f6b31874eea277ff5dacbe&v=4"
+            },
+            "headRefName": "upstream/new-linux-bin-arch",
+            "headRefOid": "1432a0e3c280cf056ced6787886b70f618f5ef88",
+            "baseRefName": "trunk",
+            "additions": 1,
+            "deletions": 1,
+            "changedFiles": 1,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "BLOCKED",
+            "reviewDecision": "REVIEW_REQUIRED",
+            "assignees": {
+              "nodes": []
+            },
+            "reviewRequests": {
+              "nodes": [
+                {
+                  "requestedReviewer": null
+                },
+                {
+                  "requestedReviewer": {
+                    "login": "tidy-dev",
+                    "avatarUrl": "https://avatars.githubusercontent.com/u/75402236?u=947ea06f2740513d9aa999aa354db23fe5b08380&v=4"
+                  }
+                }
+              ]
+            },
+            "labels": {
+              "nodes": [
+                {
+                  "name": "needs-triage",
+                  "color": "D6393F"
+                },
+                {
+                  "name": "external",
+                  "color": "2700AF"
+                },
+                {
+                  "name": "ready-for-review",
+                  "color": "39d965"
+                }
+              ]
+            },
+            "comments": {
+              "totalCount": 5
+            },
+            "commits": {
+              "nodes": [
+                {
+                  "commit": {
+                    "committedDate": "2026-08-03T02:20:21Z",
+                    "statusCheckRollup": {
+                      "state": "SUCCESS"
+                    }
+                  }
+                }
+              ]
+            },
+            "timelineItems": {
+              "nodes": []
+            }
+          },
+          {
+            "id": "PR_kwDODKw3uc7X4ekl",
+            "number": 13340,
+            "title": "Paginate files and commits in `gh pr view --json`",
+            "url": "https://github.com/cli/cli/pull/13340",
+            "isDraft": false,
+            "createdAt": "2026-05-04T05:10:01Z",
+            "updatedAt": "2026-09-07T15:10:48Z",
+            "author": {
+              "login": "SebTardif",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/1413412?v=4"
+            },
+            "headRefName": "fix/pr-files-commits-pagination",
+            "headRefOid": "57c0c3d4b56970689ca401aecfe1a053ac705833",
+            "baseRefName": "trunk",
+            "additions": 331,
+            "deletions": 6,
+            "changedFiles": 5,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "BLOCKED",
+            "reviewDecision": "REVIEW_REQUIRED",
+            "assignees": {
+              "nodes": []
+            },
+            "reviewRequests": {
+              "nodes": [
+                {
+                  "requestedReviewer": null
+                },
+                {
+                  "requestedReviewer": {
+                    "login": "babakks",
+                    "avatarUrl": "https://avatars.githubusercontent.com/u/36728931?v=4"
+                  }
+                }
+              ]
+            },
+            "labels": {
+              "nodes": [
+                {
+                  "name": "external",
+                  "color": "2700AF"
+                },
+                {
+                  "name": "ready-for-review",
+                  "color": "39d965"
+                }
+              ]
+            },
+            "comments": {
+              "totalCount": 4
+            },
+            "commits": {
+              "nodes": [
+                {
+                  "commit": {
+                    "committedDate": "2026-09-07T14:53:46Z",
+                    "statusCheckRollup": null
+                  }
+                }
+              ]
+            },
+            "timelineItems": {
+              "nodes": [
+                {
+                  "createdAt": "2026-05-15T04:49:03Z"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

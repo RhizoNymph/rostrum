@@ -58,6 +58,7 @@ fn pr(number: u32) -> PullRequest {
         checks: Some(CheckState::Success),
         base_divergence: None,
         is_cross_repository: false,
+        pushed_at: None,
     }
 }
 

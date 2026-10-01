@@ -287,6 +287,7 @@ fn pull(number: u32, head: &str, base: &str) -> PullRequest {
         checks: None,
         base_divergence: None,
         is_cross_repository: false,
+        pushed_at: None,
     }
 }
 
@@ -297,6 +298,7 @@ fn plan(prs: Vec<PullRequest>, order: &[u32]) -> StackPlan {
         load: LoadState::Idle,
         collapsed: false,
         stacks: Vec::new(),
+        meta: None,
     };
     let order: Vec<PrNumber> = order.iter().copied().map(PrNumber).collect();
     plan_stack(&state, &order, RefName::new("main").expect("valid")).expect("valid plan")
