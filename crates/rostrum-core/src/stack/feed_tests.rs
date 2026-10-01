@@ -32,12 +32,10 @@ fn link(number: u32, head: &str, base: &str) -> PullRequest {
 
 fn repo(name: &str, prs: Vec<PullRequest>, stacks: Vec<Stack>) -> RepoState {
     RepoState {
-        id: name.parse::<RepoId>().expect("valid"),
         prs,
         load: LoadState::Loaded { at: Utc::now() },
-        collapsed: false,
         stacks,
-        meta: None,
+        ..RepoState::new(name.parse::<RepoId>().expect("valid"))
     }
 }
 
@@ -374,4 +372,55 @@ fn members_stay_bottom_first_whatever_the_sort() {
             assert_eq!(members, vec![2, 1], "{key:?} {direction:?}");
         }
     }
+}
+
+// --- tabs and single-repository views ----------------------------------------
+
+/// Stacks are pull requests only: the Issues tab of a repository with a
+/// stack has no stack header and lists its issues one row each.
+#[test]
+fn the_issues_tab_has_no_stack_rows() {
+    let mut state = sortable();
+    state.issues = vec![crate::test_support::issue(7), crate::test_support::issue(8)];
+    state.issues_load = LoadState::Loaded { at: Utc::now() };
+    let feed = crate::feed::flatten_tab(
+        &[state],
+        &FeedFilter::default(),
+        crate::tabs::FeedTab::Issues,
+    );
+    assert!(feed.stacks().is_empty());
+    assert!(
+        feed.rows()
+            .iter()
+            .all(|row| !matches!(row, FeedRow::StackHeader { .. } | FeedRow::PrRow { .. }))
+    );
+    assert_eq!(
+        feed.rows()
+            .iter()
+            .filter(|row| matches!(row, FeedRow::IssueRow { .. }))
+            .count(),
+        2
+    );
+}
+
+/// A single repository's rows match its run in the feed, sorted the same way,
+/// with stacks grouped — and are produced even when the repository is
+/// collapsed in the feed or the feed's filter would hide them.
+#[test]
+fn repo_pull_rows_lay_one_repository_out_like_the_feed() {
+    let mut state = sortable();
+    state.collapsed = true;
+    let sort = Sort::with_direction(ItemSortKey::Created, SortDirection::Descending);
+    let (rows, stacks) = crate::feed::repo_pull_rows(&state, sort);
+    assert_eq!(rows, stack_then_lone());
+    assert_eq!(stacks.len(), 1);
+    assert_eq!(stacks[0].group.open, vec![PrIx(2), PrIx(1)]);
+
+    // By title the stack files under its bottom member, "zeta", after the
+    // lone "middle".
+    let (rows, _) = crate::feed::repo_pull_rows(
+        &state,
+        Sort::with_direction(ItemSortKey::Title, SortDirection::Ascending),
+    );
+    assert_eq!(rows, lone_then_stack());
 }

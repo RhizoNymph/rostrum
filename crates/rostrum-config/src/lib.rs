@@ -8,7 +8,9 @@ use std::{
 };
 
 use rostrum_core::{
-    FeedFilter, FeedSort, ItemSortKey, LoginKey, RepoId, RepoSortKey, Sort, model::ParseRepoIdError,
+    FeedFilter, FeedSort, FeedTab, ItemSortKey, LoginKey, RepoId, RepoSortKey, Sort,
+    branches::{TrunkChoice, TrunkName},
+    model::ParseRepoIdError,
 };
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 
@@ -21,6 +23,14 @@ pub struct Config {
     pub refresh_secs: u64,
     /// Maximum open PRs fetched per repository.
     pub prs_per_repo: u32,
+    /// Maximum open issues fetched per repository.
+    pub issues_per_repo: u32,
+    /// Which list the feed shows: pull requests or issues. A standing
+    /// preference like the filter's toggles, so it is restored on launch.
+    /// Read leniently: a tab this build does not know falls back to pull
+    /// requests rather than discarding the whole file.
+    #[serde(deserialize_with = "lenient_tab")]
+    pub feed_tab: FeedTab,
     /// Post a desktop notification when a refresh turns up a pull request that
     /// was not there before. Off by default: the feed already shows arrivals,
     /// and interrupting the desktop should be a deliberate opt-in.
@@ -79,6 +89,16 @@ pub struct Config {
     /// Widen the author selection from "opened by" to "waiting on".
     #[serde(default)]
     pub include_involved: bool,
+    /// Trunk branches per repository, keyed by `owner/name`, in display
+    /// order: `"trunks": {"owner/name": ["main", "staging"]}`.
+    ///
+    /// No entry means "detect": whichever of `main`, `master`, `staging` and
+    /// `develop` exist. An empty array means the default branch alone. The
+    /// default branch is always a trunk whether listed or not — everything is
+    /// measured from it. Kept as plain strings so the file stays
+    /// hand-editable; [`Config::trunk_choice`] validates them on the way out.
+    #[serde(default)]
+    pub trunks: BTreeMap<String, Vec<String>>,
     /// How repository containers are ordered in the feed.
     ///
     /// Read leniently: a value this build cannot decode — a typo, a key from
@@ -140,6 +160,8 @@ impl Default for Config {
             ],
             refresh_secs: 60,
             prs_per_repo: 25,
+            issues_per_repo: 25,
+            feed_tab: FeedTab::PullRequests,
             notifications: false,
             notify_review_requests: false,
             hide_empty_repos: true,
@@ -149,6 +171,7 @@ impl Default for Config {
             hide_drafts: false,
             authors: BTreeSet::new(),
             include_involved: false,
+            trunks: BTreeMap::new(),
             repo_sort: default_repo_sort(),
             item_sort: default_item_sort(),
         }
@@ -365,6 +388,7 @@ impl Config {
         let before = self.repos.len();
         self.repos.retain(|existing| existing != &name);
         self.clones.remove(&name);
+        self.trunks.remove(&name);
         self.repos.len() != before
     }
 
@@ -382,10 +406,53 @@ impl Config {
             .map(|path| expand_tilde(path))
     }
 
+    /// How a repository's trunks are chosen, with the configured names
+    /// validated.
+    ///
+    /// A hand-written name git would reject is dropped with a warning rather
+    /// than failing the whole entry: one typo should not throw away the
+    /// rest of the list.
+    pub fn trunk_choice(&self, id: &RepoId) -> (TrunkChoice, Vec<Warning>) {
+        let Some(raw) = self.trunks.get(&id.to_string()) else {
+            return (TrunkChoice::Detected, Vec::new());
+        };
+        let mut names = Vec::new();
+        let mut warnings = Vec::new();
+        for entry in raw {
+            match TrunkName::parse(entry) {
+                Ok(name) if names.contains(&name) => {}
+                Ok(name) => names.push(name),
+                Err(err) => {
+                    warnings.push(Warning(format!("skipping trunk `{entry}` of {id}: {err}")))
+                }
+            }
+        }
+        (TrunkChoice::Configured(names), warnings)
+    }
+
+    /// Record a repository's trunk choice. `Detected` removes the entry, so
+    /// the file goes back to saying nothing about the repository.
+    pub fn set_trunk_choice(&mut self, id: &RepoId, choice: &TrunkChoice) {
+        let key = id.to_string();
+        match choice {
+            TrunkChoice::Detected => {
+                self.trunks.remove(&key);
+            }
+            TrunkChoice::Configured(names) => {
+                self.trunks
+                    .insert(key, names.iter().map(ToString::to_string).collect());
+            }
+        }
+    }
+
     pub fn refresh_interval(&self) -> std::time::Duration {
         // A pathological config should not turn into a request storm.
         std::time::Duration::from_secs(self.refresh_secs.clamp(10, 3600))
     }
+}
+
+fn lenient_tab<'de, D: Deserializer<'de>>(deserializer: D) -> Result<FeedTab, D::Error> {
+    lenient(deserializer, FeedTab::default)
 }
 
 /// Expand a leading `~` against the home directory.
@@ -461,11 +528,15 @@ mod tests {
             include_involved: true,
             authors: BTreeSet::from([LoginKey::new("alice"), LoginKey::new("bob")]),
             notifications: true,
+            feed_tab: FeedTab::Issues,
+            issues_per_repo: 40,
             ..Default::default()
         };
 
         let loaded = temp.round_trip(&saved);
 
+        assert_eq!(loaded.feed_tab, FeedTab::Issues);
+        assert_eq!(loaded.issues_per_repo, 40);
         assert!(!loaded.hide_empty_repos);
         assert!(loaded.autostash);
         assert!(loaded.hide_drafts);
@@ -777,6 +848,106 @@ mod tests {
         assert_eq!(config.repos, ["a/b", "c/d"]);
     }
 
+    // --- trunks ---------------------------------------------------------------
+
+    fn trunk(raw: &str) -> TrunkName {
+        TrunkName::parse(raw).expect("valid trunk name")
+    }
+
+    #[test]
+    fn a_repository_without_an_entry_detects_its_trunks() {
+        let config: Config =
+            serde_json::from_str(r#"{ "repos": ["a/b"] }"#).expect("older config should parse");
+        let (choice, warnings) = config.trunk_choice(&RepoId::new("a", "b"));
+        assert_eq!(choice, TrunkChoice::Detected);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn hand_written_trunks_parse_in_order() {
+        let config: Config = serde_json::from_str(
+            r#"{ "trunks": { "a/b": ["main", " staging ", "refs/heads/develop"] } }"#,
+        )
+        .expect("config should parse");
+        let (choice, warnings) = config.trunk_choice(&RepoId::new("a", "b"));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            choice,
+            TrunkChoice::Configured(vec![trunk("main"), trunk("staging"), trunk("develop")])
+        );
+        assert_eq!(
+            config.trunk_choice(&RepoId::new("c", "d")).0,
+            TrunkChoice::Detected
+        );
+    }
+
+    /// A typo drops that one name, with a warning, and keeps the rest.
+    #[test]
+    fn an_invalid_trunk_is_skipped_with_a_warning() {
+        let config: Config =
+            serde_json::from_str(r#"{ "trunks": { "a/b": ["main", "bad name", "main", "qa"] } }"#)
+                .expect("config should parse");
+        let (choice, warnings) = config.trunk_choice(&RepoId::new("a", "b"));
+        assert_eq!(
+            choice,
+            TrunkChoice::Configured(vec![trunk("main"), trunk("qa")])
+        );
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].0.contains("bad name"), "{warnings:?}");
+    }
+
+    /// An empty array is "the default branch only" and must survive a save,
+    /// distinct from having no entry.
+    #[test]
+    fn trunk_choices_round_trip_including_the_empty_list() {
+        let temp = TempConfig::new("trunks");
+        let mut config = Config::default();
+        let ab = RepoId::new("a", "b");
+        let cd = RepoId::new("c", "d");
+        config.set_trunk_choice(
+            &ab,
+            &TrunkChoice::Configured(vec![trunk("staging"), trunk("main")]),
+        );
+        config.set_trunk_choice(&cd, &TrunkChoice::Configured(Vec::new()));
+
+        let loaded = temp.round_trip(&config);
+        assert_eq!(
+            loaded.trunk_choice(&ab).0,
+            TrunkChoice::Configured(vec![trunk("staging"), trunk("main")])
+        );
+        assert_eq!(
+            loaded.trunk_choice(&cd).0,
+            TrunkChoice::Configured(Vec::new())
+        );
+        assert_eq!(
+            loaded.trunk_choice(&RepoId::new("e", "f")).0,
+            TrunkChoice::Detected
+        );
+    }
+
+    #[test]
+    fn going_back_to_detection_removes_the_entry() {
+        let mut config = Config::default();
+        let id = RepoId::new("a", "b");
+        config.set_trunk_choice(&id, &TrunkChoice::Configured(vec![trunk("qa")]));
+        config.set_trunk_choice(&id, &TrunkChoice::Detected);
+        assert!(config.trunks.is_empty());
+        let text = serde_json::to_string(&config).expect("serialise");
+        assert!(text.contains(r#""trunks":{}"#), "{text}");
+    }
+
+    #[test]
+    fn removing_a_repository_drops_its_trunks() {
+        let mut config = Config {
+            repos: vec!["a/b".into()],
+            ..Default::default()
+        };
+        let id = RepoId::new("a", "b");
+        config.set_trunk_choice(&id, &TrunkChoice::Configured(vec![trunk("qa")]));
+        assert!(config.remove_repo(&id));
+        assert!(config.trunks.is_empty());
+    }
+
     #[test]
     fn review_request_notifications_are_off_unless_opted_in_and_persist() {
         assert!(!Config::default().notify_review_requests);
@@ -790,6 +961,53 @@ mod tests {
             ..Default::default()
         });
         assert!(loaded.notify_review_requests);
+    }
+
+    // --- feed tab -----------------------------------------------------------
+
+    /// The selected tab is restored on launch, through the same file and the
+    /// same door startup uses.
+    #[test]
+    fn the_selected_tab_survives_a_round_trip() {
+        let temp = TempConfig::new("tab");
+        for tab in FeedTab::ALL {
+            let saved = Config {
+                feed_tab: tab,
+                ..Default::default()
+            };
+            assert_eq!(temp.round_trip(&saved).feed_tab, tab);
+        }
+    }
+
+    #[test]
+    fn the_tab_is_written_in_snake_case() {
+        let config = Config {
+            feed_tab: FeedTab::Issues,
+            ..Default::default()
+        };
+        let text = serde_json::to_string(&config).expect("serialises");
+        assert!(text.contains(r#""feed_tab":"issues""#), "{text}");
+    }
+
+    /// A config written before tabs existed opens on pull requests, which is
+    /// what the feed showed then.
+    #[test]
+    fn a_config_from_before_tabs_opens_on_pull_requests() {
+        let config: Config =
+            serde_json::from_str(r#"{ "repos": ["a/b"] }"#).expect("older config should parse");
+        assert_eq!(config.feed_tab, FeedTab::PullRequests);
+        assert_eq!(config.issues_per_repo, 25);
+    }
+
+    /// A tab name this build does not know must not cost the user their whole
+    /// config — only the tab, which falls back to the default.
+    #[test]
+    fn an_unknown_tab_falls_back_without_losing_the_rest() {
+        let config: Config =
+            serde_json::from_str(r#"{ "repos": ["x/y"], "feed_tab": "discussions" }"#)
+                .expect("config should still parse");
+        assert_eq!(config.feed_tab, FeedTab::PullRequests);
+        assert_eq!(config.repos, vec!["x/y".to_string()]);
     }
 
     // --- feed sort ----------------------------------------------------------
@@ -907,5 +1125,26 @@ mod tests {
                 .expect("config should still parse");
         assert_eq!(half.repo_sort, Sort::new(RepoSortKey::Pushed));
         assert_eq!(half.item_sort, Sort::new(ItemSortKey::Author));
+    }
+
+    /// The sort and the tab are separate settings in one file; saving one
+    /// must not reset the other.
+    #[test]
+    fn the_sort_and_the_tab_survive_a_restart_together() {
+        let temp = TempConfig::new("sort-and-tab");
+        let filter = sorted(
+            Sort::with_direction(RepoSortKey::Name, SortDirection::Descending),
+            Sort::new(ItemSortKey::Updated),
+        );
+
+        let mut config = Config {
+            feed_tab: FeedTab::Issues,
+            ..Default::default()
+        };
+        config.absorb_filter(&filter);
+        let restored = temp.round_trip(&config);
+
+        assert_eq!(restored.feed_tab, FeedTab::Issues);
+        assert_eq!(restored.feed_filter().sort, filter.sort);
     }
 }

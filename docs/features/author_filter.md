@@ -156,6 +156,15 @@ toggle and search box still apply on top. Because `flatten` already hides a
 repository whose visible list came out empty, filtering by author composes with
 `hide_empty_repos` for free.
 
+### Issues
+
+The same selection filters the Issues tab through
+`FeedFilter::accepts_issue`. For an issue "involved" means opened by or
+assigned to — issues have no review requests, and mentions are not available
+from the feed query without reading every comment. On the Issues tab the
+popover's roster comes from `issue_roster`, the issue authors with the same
+ordering rules.
+
 ### What "involved" means
 
 `include involved in` widens a selection from *opened by* to *opened by,
@@ -178,6 +187,7 @@ is unbounded and would cost a cap and a round trip per busy pull request.
 | `include_involved` | yes | Same. |
 | `autostash` | yes | A working habit, not a per-pull-request choice. |
 | `repo_sort`, `item_sort` | yes | How the feed is ordered; a preference, not a filter — it survives "clear". See `feed_sort.md`. |
+| `feed_tab` | yes | Which list the feed shows. It lives on `AppState.tab`, not `FeedFilter`, so `Store::set_tab` writes it rather than `absorb_filter` — into the same file; saving one never resets the other. See `issues.md`. |
 | `query` | **no** | A search is something you are part-way through, not a preference. Restoring one would open the app onto a narrowed feed for a reason the user no longer remembers. |
 
 `Config::feed_filter()` builds the startup filter and `Config::absorb_filter()`

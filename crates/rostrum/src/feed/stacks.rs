@@ -23,11 +23,11 @@ use crate::sync::{StackOpResult, Store};
 
 /// Extra left padding on a member row, so a stack reads as one block under its
 /// header.
-pub(super) const STACK_INDENT: f32 = 22.;
+pub(crate) const STACK_INDENT: f32 = 22.;
 
 /// The chain glyph for a member at `place`: a line joining the members, bottom
 /// first.
-pub(super) fn stack_glyph(place: StackPlace) -> &'static str {
+pub(crate) fn stack_glyph(place: StackPlace) -> &'static str {
     match place {
         StackPlace::Bottom => "┏",
         StackPlace::Middle => "┣",

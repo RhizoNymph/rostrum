@@ -2,7 +2,8 @@
 //!
 //! Two sections, one per sort: the keys valid for that sort as a radio-like
 //! row of buttons, and a button naming the current direction that reverses
-//! it. Every change goes through a `Store` setter, which re-flattens the feed
+//! it. The item sort is shared by both tabs, so its section is labelled for
+//! pull requests and issues alike. Every change goes through a `Store` setter, which re-flattens the feed
 //! through the ordinary store-changed path and writes the config — the same
 //! funnel every other feed preference uses.
 //!
@@ -20,10 +21,21 @@ use rostrum_ui::{
 use super::{FeedView, HeaderPopover};
 use crate::sync::Store;
 
-/// What a section does when a key is chosen or the direction reversed.
+/// What a section does when a key is chosen or the direction reversed, and
+/// what a key's button says when hovered.
 struct SectionActions<K> {
     choose: fn(&mut Store, K, &mut Context<Store>),
     reverse: fn(&mut Store, &mut Context<Store>),
+    hint: fn(K) -> Option<&'static str>,
+}
+
+/// Issues have no branch, so "pushed" orders them by their last update; the
+/// key's button says so rather than leaving the Issues tab to look unsorted.
+fn item_key_hint(key: ItemSortKey) -> Option<&'static str> {
+    match key {
+        ItemSortKey::Pushed => Some("Issues have no branch: they sort by updated"),
+        _ => None,
+    }
 }
 
 impl FeedView {
@@ -45,7 +57,7 @@ impl FeedView {
                 } else {
                     ButtonStyle::Subtle
                 })
-                .tooltip("Sort repositories and pull requests")
+                .tooltip("Sort repositories, pull requests and issues")
                 .on_click(
                     cx.listener(|this, _, _window, cx| {
                         this.toggle_popover(HeaderPopover::Sort, cx)
@@ -68,17 +80,19 @@ impl FeedView {
                 SectionActions::<RepoSortKey> {
                     choose: Store::choose_repo_sort,
                     reverse: Store::reverse_repo_sort,
+                    hint: |_| None,
                 },
                 cx,
             ))
             .child(divider)
             .child(self.render_sort_section(
-                "Pull requests",
+                "Pull requests & issues",
                 "sort-items",
                 sort.items,
                 SectionActions::<ItemSortKey> {
                     choose: Store::choose_item_sort,
                     reverse: Store::reverse_item_sort,
+                    hint: item_key_hint,
                 },
                 cx,
             ))
@@ -96,7 +110,11 @@ impl FeedView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let SectionActions { choose, reverse } = actions;
+        let SectionActions {
+            choose,
+            reverse,
+            hint,
+        } = actions;
 
         let keys = K::ALL.iter().enumerate().map(|(ix, &key)| {
             let selected = key == current.key();
@@ -106,6 +124,7 @@ impl FeedView {
                 } else {
                     ButtonStyle::Subtle
                 })
+                .when_some(hint(key), |button, hint| button.tooltip(hint))
                 .on_click(cx.listener(move |this, _, _window, cx| {
                     this.store.update(cx, |store, cx| choose(store, key, cx));
                 }))

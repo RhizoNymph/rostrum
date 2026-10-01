@@ -4,10 +4,12 @@
 Overview:
   description: >
     A native Rust desktop application built on GPUI that aggregates open pull
-    requests across a user-configured set of GitHub repositories into a single
-    vertically scrolling feed, and provides full in-app review: reading the PR
-    body and comment chain, viewing the diff with syntax highlighting, leaving
-    inline line comments, submitting reviews, and merging.
+    requests — and, on a second tab, open issues — across a user-configured
+    set of GitHub repositories into a single vertically scrolling feed, and
+    provides full in-app review: reading the PR body and comment chain, viewing
+    the diff with syntax highlighting, leaving inline line comments, submitting
+    reviews, and merging; and for issues, reading, commenting, closing,
+    reopening, labelling, assigning and creating them.
 
   subsystems:
     ui_foundation: >
@@ -15,9 +17,21 @@ Overview:
       Owns text rendering, the hand-rolled selection/copy primitive, and the
       markdown renderer. No dependency on Zed's `ui`/`theme` crates (GPL).
     repo_feed: >
-      The primary screen. Flattens all repos and their PRs into a single row
-      stream rendered by one virtualized `list`, styled to look like discrete
-      per-repo containers.
+      The primary screen. Flattens all repos and their PRs — or, on the Issues
+      tab, their issues — into a single row stream rendered by one virtualized
+      `list`, styled to look like discrete per-repo containers.
+    repo_view: >
+      One repository on its own screen (desktop). The left pane becomes that
+      repository's pull requests and issues, split top and bottom, both in the
+      feed's item sort; with nothing selected the right pane shows the branch
+      tree — trunks against the default branch, pull requests against their
+      base, stacks nested.
+    issues: >
+      The Issues tab and everything behind it: fetching and caching each
+      repository's open issues in the poll cycle, the issue pane (header with
+      editable labels and assignees, timeline, composer, close/reopen), and the
+      new-issue form. Model, decoding, requests, cache and form rules are
+      gpui-free.
     pr_detail: >
       Master/detail right pane. Tabbed Conversation / Files / Checks view for a
       selected PR, including the comment composer and the PR-level actions:
@@ -115,10 +129,30 @@ Overview:
     (push and creation times, stars, owner) those orders read, and they are
     cached beside the pull requests so a sorted feed opens in order.
 
+    Each refresh also fetches the repository's open issues — a second GraphQL
+    document with its own overlap guard and its own `LoadState` on
+    `RepoState` — and caches them, so a cold start paints both tabs.
+    `AppState.tab` (persisted as `feed_tab`) picks which list `flatten_tab`
+    builds; `Selection` is an enum over a pull request and an issue, by
+    `(RepoId, number)`, and the workspace's `DetailPane` follows it: a
+    `PrDetail`, an `IssuePane`, or — not a selection — the new-issue form.
+    Issue mutations go out over REST as `IssueMutation`s and reload the pane
+    and the repository's issues authoritatively.
+
     Selecting a PR creates a `PrDetail` entity, which lazily fetches the
     conversation timeline and, on first visit to the Files tab, the changed-file
     patches. Patches are parsed into `DiffRow`s carrying old/new line numbers;
     those line numbers are what inline comments are anchored to when submitted.
+
+    Opening a repository's view (`o`, or its header's name) switches the
+    workspace's `Screen` to that repository without touching the feed entity,
+    so the feed's scroll survives the round trip. A `RepoBranches` entity
+    fetches the repository's default branch, stars and trunk refs, resolves
+    the trunks from `config.json`, then sends every trunk-vs-default and
+    pull-request-vs-base comparison as one aliased `Ref.compare` batch; it
+    fetches again whenever the feed's poll lands a refresh for the
+    repository. `build_tree` (pure, in `rostrum-core`) turns the trunks, the
+    current pull requests and the counts into the branch tree on every paint.
 
     Filter changes run the other way: every persisted toggle goes through
     `Store::edit_filter`, which applies the edit, folds it back into `Config`
@@ -133,7 +167,10 @@ Overview:
     (and `cache_stack`), and `flatten` groups each repository's visible pull
     requests into units — GitHub's stacks, then chains detected from base and
     head branches — sorting a stack as one unit through the sort's group
-    hook and emitting a `StackHeader` row before its members. Stack actions
+    hook and emitting a `StackHeader` row before its members. Only the Pull
+    requests tab groups; issues are never in a stack. A repository's own view
+    lays its pull requests out the same way (`repo_pull_rows`), and its branch
+    tree marks stack members. Stack actions
     flow out through `rostrum-stack`: one operation at a time, run on Tokio,
     driving `git` in the clone (scratch worktrees, the leased push) and `gh
     stack` through its one runner, with progress returned over a channel and
@@ -203,9 +240,19 @@ Features Index:
     doc: docs/features/ui_foundation.md
   repo_feed:
     description: Flattened, virtualized multi-repo PR feed.
-    entry_points: [crates/rostrum/src/feed.rs, crates/rostrum-core/src/feed.rs]
+    entry_points: [crates/rostrum/src/feed/mod.rs, crates/rostrum-core/src/feed.rs, crates/rostrum-core/src/tabs.rs]
     depends_on: [ui_foundation, github_sync]
     doc: docs/features/repo_feed.md
+  repo_view:
+    description: Per-repository view — pull requests and issues split in the sidebar (sorted, real issue rows and pane), the branch divergence tree, configurable trunks.
+    entry_points: [crates/rostrum/src/repo_view/mod.rs, crates/rostrum-core/src/branches/mod.rs, crates/rostrum-core/src/navigation.rs]
+    depends_on: [repo_feed, issues, feed_sort, pr_detail, github_sync, ui_foundation]
+    doc: docs/features/repo_view.md
+  issues:
+    description: Issues tab, issue fetch and cache, issue pane with labels/assignees/close/reopen, and issue creation.
+    entry_points: [crates/rostrum/src/issue/mod.rs, crates/rostrum/src/sync/issues.rs, crates/rostrum-core/src/issue.rs, crates/rostrum-core/src/tabs.rs, crates/rostrum-github/src/issues/mod.rs]
+    depends_on: [repo_feed, pr_detail, github_sync, author_filter, ui_foundation]
+    doc: docs/features/issues.md
   pr_detail:
     description: Conversation timeline, composer, and PR-level actions.
     entry_points: [crates/rostrum/src/detail/mod.rs]
@@ -223,12 +270,12 @@ Features Index:
     doc: docs/features/diff_overview.md
   github_sync:
     description: Auth, GraphQL/REST client, polling, cache, rate limits.
-    entry_points: [crates/rostrum-github/src/lib.rs, crates/rostrum/src/sync.rs]
+    entry_points: [crates/rostrum-github/src/lib.rs, crates/rostrum/src/sync/mod.rs]
     depends_on: []
     doc: docs/features/github_sync.md
   local_git:
     description: Worktree-aware clone status, divergence, pull/merge/rebase, sync-all.
-    entry_points: [crates/rostrum-git/src/lib.rs, crates/rostrum-local/src/lib.rs, crates/rostrum/src/sync.rs]
+    entry_points: [crates/rostrum-git/src/lib.rs, crates/rostrum-local/src/lib.rs, crates/rostrum/src/sync/mod.rs]
     depends_on: [pr_detail, repo_feed]
     doc: docs/features/local_git.md
   feed_sort:
@@ -300,8 +347,8 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 
 | Crate | gpui? | Responsibility |
 |---|---|---|
-| `rostrum-core` | no | Domain types, feed flattening and sorting, conversation model |
-| `rostrum-db` | no | SQLite cache and draft persistence |
+| `rostrum-core` | no | Domain types (pull requests and issues), feed flattening per tab and sorting, conversation model, branch tree, screen navigation |
+| `rostrum-db` | no | SQLite cache (pull requests, issues, repository metadata, conversations) and draft persistence |
 | `rostrum-github` | no | GraphQL reads, REST mutations, auth, rate limiting, errors |
 | `rostrum-diff` | no | Unified-diff parsing, `DiffRow` model, syntax highlighting |
 | `rostrum-git` | no | Worktrees, clone status, divergence, pull/merge/rebase, conflict context via the `git` CLI |
@@ -322,6 +369,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 |---|---|---|
 | Auth | `gh auth token`, `$GITHUB_TOKEN` fallback | No secret storage of our own; `gh` handles SSO and refresh |
 | Reads | GraphQL v4 | One round-trip per repo instead of dozens; cost-based rate limit |
+| Issues | A second GraphQL document per repository, not a selection on the pull request query | Separate load states per list, no coupling to the merge-probe timer; one extra point-1 request per repository per poll |
 | Mutations | REST v3, except draft conversion and branch updates | Simpler, better-documented endpoints for merge/review/comment. REST accepts `draft` only at creation, and its `update-branch` endpoint can only merge, so those two go through GraphQL |
 | Node ids | Fetched with the feed query | GraphQL mutations address a pull request by node id only. Carrying it on `PullRequest` makes a conversion one round trip, and is what the other GraphQL-only operations will need |
 | UI deps | `gpui` + `gpui_platform` only | Zed's `ui`/`theme`/`syntax_theme` are GPL-3.0-or-later |
@@ -337,6 +385,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 | Handoff environment | tmux inherits rostrum's full env; `rostrum-git` uses an allowlist | The two spawn different things for different reasons: git's output is parsed and must be deterministic; the harness is the user's own tool and needs their `PATH`, `DISPLAY`, and keys |
 | Cache | SQLite via `sqlx` | Instant cold start, offline reads, ETag storage |
 | Async | Tokio bridged into GPUI's executor | GPUI's executor is not Tokio; `reqwest` requires a Tokio reactor |
+| Branch tree | Trunks configured per repository (default: whichever of `main`/`master`/`staging`/`develop` exist), counts from one aliased `Ref.compare` batch, tree built in `rostrum-core` | A commit graph would need the history GitHub's API pages through slowly; counts answer "how far apart" in one request, and a pure builder makes nesting, loops and unknown bases testable |
 | Mergeability | `mergeable` **and** `mergeStateStatus`, collapsed into one `MergeStatus` in `rostrum-core` | `mergeable` cannot distinguish "blocked by a required review" from "behind its base"; deriving the verdict once keeps the chip, the button, and its tooltip from disagreeing |
 
 ## Hard constraints
@@ -437,8 +486,12 @@ Each phase leaves a usable application.
 
 ## Status
 
-All five phases are complete and verified against the live API. 1151 tests pass
+All five phases are complete and verified against the live API. 1463 tests pass
 (154 of them in `rostrum-ffi`); clippy is clean across the workspace.
+
+Issues are on the desktop: a tab beside pull requests, an issue pane, and
+issue creation; see `docs/features/issues.md`. The phone does not show them
+yet.
 
 The Android app's core, `rostrum-ffi`, exposes the same feed, detail, diff,
 review, desktop and notification behaviour to Kotlin through UniFFI, one

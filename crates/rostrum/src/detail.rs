@@ -5,7 +5,7 @@
 //! earlier pull request can never land in the current one.
 
 mod checks;
-mod conversation;
+pub(crate) mod conversation;
 mod files;
 mod overview;
 
@@ -31,8 +31,7 @@ use rostrum_github::{
 use rostrum_ui::{
     ActiveTheme, TextInput,
     components::{
-        Button, ButtonStyle, Checkbox, Chip, DiffStat, Dot, Initial, Tab, h_flex, hex_color,
-        tab_bar, v_flex,
+        Button, ButtonStyle, Checkbox, Chip, DiffStat, Dot, Initial, Tab, h_flex, tab_bar, v_flex,
     },
 };
 
@@ -83,27 +82,7 @@ pub(crate) enum FilesView {
     Overview,
 }
 
-/// Async resource with an explicit failure state, so the UI can tell "still
-/// loading" from "loaded and empty" from "failed".
-pub enum Loadable<T> {
-    Idle,
-    Loading,
-    Loaded(T),
-    Failed(String),
-}
-
-impl<T> Loadable<T> {
-    pub fn loaded(&self) -> Option<&T> {
-        match self {
-            Self::Loaded(value) => Some(value),
-            _ => None,
-        }
-    }
-
-    fn is_idle(&self) -> bool {
-        matches!(self, Self::Idle)
-    }
-}
+pub use crate::loadable::Loadable;
 
 /// An outward-facing action, held until the user confirms it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1087,12 +1066,9 @@ impl PrDetail {
                     .when_some(review_chip(pull.review_decision), |el, (text, color)| {
                         el.child(Chip::new(text).color(color(&theme)))
                     })
-                    .children(
-                        pull.labels
-                            .iter()
-                            .enumerate()
-                            .map(|(ix, label)| self.render_label_chip(ix, label, busy, &theme, cx)),
-                    )
+                    .children(pull.labels.iter().enumerate().map(|(ix, label)| {
+                        crate::pickers::label_chip(ix, label, busy, &theme, Self::label_toggle(cx))
+                    }))
                     .child(
                         Button::new(
                             "toggle-label-picker",
@@ -1107,126 +1083,23 @@ impl PrDetail {
                     ),
             )
             .when(self.label_picker_open, |el| {
-                el.child(self.render_label_picker(pull, busy, &theme, cx))
+                el.child(crate::pickers::label_picker(
+                    &self.repo_labels,
+                    &pull.labels,
+                    busy,
+                    &theme,
+                    Self::label_toggle(cx),
+                ))
             })
     }
 
-    /// One applied label, with the affordance that takes it off again.
-    fn render_label_chip(
-        &self,
-        ix: usize,
-        label: &Label,
-        busy: bool,
-        theme: &rostrum_ui::Theme,
-        cx: &Context<Self>,
-    ) -> impl IntoElement {
-        let color = hex_color(&label.color).unwrap_or(theme.text_muted);
-        let name = label.name.clone();
-        let danger = theme.danger;
-
-        h_flex()
-            .gap_0p5()
-            .child(Chip::new(label.name.clone()).color(color))
-            .child(
-                div()
-                    .id(("remove-label", ix))
-                    .px_1()
-                    .text_size(rems(0.7))
-                    .text_color(theme.text_subtle)
-                    .child("×")
-                    .when(!busy, |el| {
-                        el.cursor_pointer()
-                            .hover(move |el| el.text_color(danger))
-                            .on_click(Self::on_click(cx, move |this, cx| {
-                                this.toggle_label(name.clone(), true, cx)
-                            }))
-                    }),
-            )
-    }
-
-    /// The label picker: an inline panel under the header listing every label
-    /// the repository defines, each toggled on or off.
-    fn render_label_picker(
-        &self,
-        pull: &PullRequest,
-        busy: bool,
-        theme: &rostrum_ui::Theme,
-        cx: &Context<Self>,
-    ) -> impl IntoElement {
-        let panel = v_flex()
-            .gap_1()
-            .p_2()
-            .bg(theme.surface_raised)
-            .border_1()
-            .border_color(theme.border);
-
-        match &self.repo_labels {
-            Loadable::Idle | Loadable::Loading => panel.child(
-                div()
-                    .text_size(rems(0.75))
-                    .text_color(theme.text_subtle)
-                    .child("Loading labels…"),
-            ),
-            Loadable::Failed(message) => panel.child(
-                div()
-                    .text_size(rems(0.75))
-                    .text_color(theme.danger)
-                    .child(message.clone()),
-            ),
-            Loadable::Loaded(labels) if labels.is_empty() => panel.child(
-                div()
-                    .text_size(rems(0.75))
-                    .text_color(theme.text_subtle)
-                    .child("This repository defines no labels"),
-            ),
-            Loadable::Loaded(labels) => {
-                let applied: HashSet<&str> = pull
-                    .labels
-                    .iter()
-                    .map(|label| label.name.as_str())
-                    .collect();
-
-                panel.child(
-                    div()
-                        .id("label-picker")
-                        .max_h(px(200.))
-                        .overflow_y_scroll()
-                        .child(v_flex().gap_0p5().children(labels.iter().enumerate().map(
-                            |(ix, label)| {
-                                let is_applied = applied.contains(label.name.as_str());
-                                let color = hex_color(&label.color).unwrap_or(theme.text_muted);
-                                let name = label.name.clone();
-                                let hover_bg = theme.surface;
-
-                                h_flex()
-                                    .id(("repo-label", ix))
-                                    .gap_2()
-                                    .px_1()
-                                    .py_0p5()
-                                    .child(
-                                        div()
-                                            .w(px(12.))
-                                            .flex_none()
-                                            .text_size(rems(0.7))
-                                            .text_color(theme.text)
-                                            .child(if is_applied { "✓" } else { "" }),
-                                    )
-                                    .child(Chip::new(label.name.clone()).color(color))
-                                    // The mutation is refused while another is
-                                    // in flight, so the row must not look live.
-                                    .when(busy, |el| el.opacity(0.45))
-                                    .when(!busy, |el| {
-                                        el.cursor_pointer()
-                                            .hover(move |el| el.bg(hover_bg))
-                                            .on_click(Self::on_click(cx, move |this, cx| {
-                                                this.toggle_label(name.clone(), is_applied, cx)
-                                            }))
-                                    })
-                            },
-                        ))),
-                )
-            }
-        }
+    /// What a label chip or picker row does on click: toggle the label
+    /// through [`Self::mutate`].
+    fn label_toggle(cx: &Context<Self>) -> crate::pickers::Toggle {
+        let entity = cx.entity();
+        std::rc::Rc::new(move |name, applied, cx: &mut App| {
+            entity.update(cx, |this, cx| this.toggle_label(name, applied, cx));
+        })
     }
 
     /// The local clone's row: where the checkout stands relative to the branch

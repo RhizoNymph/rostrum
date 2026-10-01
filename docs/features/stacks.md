@@ -123,6 +123,21 @@ shows the title, trunk, "N not open" for merged/closed members, the
 `MergeRollup` chip (`2/3 ready · conflict`), and the actions: **Merge stack**
 and **Unstack** for a GitHub stack, **Make stack** for a detected chain.
 
+Member rows are the feed's ordinary pull request rows (`feed/rows.rs`,
+sharing `pr_row_content` with the repository view), with the chain glyph, the
+stack indent and, while picking for an arrangement, the pick badge in a
+column to the left of the body.
+
+**Pull requests only.** Grouping happens on the Pull requests tab;
+`flatten_tab` on the Issues tab never emits a stack row, and `Arrange PRs` is
+not offered there (switching to Issues ends any picking).
+
+**The repository view** lays its pull request half out with
+`repo_pull_rows`, the same `push_units` for one repository, unfiltered: a
+stack is contiguous and sorts as one unit, with its header drawn on the bottom
+member's row. Its branch tree marks members with a `stack N` or `chain` chip.
+See `docs/features/repo_view.md`.
+
 ### Make stack and Arrange (`rostrum_stack::run_stack_job`)
 
 Both start from a `StackPlan`, validated by `rostrum_core::plan_stack`: two or
@@ -241,7 +256,7 @@ not a terminal, so gh-stack's interactive paths are never taken.
 | `crates/rostrum-core/src/stack/group.rs` | Groups, units, rollup | `stack_groups`, `StackGroup`, `units`, `FeedUnit`, `MergeRollup`, `StackIx` |
 | `crates/rostrum-core/src/stack/plan.rs` | Validating a request | `plan_stack`, `StackPlan`, `PlanMember`, `PlanError` |
 | `crates/rostrum-core/src/stack/feed_tests.rs` | Stacks in `flatten`, including sorting | — |
-| `crates/rostrum-core/src/feed.rs` | `push_units`; `FeedRow::StackHeader`, `StackSlot`, `StackPlace`, `FeedStack` | `Feed::stack` |
+| `crates/rostrum-core/src/feed.rs` | `push_units`; `FeedRow::StackHeader`, `StackSlot`, `StackPlace`, `FeedStack`; one repository's rows for the repository view | `Feed::stack`, `repo_pull_rows` |
 | `crates/rostrum-core/src/sort/compare.rs` | feed-sort's group hook stacks sort through | `sort_key_for_group`, `compare_groups` |
 | `crates/rostrum-github/src/stacks.rs` | Stacks API wire types and decoding | `parse_stacks`, `RepoStacks` |
 | `crates/rostrum-github/src/client/stacks.rs` | The GET | `GitHubClient::stacks` |
@@ -258,6 +273,8 @@ not a terminal, so gh-stack's interactive paths are never taken.
 | `crates/rostrum-stack/src/error.rs` | Typed errors | `StackOpError` |
 | `crates/rostrum/src/sync/stacks.rs` | Store: reading stacks, running one operation, progress | `StackSync`, `Store::{make_stack, merge_stack, unstack, stack_op}` |
 | `crates/rostrum/src/feed/stacks.rs` | Header row, glyphs, confirmation panels, status line | `StackUi`, `StackPanel` |
+| `crates/rostrum/src/feed/rows.rs` | A member row: glyph, indent, pick badge around the shared body | — |
+| `crates/rostrum/src/repo_view/order.rs` | Stacks in the repository view's pull request list | `ListOrder::{slot_at, header_at}` |
 | `crates/rostrum/src/feed/arrange.rs` | Picking, ordering, trunk, rewrite confirmation | `Picking` |
 
 ## Invariants and constraints

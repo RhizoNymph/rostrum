@@ -293,12 +293,9 @@ fn pull(number: u32, head: &str, base: &str) -> PullRequest {
 
 fn plan(prs: Vec<PullRequest>, order: &[u32]) -> StackPlan {
     let state = RepoState {
-        id: repo_id(),
         prs,
         load: LoadState::Idle,
-        collapsed: false,
-        stacks: Vec::new(),
-        meta: None,
+        ..RepoState::new(repo_id())
     };
     let order: Vec<PrNumber> = order.iter().copied().map(PrNumber).collect();
     plan_stack(&state, &order, RefName::new("main").expect("valid")).expect("valid plan")

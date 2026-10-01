@@ -5,27 +5,24 @@
 //! row draw the portion of the border that belongs to it. See
 //! `docs/features/repo_feed.md` for why nesting lists does not work.
 
+mod rows;
+
 use std::rc::Rc;
 
-use chrono::{DateTime, Utc};
 use gpui::{
-    AnyElement, App, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding,
-    ListAlignment, ListState, SharedString, Subscription, Window, actions, div, list, prelude::*,
-    px, rems,
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, ListAlignment,
+    ListState, SharedString, Subscription, Window, actions, div, list, prelude::*, px, rems,
 };
 use rostrum_core::{
-    AuthorEntry, Chrome, Feed, FeedFilter, FeedRow, LoginKey, MergeStatus, PrIx, RepoId, RepoIx,
-    RepoState, ReviewDecision, Selection, StackSlot, VisibleAuthors,
-    authors::visible as visible_authors, flatten,
+    AuthorEntry, Feed, FeedFilter, FeedRow, FeedTab, LoginKey, RepoId, RepoState, Selection,
+    VisibleAuthors, authors::visible as visible_authors, flatten_tab, tab_counts,
 };
 use rostrum_ui::{
     ActiveTheme, InputEvent, Popover, PopoverAnchor, TextInput,
-    components::{
-        Button, ButtonStyle, Checkbox, Chip, DiffStat, Dot, Initial, h_flex, hex_color, v_flex,
-    },
+    components::{Button, ButtonStyle, Checkbox, Tab, h_flex, tab_bar, v_flex},
 };
 
-use rostrum_local::LocalResult;
+pub(crate) use rows::{issue_row_content, pr_row_content, relative_time};
 
 use crate::{
     nav::{self, Nav},
@@ -36,7 +33,9 @@ mod arrange;
 mod sort_menu;
 mod stacks;
 
-use stacks::{STACK_INDENT, StackUi, stack_glyph};
+use rows::card;
+use stacks::StackUi;
+pub(crate) use stacks::{STACK_INDENT, stack_glyph};
 
 actions!(
     feed,
@@ -49,6 +48,9 @@ actions!(
         FocusFilter,
         DismissFilter,
         ToggleCollapse,
+        OpenRepo,
+        NextTab,
+        PreviousTab,
     ]
 );
 
@@ -77,13 +79,26 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", DismissFilter, Some(FEED_CONTEXT)),
         KeyBinding::new("escape", DismissFilter, Some(FILTER_CONTEXT)),
         KeyBinding::new("c", ToggleCollapse, Some(FEED_CONTEXT)),
+        KeyBinding::new("o", OpenRepo, Some(FEED_CONTEXT)),
+        // Brackets, not a modifier chord: they sit beside `j`/`k` on the
+        // home row and read as "left"/"right", and like them they are inert
+        // while typing in the filter box.
+        KeyBinding::new("]", NextTab, Some(FEED_CONTEXT)),
+        KeyBinding::new("[", PreviousTab, Some(FEED_CONTEXT)),
     ]);
 }
 
-/// Raised so the workspace, which owns the detail pane, can move focus into it.
-#[derive(Clone, Copy, Debug)]
+/// Raised for the workspace, which owns the detail pane and the navigation.
+#[derive(Clone, Debug)]
 pub enum FeedEvent {
+    /// Move focus into the detail pane.
     FocusDetail,
+    /// Switch the left pane to this repository's own view.
+    OpenRepo(RepoId),
+    /// Open the new-issue form, with this repository chosen when the request
+    /// came from its header, or the form's own default when it came from the
+    /// tab bar.
+    NewIssue { repo: Option<RepoId> },
 }
 
 /// Corner radius of a repo container, in pixels.
@@ -121,7 +136,7 @@ impl FeedView {
     pub fn new(store: Entity<Store>, cx: &mut Context<Self>) -> Self {
         let feed = Rc::new(build(&store, cx));
         let list = ListState::new(feed.len(), ListAlignment::Top, px(400.));
-        let filter = cx.new(|cx| TextInput::new("Filter pull requests…", cx).lines(1, 1));
+        let filter = cx.new(|cx| TextInput::new("Filter…", cx).lines(1, 1));
         let repo_input = cx.new(|cx| TextInput::new("owner/name or a GitHub URL", cx).lines(1, 1));
         let stack_ui = StackUi::new(cx);
 
@@ -363,10 +378,10 @@ impl FeedView {
         let Some(target) = nav::navigate(&self.feed, current, nav) else {
             return;
         };
-        let Some(FeedRow::PrRow { repo, pr, .. }) = self.feed.row(target) else {
+        let Some(row) = self.feed.row(target) else {
             return;
         };
-        self.select(repo, pr, cx);
+        self.select(row, cx);
         self.list.scroll_to_reveal_item(target);
         cx.notify();
     }
@@ -392,6 +407,29 @@ impl FeedView {
         self.navigate(Nav::Last, cx);
     }
 
+    fn next_tab(&mut self, _: &NextTab, _window: &mut Window, cx: &mut Context<Self>) {
+        let tab = self.store.read(cx).state.tab.next();
+        self.set_tab(tab, cx);
+    }
+
+    fn previous_tab(&mut self, _: &PreviousTab, _window: &mut Window, cx: &mut Context<Self>) {
+        let tab = self.store.read(cx).state.tab.previous();
+        self.set_tab(tab, cx);
+    }
+
+    /// Switch lists. The selection is left alone, so the detail pane keeps
+    /// showing whatever was open; `j`/`k` then enter the new tab's list from
+    /// its end, since the old selection has no row there.
+    fn set_tab(&mut self, tab: FeedTab, cx: &mut Context<Self>) {
+        // Picking for an arrangement toggles pull request rows; the Issues
+        // tab has none, so leaving the tab ends it.
+        if tab == FeedTab::Issues && self.is_picking() {
+            self.stop_picking(cx);
+        }
+        self.store.update(cx, |store, cx| store.set_tab(tab, cx));
+        self.list.scroll_to(gpui::ListOffset::default());
+    }
+
     fn open_detail(&mut self, _: &OpenDetail, _window: &mut Window, cx: &mut Context<Self>) {
         cx.emit(FeedEvent::FocusDetail);
     }
@@ -414,6 +452,20 @@ impl FeedView {
         }
     }
 
+    /// `o`: open the selected item's repository in its own view.
+    fn open_repo(&mut self, _: &OpenRepo, _window: &mut Window, cx: &mut Context<Self>) {
+        let repo = self
+            .store
+            .read(cx)
+            .state
+            .selection
+            .as_ref()
+            .map(|selection| selection.repo().clone());
+        if let Some(repo) = repo {
+            cx.emit(FeedEvent::OpenRepo(repo));
+        }
+    }
+
     fn toggle_collapse(
         &mut self,
         _: &ToggleCollapse,
@@ -426,7 +478,7 @@ impl FeedView {
             .state
             .selection
             .as_ref()
-            .map(|selection| selection.repo.clone())
+            .map(|selection| selection.repo().clone())
         else {
             return;
         };
@@ -454,350 +506,16 @@ impl FeedView {
         cx.notify();
     }
 
-    fn select(&mut self, repo: RepoIx, pr: PrIx, cx: &mut Context<Self>) {
+    /// Select the item a row shows, by identity. Rows other than items, and
+    /// rows whose indices a refresh has since invalidated, select nothing.
+    fn select(&mut self, row: FeedRow, cx: &mut Context<Self>) {
         self.store.update(cx, |store, cx| {
-            let Some(repo_state) = store.state.repos.get(repo.0) else {
+            let Some(selection) = selection_for(&store.state.repos, row) else {
                 return;
             };
-            let Some(pull) = repo_state.prs.get(pr.0) else {
-                return;
-            };
-            store.state.selection = Some(Selection {
-                repo: repo_state.id.clone(),
-                pr: pull.number,
-            });
+            store.state.selection = Some(selection);
             cx.notify();
         });
-    }
-
-    fn render_row(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
-        let Some(row) = self.feed.row(ix) else {
-            return div().into_any_element();
-        };
-        tracing::trace!(ix, ?row, "render row");
-        let chrome = self.feed.chrome(ix);
-
-        match row {
-            FeedRow::Spacer { .. } => div().h(px(10.)).into_any_element(),
-            FeedRow::RepoHeader { repo } => self.render_repo_header(repo, chrome, cx),
-            FeedRow::StackHeader { repo, stack } => {
-                self.render_stack_header(repo, stack, chrome, cx)
-            }
-            FeedRow::PrRow { repo, pr, stack } => {
-                self.render_pr_row(repo, pr, stack, chrome, ix, cx)
-            }
-            FeedRow::RepoEmpty { repo } => {
-                self.render_notice(repo, chrome, "No open pull requests", cx)
-            }
-            FeedRow::RepoLoading { repo } => self.render_notice(repo, chrome, "Loading…", cx),
-            FeedRow::RepoError { repo } => {
-                let message = self
-                    .repo_state(repo, cx)
-                    .and_then(|r| r.load.error_message().map(str::to_string))
-                    .unwrap_or_else(|| "Refresh failed".to_string());
-                self.render_error(repo, chrome, message, cx)
-            }
-        }
-    }
-
-    fn repo_state<'a>(&self, repo: RepoIx, cx: &'a App) -> Option<&'a RepoState> {
-        self.store.read(cx).state.repos.get(repo.0)
-    }
-
-    fn render_repo_header(
-        &mut self,
-        repo: RepoIx,
-        chrome: Chrome,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let Some(state) = self.repo_state(repo, cx) else {
-            return div().into_any_element();
-        };
-
-        let name = state.id.to_string();
-        let count = state.prs.len();
-        let collapsed = state.collapsed;
-        let failed = state.load.is_failed();
-        let id = state.id.clone();
-        let store = self.store.clone();
-
-        card(chrome, cx)
-            .id(("repo-header", repo.0))
-            .h(px(38.))
-            .px_3()
-            .bg(cx.theme().surface_raised)
-            .child(
-                h_flex()
-                    .size_full()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_color(cx.theme().text_subtle)
-                            .text_size(rems(0.7))
-                            .child(if collapsed { "▸" } else { "▾" }),
-                    )
-                    .child(
-                        div()
-                            .text_color(cx.theme().text)
-                            .text_size(rems(0.82))
-                            .child(name),
-                    )
-                    .child(
-                        div()
-                            .text_color(cx.theme().text_subtle)
-                            .text_size(rems(0.75))
-                            .child(format!("{count}")),
-                    )
-                    .when(failed, |el| {
-                        el.child(Chip::new("error").color(cx.theme().danger))
-                    }),
-            )
-            .on_click(move |_, _window, cx| {
-                store.update(cx, |store, cx| store.toggle_collapsed(&id, cx));
-            })
-            .into_any_element()
-    }
-
-    fn render_pr_row(
-        &mut self,
-        repo: RepoIx,
-        pr: PrIx,
-        stack: Option<StackSlot>,
-        chrome: Chrome,
-        ix: usize,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let Some(state) = self.repo_state(repo, cx) else {
-            return div().into_any_element();
-        };
-        let Some(pull) = state.prs.get(pr.0) else {
-            return div().into_any_element();
-        };
-
-        let selected = self
-            .store
-            .read(cx)
-            .state
-            .selection
-            .as_ref()
-            .is_some_and(|s| s.repo == state.id && s.pr == pull.number);
-
-        let number = pull.number.to_string();
-        let title = pull.title.clone();
-        let author = pull.author.as_ref().map(|a| a.login.clone());
-        let updated = relative_time(pull.updated_at);
-        let is_draft = pull.is_draft;
-        let additions = pull.additions;
-        let deletions = pull.deletions;
-        let checks = pull.checks;
-        let decision = pull.review_decision;
-        let merge = pull.merge_status();
-        let base_ref = pull.base_ref.clone();
-        // The exact count from the divergence batch, once it has answered.
-        // Only "behind" earns a chip: ahead is the normal state of a pull
-        // request and says nothing the reviewer must act on.
-        let behind = pull
-            .base_divergence
-            .filter(|d| d.is_behind())
-            .map(|d| d.behind);
-        // The merge chip's own "behind" carries less than the count, so it
-        // yields to the count when both are known; every other merge chip
-        // says something the count does not.
-        let merge_chip = merge
-            .chip()
-            .filter(|_| behind.is_none() || merge != MergeStatus::Behind);
-        let labels: Vec<_> = pull
-            .labels
-            .iter()
-            .take(3)
-            .map(|l| (l.name.clone(), hex_color(&l.color)))
-            .collect();
-        // The latest "sync all" verdict, when it is one worth a chip.
-        let sync_chip = self
-            .store
-            .read(cx)
-            .sync_result(&state.id, pull.number)
-            .and_then(|result| {
-                result
-                    .chip()
-                    .map(|text| (text, result.detail(), sync_chip_color(result)))
-            });
-
-        let theme = cx.theme().clone();
-        let glyph = stack.map(|slot| stack_glyph(slot.place));
-        // While picking for an arrangement a row is a toggle, not a selection.
-        let pick = self.pick_badge(&state.id, pull.number);
-        let pick_repo = state.id.clone();
-        let pick_number = pull.number;
-
-        card(chrome, cx)
-            .id(("pr", ix))
-            .px_3()
-            .py_2()
-            .when(stack.is_some(), |el| el.pl(px(STACK_INDENT)))
-            .when(selected, |el| el.bg(theme.surface_selected))
-            .hover(|el| el.bg(theme.surface_hover))
-            .cursor_pointer()
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .when_some(pick, |el, pick| {
-                                el.child(
-                                    div()
-                                        .w(px(18.))
-                                        .text_size(rems(0.72))
-                                        .text_color(if pick.is_some() {
-                                            theme.accent
-                                        } else {
-                                            theme.text_subtle
-                                        })
-                                        .child(match pick {
-                                            Some(n) => format!("[{n}]"),
-                                            None => "[ ]".to_string(),
-                                        }),
-                                )
-                            })
-                            .when_some(glyph, |el, glyph| {
-                                el.child(
-                                    div()
-                                        .w(px(10.))
-                                        .text_color(theme.accent)
-                                        .text_size(rems(0.72))
-                                        .child(glyph),
-                                )
-                            })
-                            .child(Dot::new(theme.check_color(checks)))
-                            .child(
-                                div()
-                                    .text_color(theme.text_subtle)
-                                    .text_size(rems(0.72))
-                                    .child(number),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .truncate()
-                                    .text_color(if is_draft {
-                                        theme.text_muted
-                                    } else {
-                                        theme.text
-                                    })
-                                    .text_size(rems(0.82))
-                                    .child(title),
-                            )
-                            .when(is_draft, |el| {
-                                el.child(Chip::new("draft").color(theme.draft))
-                            })
-                            .when_some(behind, |el, behind| {
-                                el.child(
-                                    Chip::new(format!("↓{behind}"))
-                                        .color(theme.warning)
-                                        // A distinct tag from the merge chip's:
-                                        // GPUI element ids must be unique
-                                        // within the row, and both can render.
-                                        .tooltip(
-                                            ("behind-count", ix),
-                                            format!("{behind} commit(s) behind {base_ref}"),
-                                        ),
-                                )
-                            })
-                            // `chip` returns nothing for draft and unstable:
-                            // the draft chip beside this one and the check dot
-                            // at the head of the row already say both.
-                            .when_some(merge_chip, |el, text| {
-                                el.child(
-                                    Chip::new(text)
-                                        .color(theme.merge_color(merge))
-                                        .tooltip(("merge-status", ix), merge.explanation()),
-                                )
-                            })
-                            .when_some(review_label(decision), |el, (text, color)| {
-                                el.child(Chip::new(text).color(color(&theme)))
-                            })
-                            .when_some(sync_chip, |el, (text, detail, color)| {
-                                el.child(
-                                    Chip::new(text)
-                                        .color(color(&theme))
-                                        // Its own tag: the merge and behind
-                                        // chips can share the row, and GPUI
-                                        // element ids must not collide.
-                                        .tooltip(("sync-result", ix), detail),
-                                )
-                            }),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .pl(px(15.))
-                            .when_some(author, |el, login| {
-                                el.child(Initial::new(login.clone())).child(
-                                    div()
-                                        .text_color(theme.text_muted)
-                                        .text_size(rems(0.72))
-                                        .child(login),
-                                )
-                            })
-                            .child(
-                                div()
-                                    .text_color(theme.text_subtle)
-                                    .text_size(rems(0.72))
-                                    .child(updated),
-                            )
-                            .child(DiffStat::new(additions, deletions))
-                            .children(labels.into_iter().map(|(name, color)| {
-                                let chip = Chip::new(name);
-                                match color {
-                                    Some(color) => chip.color(color),
-                                    None => chip,
-                                }
-                            })),
-                    ),
-            )
-            .on_click(cx.listener(move |this, _, _window, cx| {
-                if this.is_picking() {
-                    this.toggle_pick(pick_repo.clone(), pick_number, cx)
-                } else {
-                    this.select(repo, pr, cx)
-                }
-            }))
-            .into_any_element()
-    }
-
-    fn render_notice(
-        &mut self,
-        repo: RepoIx,
-        chrome: Chrome,
-        message: &str,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        card(chrome, cx)
-            .id(("notice", repo.0))
-            .px_3()
-            .py_3()
-            .text_color(cx.theme().text_subtle)
-            .text_size(rems(0.78))
-            .child(message.to_string())
-            .into_any_element()
-    }
-
-    fn render_error(
-        &mut self,
-        repo: RepoIx,
-        chrome: Chrome,
-        message: String,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        card(chrome, cx)
-            .id(("error", repo.0))
-            .px_3()
-            .py_3()
-            .text_color(cx.theme().danger)
-            .text_size(rems(0.78))
-            .child(message)
-            .into_any_element()
     }
 
     /// The authors popover: every author with open work, selected ones and the
@@ -924,6 +642,46 @@ impl FeedView {
         .on_dismiss(cx.listener(|this, _, _window, cx| this.close_popover(cx)))
     }
 
+    /// "Pull requests | Issues" across the top of the pane, each with the
+    /// number of open items the filter lets through, and — on the Issues
+    /// tab — the way to open a new one.
+    fn render_tabs(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let store = self.store.read(cx);
+        let active = store.state.tab;
+        let counts = tab_counts(&store.state.repos, &store.state.filter);
+        let tabs = FeedTab::ALL
+            .iter()
+            .map(|tab| Tab::new(tab.label()).badge(counts.get(*tab)))
+            .collect();
+        let entity = cx.entity();
+
+        h_flex()
+            .flex_none()
+            .px_3()
+            .pb_2()
+            .items_end()
+            .child(div().flex_1().child(tab_bar(
+                tabs,
+                active.index(),
+                cx,
+                move |ix, _window, cx| {
+                    entity.update(cx, |this, cx| this.set_tab(FeedTab::from_index(ix), cx));
+                },
+            )))
+            .when(active == FeedTab::Issues, |el| {
+                el.child(
+                    div().pl_2().pb_1().child(
+                        Button::new("new-issue", "New issue")
+                            .style(ButtonStyle::Primary)
+                            .tooltip("Open an issue in one of the watched repositories")
+                            .on_click(cx.listener(|_, _, _window, cx| {
+                                cx.emit(FeedEvent::NewIssue { repo: None })
+                            })),
+                    ),
+                )
+            })
+    }
+
     fn render_filter_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let store = self.store.read(cx);
@@ -933,7 +691,8 @@ impl FeedView {
         let repo_count = store.state.repos.len();
         let author_count = store.state.filter.authors.len();
         let active = store.state.filter.is_active();
-        let counts = visible_counts(&store.state.repos, &store.state.filter);
+        let tab = store.state.tab;
+        let counts = visible_counts(&store.state.repos, &store.state.filter, tab);
         let has_clone = store.has_any_clone();
         let syncing = store.is_syncing();
         let autostash = store.autostash();
@@ -955,20 +714,26 @@ impl FeedView {
                 h_flex()
                     .gap_2()
                     .child(div().flex_1().min_w_0().child(self.filter.clone()))
-                    .child(
-                        Button::new("hide-drafts", "drafts")
-                            .style(if hide_drafts {
-                                ButtonStyle::Primary
-                            } else {
-                                ButtonStyle::Subtle
-                            })
-                            .tooltip(if hide_drafts {
-                                "Show draft pull requests"
-                            } else {
-                                "Hide draft pull requests"
-                            })
-                            .on_click(cx.listener(|this, _, _window, cx| this.toggle_drafts(cx))),
-                    )
+                    // Drafts are a pull request notion; on the Issues tab the
+                    // toggle would do nothing, so it is not offered there.
+                    .when(tab == FeedTab::PullRequests, |el| {
+                        el.child(
+                            Button::new("hide-drafts", "drafts")
+                                .style(if hide_drafts {
+                                    ButtonStyle::Primary
+                                } else {
+                                    ButtonStyle::Subtle
+                                })
+                                .tooltip(if hide_drafts {
+                                    "Show draft pull requests"
+                                } else {
+                                    "Hide draft pull requests"
+                                })
+                                .on_click(
+                                    cx.listener(|this, _, _window, cx| this.toggle_drafts(cx)),
+                                ),
+                        )
+                    })
                     .child(self.authors_button(author_count, cx))
                     .child(self.repos_button(repo_count, cx))
                     .child(self.sort_button(cx)),
@@ -1012,22 +777,26 @@ impl FeedView {
                         .child(sync_button("sync-pull", SyncKind::Pull, cx))
                         .child(sync_button("sync-merge-base", SyncKind::MergeBase, cx))
                         .child(sync_button("sync-rebase-base", SyncKind::RebaseBase, cx))
-                        .child(
-                            Button::new("arrange-start", "Arrange PRs")
-                                .style(if self.is_picking() {
-                                    ButtonStyle::Primary
-                                } else {
-                                    ButtonStyle::Subtle
-                                })
-                                .tooltip("Pick pull requests of one repository to stack, rebasing them onto each other")
-                                .on_click(cx.listener(|this, _, _window, cx| {
-                                    if this.is_picking() {
-                                        this.stop_picking(cx)
+                        // Stacks are pull requests only; on the Issues tab
+                        // there is nothing to arrange.
+                        .when(tab == FeedTab::PullRequests, |el| {
+                            el.child(
+                                Button::new("arrange-start", "Arrange PRs")
+                                    .style(if self.is_picking() {
+                                        ButtonStyle::Primary
                                     } else {
-                                        this.start_picking(cx)
-                                    }
-                                })),
-                        )
+                                        ButtonStyle::Subtle
+                                    })
+                                    .tooltip("Pick pull requests of one repository to stack, rebasing them onto each other")
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        if this.is_picking() {
+                                            this.stop_picking(cx)
+                                        } else {
+                                            this.start_picking(cx)
+                                        }
+                                    })),
+                            )
+                        })
                         .child(
                             Checkbox::new("sync-autostash", "Stash local changes", autostash)
                                 .on_toggle(cx.listener(move |this, _, _window, cx| {
@@ -1082,10 +851,10 @@ fn author_label(entry: &AuthorEntry) -> String {
     }
 }
 
-/// How much of the feed a filter is letting through.
+/// How much of the active tab's list a filter is letting through.
 ///
-/// Counted over every repository's pull requests rather than over feed rows:
-/// a collapsed repo hides rows without the filter having rejected anything, and
+/// Counted over every repository's items rather than over feed rows: a
+/// collapsed repo hides rows without the filter having rejected anything, and
 /// reporting that as "filtered out" would be a lie.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct VisibleCounts {
@@ -1093,18 +862,18 @@ struct VisibleCounts {
     total: usize,
 }
 
-fn visible_counts(repos: &[RepoState], filter: &FeedFilter) -> VisibleCounts {
-    let mut counts = VisibleCounts {
-        visible: 0,
-        total: 0,
-    };
-    for pr in repos.iter().flat_map(|repo| &repo.prs) {
-        counts.total += 1;
-        if filter.accepts(pr) {
-            counts.visible += 1;
-        }
+fn visible_counts(repos: &[RepoState], filter: &FeedFilter, tab: FeedTab) -> VisibleCounts {
+    let total = repos
+        .iter()
+        .map(|repo| match tab {
+            FeedTab::PullRequests => repo.prs.len(),
+            FeedTab::Issues => repo.issues.len(),
+        })
+        .sum();
+    VisibleCounts {
+        visible: tab_counts(repos, filter).get(tab),
+        total,
     }
-    counts
 }
 
 impl EventEmitter<FeedEvent> for FeedView {}
@@ -1130,6 +899,10 @@ impl Render for FeedView {
             .on_action(cx.listener(Self::focus_filter))
             .on_action(cx.listener(Self::dismiss_filter))
             .on_action(cx.listener(Self::toggle_collapse))
+            .on_action(cx.listener(Self::open_repo))
+            .on_action(cx.listener(Self::next_tab))
+            .on_action(cx.listener(Self::previous_tab))
+            .child(self.render_tabs(cx))
             .child(self.render_filter_bar(cx))
             .child(self.render_stack_bar(cx))
             .child(
@@ -1152,99 +925,58 @@ impl Render for FeedView {
 
 fn build(store: &Entity<Store>, cx: &App) -> Feed {
     let store = store.read(cx);
-    flatten(&store.state.repos, &store.state.filter)
+    flatten_tab(&store.state.repos, &store.state.filter, store.state.tab)
 }
 
-/// Draw the portion of the container border this row owns.
-fn card(chrome: Chrome, cx: &App) -> Div {
-    let theme = cx.theme();
-
-    if chrome == Chrome::None {
-        return div();
-    }
-
-    let base = div()
-        .bg(theme.surface)
-        .border_l_1()
-        .border_r_1()
-        .border_color(theme.border);
-
-    match chrome {
-        Chrome::Top => base
-            .border_t_1()
-            .rounded_tl(px(ROW_RADIUS))
-            .rounded_tr(px(ROW_RADIUS)),
-        Chrome::Bottom => base
-            .border_b_1()
-            .rounded_bl(px(ROW_RADIUS))
-            .rounded_br(px(ROW_RADIUS)),
-        Chrome::Solo => base
-            .border_t_1()
-            .border_b_1()
-            .rounded_tl(px(ROW_RADIUS))
-            .rounded_tr(px(ROW_RADIUS))
-            .rounded_bl(px(ROW_RADIUS))
-            .rounded_br(px(ROW_RADIUS)),
-        Chrome::Middle | Chrome::None => base,
-    }
-}
-
-type ThemeColor = fn(&rostrum_ui::Theme) -> gpui::Hsla;
-
-/// Severity colour for a sync verdict chip: red for what stopped, accent for
-/// what was handed on, amber for what git would not start.
-fn sync_chip_color(result: &LocalResult) -> ThemeColor {
-    match result {
-        LocalResult::Conflicted(_) | LocalResult::Failed(_) => |t| t.danger,
-        LocalResult::HandedOff { .. } => |t| t.accent,
-        LocalResult::Refused(_)
-        | LocalResult::NotCheckedOut
-        | LocalResult::UpToDate
-        | LocalResult::Completed => |t| t.warning,
-    }
-}
-
-fn review_label(decision: Option<ReviewDecision>) -> Option<(&'static str, ThemeColor)> {
-    match decision? {
-        ReviewDecision::Approved => Some(("approved", |t| t.success)),
-        ReviewDecision::ChangesRequested => Some(("changes", |t| t.danger)),
-        ReviewDecision::ReviewRequired => None,
-    }
-}
-
-pub(crate) fn relative_time(then: DateTime<Utc>) -> String {
-    let seconds = (Utc::now() - then).num_seconds().max(0);
-    match seconds {
-        s if s < 60 => "just now".to_string(),
-        s if s < 3_600 => format!("{}m ago", s / 60),
-        s if s < 86_400 => format!("{}h ago", s / 3_600),
-        s if s < 2_592_000 => format!("{}d ago", s / 86_400),
-        s => format!("{}mo ago", s / 2_592_000),
+/// The identity a feed row stands for, resolved against the state it was
+/// built from.
+fn selection_for(repos: &[RepoState], row: FeedRow) -> Option<Selection> {
+    match row {
+        FeedRow::PrRow { repo, pr, .. } => {
+            let state = repos.get(repo.0)?;
+            Some(Selection::PullRequest {
+                repo: state.id.clone(),
+                number: state.prs.get(pr.0)?.number,
+            })
+        }
+        FeedRow::IssueRow { repo, issue } => {
+            let state = repos.get(repo.0)?;
+            Some(Selection::Issue {
+                repo: state.id.clone(),
+                number: state.issues.get(issue.0)?.number,
+            })
+        }
+        FeedRow::RepoHeader { .. }
+        | FeedRow::StackHeader { .. }
+        | FeedRow::RepoEmpty { .. }
+        | FeedRow::RepoError { .. }
+        | FeedRow::RepoLoading { .. }
+        | FeedRow::Spacer { .. } => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
+    use rostrum_core::{IssueIx, IssueNumber, PrIx, PrNumber, RepoIx};
+
     use super::*;
 
-    #[test]
-    fn relative_time_buckets() {
-        let now = Utc::now();
-        assert_eq!(relative_time(now), "just now");
-        assert_eq!(relative_time(now - chrono::Duration::minutes(5)), "5m ago");
-        assert_eq!(relative_time(now - chrono::Duration::hours(3)), "3h ago");
-        assert_eq!(relative_time(now - chrono::Duration::days(2)), "2d ago");
-        assert_eq!(relative_time(now - chrono::Duration::days(70)), "2mo ago");
-    }
-
-    /// Clock skew between GitHub and the local machine must not produce
-    /// nonsense like "-3m ago".
-    #[test]
-    fn future_timestamps_clamp_to_just_now() {
-        assert_eq!(
-            relative_time(Utc::now() + chrono::Duration::hours(1)),
-            "just now"
-        );
+    fn issue(number: u32) -> rostrum_core::Issue {
+        rostrum_core::Issue {
+            number: IssueNumber(number),
+            node_id: rostrum_core::NodeId(format!("I_{number}")),
+            title: format!("Issue {number}"),
+            url: String::new(),
+            state: rostrum_core::IssueState::Open,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            author: None,
+            assignees: Vec::new(),
+            labels: Vec::new(),
+            comment_count: 0,
+            milestone: None,
+        }
     }
 
     fn pr(number: u32, draft: bool) -> rostrum_core::PullRequest {
@@ -1279,13 +1011,99 @@ mod tests {
 
     fn repo(name: &str, prs: Vec<rostrum_core::PullRequest>, collapsed: bool) -> RepoState {
         RepoState {
-            id: name.parse().expect("valid repo id"),
             prs,
             load: rostrum_core::LoadState::Loaded { at: Utc::now() },
             collapsed,
-            stacks: Vec::new(),
-            meta: None,
+            ..RepoState::new(name.parse().expect("valid repo id"))
         }
+    }
+
+    #[test]
+    fn issue_counts_report_what_the_filter_lets_through() {
+        let mut first = repo("a/b", vec![pr(1, false)], false);
+        first.issues = vec![issue(1), issue(2)];
+        first.issues[1].title = "needle".into();
+        let repos = vec![first];
+
+        assert_eq!(
+            visible_counts(&repos, &FeedFilter::default(), FeedTab::Issues),
+            VisibleCounts {
+                visible: 2,
+                total: 2
+            }
+        );
+        let narrowed = FeedFilter {
+            query: "needle".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            visible_counts(&repos, &narrowed, FeedTab::Issues),
+            VisibleCounts {
+                visible: 1,
+                total: 2
+            }
+        );
+        // The pull request tab counts its own list.
+        assert_eq!(
+            visible_counts(&repos, &FeedFilter::default(), FeedTab::PullRequests),
+            VisibleCounts {
+                visible: 1,
+                total: 1
+            }
+        );
+    }
+
+    /// A row resolves to the identity of what it shows, of the right kind,
+    /// and chrome rows select nothing.
+    #[test]
+    fn rows_select_by_identity_and_kind() {
+        let mut state = repo("a/b", vec![pr(4, false)], false);
+        state.issues = vec![issue(9)];
+        let repos = vec![state];
+        let id: RepoId = "a/b".parse().expect("valid");
+
+        assert_eq!(
+            selection_for(
+                &repos,
+                FeedRow::PrRow {
+                    repo: RepoIx(0),
+                    pr: PrIx(0),
+                    stack: None
+                }
+            ),
+            Some(Selection::PullRequest {
+                repo: id.clone(),
+                number: PrNumber(4)
+            })
+        );
+        assert_eq!(
+            selection_for(
+                &repos,
+                FeedRow::IssueRow {
+                    repo: RepoIx(0),
+                    issue: IssueIx(0)
+                }
+            ),
+            Some(Selection::Issue {
+                repo: id,
+                number: IssueNumber(9)
+            })
+        );
+        assert_eq!(
+            selection_for(&repos, FeedRow::RepoHeader { repo: RepoIx(0) }),
+            None
+        );
+        // An index a refresh has invalidated selects nothing.
+        assert_eq!(
+            selection_for(
+                &repos,
+                FeedRow::IssueRow {
+                    repo: RepoIx(0),
+                    issue: IssueIx(5)
+                }
+            ),
+            None
+        );
     }
 
     #[test]
@@ -1295,7 +1113,7 @@ mod tests {
             repo("c/d", vec![pr(3, false)], false),
         ];
 
-        let counts = visible_counts(&repos, &FeedFilter::default());
+        let counts = visible_counts(&repos, &FeedFilter::default(), FeedTab::PullRequests);
         assert_eq!(
             counts,
             VisibleCounts {
@@ -1312,6 +1130,7 @@ mod tests {
                 hide_empty_repos: false,
                 ..Default::default()
             },
+            FeedTab::PullRequests,
         );
         assert_eq!(
             counts,
@@ -1328,7 +1147,7 @@ mod tests {
     fn counts_ignore_collapsed_repos() {
         let repos = vec![repo("a/b", vec![pr(1, false), pr(2, false)], true)];
         assert_eq!(
-            visible_counts(&repos, &FeedFilter::default()),
+            visible_counts(&repos, &FeedFilter::default(), FeedTab::PullRequests),
             VisibleCounts {
                 visible: 2,
                 total: 2

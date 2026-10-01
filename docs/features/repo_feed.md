@@ -11,9 +11,13 @@ vertical stack of per-repo containers in one continuous scroll.
   position within its repo's run.
 - Collapse/expand of a repo section.
 - Selection state and keyboard navigation within the feed.
-- Filter of PRs within a repo, and applying the feed's sorts while
-  flattening. The sort model itself is `feed_sort`; see
+- Filter of PRs and issues within a repo, and applying the feed's sorts
+  while flattening either tab. The sort model itself is `feed_sort`; see
   `docs/features/feed_sort.md`.
+- The **Pull requests | Issues** tab bar: which list the stream is built from,
+  per-tab counts, and `[`/`]`. What lies behind the Issues tab — fetching,
+  the issue pane, creation — belongs to `issues`; see
+  `docs/features/issues.md`.
 
 ## Non-scope
 
@@ -50,11 +54,13 @@ header and leaf variants, matched per row inside one list's range closure.
 ```rust
 pub struct RepoIx(pub usize);
 pub struct PrIx(pub usize);
+pub struct IssueIx(pub usize);
 
 pub enum FeedRow {
     RepoHeader { repo: RepoIx },
     StackHeader{ repo: RepoIx, stack: StackIx },          // above a stack's members
     PrRow      { repo: RepoIx, pr: PrIx, stack: Option<StackSlot> },
+    IssueRow   { repo: RepoIx, issue: IssueIx },             // Issues tab only
     RepoEmpty  { repo: RepoIx },   // repo loaded, zero open PRs
     RepoError  { repo: RepoIx },   // last refresh failed
     RepoLoading{ repo: RepoIx },   // first load in flight
@@ -63,6 +69,9 @@ pub enum FeedRow {
 
 pub fn flatten(repos: &[RepoState], filter: &FeedFilter) -> Feed;
 pub fn flatten_in(repos: &[RepoState], filter: &FeedFilter, order: FeedOrder) -> Feed;
+pub fn flatten_tab(repos: &[RepoState], filter: &FeedFilter, tab: FeedTab) -> Feed;
+pub fn flatten_tab_in(repos: &[RepoState], filter: &FeedFilter, tab: FeedTab, order: FeedOrder) -> Feed;
+pub fn repo_pull_rows(repo: &RepoState, items: Sort<ItemSortKey>) -> (Vec<FeedRow>, Vec<FeedStack>);
 ```
 
 `flatten` walks repositories in `filter.sort.repos` order and each
@@ -76,12 +85,34 @@ emitted: GitHub's stacks and detected chains become one `StackHeader` row
 followed by the stack's visible members bottom first, each `PrRow` carrying a
 `StackSlot` (which stack, and Bottom/Middle/Top/Only for the chain glyph).
 A stack sorts as one unit. `Feed::stack(StackIx)` resolves a header to its
-group. See `stacks.md`.
+group. This happens on the Pull requests tab only: the Issues tab's rows are
+one `IssueRow` per issue, never grouped. `repo_pull_rows` is the same layout
+for a single repository, unfiltered, for the repository view. See
+`stacks.md`.
 
 `flatten` is a pure function over application state. It is the single place that
 decides row order and composition, and it is unit-tested directly without a
 window: empty repos, collapsed repos, error states, filtered-to-zero repos, and
 the ordering guarantees below.
+
+## Tabs
+
+`flatten_tab(repos, filter, tab)` builds the stream for one tab; `flatten` is
+`flatten_tab(.., FeedTab::PullRequests)`. Both tabs share every rule below —
+runs, chrome, hide-empty, collapse, the loading/error/empty notices — and
+differ only in which list (`prs` or `issues`) and which load state (`load` or
+`issues_load`) they read. A stream holds `PrRow`s or `IssueRow`s, never both,
+and `Feed` remembers its tab so a tab switch always counts as a change.
+
+The tab bar above the filter bar shows each tab's count of open items the
+filter accepts (`tab_counts`, collapse ignored). The active tab is
+`AppState.tab`, persisted as `feed_tab` by `Store::set_tab`. `]` and `[` switch
+tabs (no wrap) in the `Feed` key context, so they are inert while typing in
+the filter. The selection is kept across a switch; navigation in the new tab
+starts from its end because the old selection has no row there. On the Issues
+tab the drafts button is hidden (it has nothing to act on), the authors
+popover lists issue authors, and every repository header offers
+`+ New issue`.
 
 ## Control flow
 
@@ -92,7 +123,11 @@ the ordering guarantees below.
    whole vector wholesale would reset scroll position and drop measured heights.
 4. `list(state, render_item)` invokes `render_item(ix, window, cx)` only for rows
    in view plus overdraw. `render_item` matches on `FeedRow` and dispatches to
-   `render_repo_header`, `render_pr_row`, etc.
+   `render_repo_header`, `render_pr_row`, `render_issue_row`, etc. (in
+   `feed/rows.rs`). The item renderers wrap a shared row *body* —
+   `pr_row_content` / `issue_row_content`, free functions of the item and the
+   theme — in the row's container chrome; the repository view wraps the same
+   bodies in its own rows, so an item reads identically in both places.
 
 `list` is used rather than `uniform_list` because PR rows are variable height
 (title wrapping, label chips, CI status lines). `ListState` stores items in a
@@ -113,6 +148,18 @@ position within its repo's contiguous run:
 `flatten` records run boundaries so rendering does not have to rescan. The visual
 result is indistinguishable from discrete containers, but there is exactly one
 scroll region and one virtualized list.
+
+## Opening one repository
+
+A repository header's **name** and its **open ›** affordance (on both tabs,
+beside the Issues tab's **+ New issue**), and `o` on a selected pull request
+or issue, raise `FeedEvent::OpenRepo`. The workspace swaps the
+left pane to that repository's own view and back; the feed entity is kept
+meanwhile, so its scroll position and measured rows survive. Clicking
+elsewhere on the header still collapses it — the two clicks stop propagation
+so they never do both. Coming back with an item selected switches the feed to
+the tab that lists it (the view shows both kinds; the feed one at a time). See
+`docs/features/repo_view.md`.
 
 ## Managing repositories
 
@@ -260,8 +307,11 @@ detail pane's composers.
   contiguous.
 - **Indices are positional, not identity.** `RepoIx`/`PrIx` index into
   `AppState` as of the frame they were built. They must never be stored across a
-  refresh; persistent selection is stored as `(RepoId, PrNumber)` and resolved to
-  indices at render time.
+  refresh; persistent selection is stored as a `Selection` — `(RepoId,
+  PrNumber)` or `(RepoId, IssueNumber)` — and resolved to indices at render
+  time.
+- **One kind of item per stream.** A feed built for a tab holds only that
+  tab's item rows.
 - **Sticky headers are not available for free.** Zed's `sticky_items` decoration
   is implemented against `uniform_list` only. If sticky repo headers are wanted
   later, an equivalent must be written for `List`.
@@ -277,14 +327,16 @@ repositories, and is what everything below assumes.
 
 | File | Role |
 |---|---|
-| `crates/rostrum-core/src/feed.rs` | `FeedRow`, `flatten`, `flatten_in`, run-boundary computation, filter |
-| `crates/rostrum-core/src/sort/` | The feed's sorts; see `feed_sort.md` |
-| `crates/rostrum-core/src/state.rs` | `AppState`, `RepoState`, `PrSummary` |
-| `crates/rostrum/src/feed/mod.rs` | Feed view entity, `ListState` ownership, splice logic, row renderers, header popovers |
-| `crates/rostrum/src/feed/stacks.rs`, `feed/arrange.rs` | Stack header rows, stack confirmations, Arrange picking; see `stacks.md` |
+| `crates/rostrum-core/src/feed.rs` | `FeedRow` (including `StackHeader` and a member's `StackSlot`), `flatten`, `flatten_in`, `flatten_tab`, `flatten_tab_in`, `repo_pull_rows`, run-boundary computation, filter |
+| `crates/rostrum-core/src/sort/` | The feed's sorts, over pull requests and issues; see `feed_sort.md` |
+| `crates/rostrum-core/src/tabs.rs` | `FeedTab`, `TabCounts`, `tab_counts` |
+| `crates/rostrum-core/src/state.rs` | `AppState`, `RepoState`, `Selection` |
 | `crates/rostrum-core/src/stack/` | Stack model, detection, grouping; see `stacks.md` |
+| `crates/rostrum/src/feed/mod.rs` | Feed view entity, tab bar, `ListState` ownership, splice logic, identity selection (`selection_for`), header popovers, `FeedEvent` |
+| `crates/rostrum/src/feed/rows.rs` | Per-variant row renderers (container chrome, selection, clicks, the repository header with *open ›*, a stack member's glyph, indent and pick badge), and the row bodies `pr_row_content` / `issue_row_content` — shared with the repository view — plus `relative_time` |
+| `crates/rostrum/src/feed/stacks.rs`, `feed/arrange.rs` | Stack header rows, stack confirmations, Arrange picking; see `stacks.md` |
 | `crates/rostrum/src/feed/sort_menu.rs` | The Sort button and popover |
-| `crates/rostrum/src/nav.rs` | Keyboard navigation, selection actions |
+| `crates/rostrum/src/nav.rs` | Keyboard navigation over either kind of item row |
 | `crates/rostrum/src/sync/mod.rs` | `fetch_divergences` (the batched compare), `sync_all` |
 | `crates/rostrum/src/sync/stacks.rs` | Reading each repository's stacks after a refresh; the stack operations |
 | `crates/rostrum-core/src/state.rs` | `divergence_query`, `apply_divergences` (by number), `carry_forward_divergence` — shared with the Android core |

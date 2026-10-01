@@ -245,12 +245,10 @@ mod tests {
 
     fn repo(prs: Vec<PullRequest>, stacks: Vec<Stack>) -> RepoState {
         RepoState {
-            id: RepoId::new("o", "r"),
             prs,
             load: LoadState::Idle,
-            collapsed: false,
             stacks,
-            meta: None,
+            ..RepoState::new(RepoId::new("o", "r"))
         }
     }
 

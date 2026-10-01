@@ -7,7 +7,7 @@
 //! author, pull requests by stars — cannot be built, persisted or offered.
 //!
 //! The comparisons themselves live in [`compare`] as pure functions over
-//! `RepoState` and `PullRequest`, so both the desktop and the Android core
+//! `RepoState`, `PullRequest` and `Issue`, so both the desktop and the Android core
 //! order the feed identically.
 
 pub mod compare;
@@ -18,8 +18,9 @@ mod tests;
 use serde::{Deserialize, Serialize};
 
 pub use compare::{
-    SortValue, TextKey, compare_groups, compare_items, compare_repos, item_sort_value, order_items,
-    order_repos, repo_sort_value, sort_key_for_group,
+    SortValue, TextKey, compare_groups, compare_issues, compare_items, compare_repos,
+    issue_sort_value, item_sort_value, order_issues, order_items, order_repos, repo_sort_value,
+    sort_key_for_group,
 };
 
 /// Which way a key runs. What each end is *called* depends on the key's
@@ -116,8 +117,9 @@ pub trait SortKey: Copy + Eq + std::fmt::Debug + 'static {
 pub enum RepoSortKey {
     /// The repository's `pushedAt`: a push to any branch.
     Pushed,
-    /// The newest `updatedAt` among the repository's open items, falling back
-    /// to the repository's own `updatedAt` when it has none.
+    /// The newest `updatedAt` among the repository's open items — pull
+    /// requests and issues alike, whichever tab is showing — falling back to
+    /// the repository's own `updatedAt` when it has none.
     Updated,
     Created,
     /// The owning organization's or user's login.
@@ -156,8 +158,10 @@ impl SortKey for RepoSortKey {
     }
 }
 
-/// How items — pull requests now, issues later — are ordered within a
-/// repository.
+/// How items — pull requests on one tab, issues on the other — are ordered
+/// within a repository. One sort serves both tabs; issues have no branch, so
+/// [`ItemSortKey::Pushed`] reads an issue's `updatedAt` instead (see
+/// [`compare::issue_sort_value`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ItemSortKey {

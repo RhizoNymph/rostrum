@@ -1,0 +1,150 @@
+{
+ "data": {
+  "rateLimit": {
+   "cost": 1,
+   "remaining": 4976,
+   "resetAt": "2026-10-01T17:22:01Z"
+  },
+  "repository": {
+   "issues": {
+    "nodes": [
+     {
+      "id": "I_kwDOAAsO6M8AAAABOpQEuw",
+      "number": 161916,
+      "title": "1.99 beta crater regression: overflow evaluating the requirement",
+      "url": "https://github.com/rust-lang/rust/issues/161916",
+      "state": "OPEN",
+      "stateReason": null,
+      "createdAt": "2026-08-28T11:27:51Z",
+      "updatedAt": "2026-09-29T15:57:08Z",
+      "author": {
+       "login": "theemathas",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/6120103?v=4"
+      },
+      "assignees": {
+       "nodes": [
+        {
+         "login": "jdonszelmann",
+         "avatarUrl": "https://avatars.githubusercontent.com/u/22172241?u=9ea8eda154d3125f4af1a37c23e91a780aa3f526&v=4"
+        }
+       ]
+      },
+      "labels": {
+       "nodes": [
+        {
+         "name": "P-high",
+         "color": "eb6420"
+        },
+        {
+         "name": "final-comment-period",
+         "color": "1e76d9"
+        },
+        {
+         "name": "regression-from-stable-to-beta",
+         "color": "e4008a"
+        },
+        {
+         "name": "C-bug",
+         "color": "f5f1fd"
+        },
+        {
+         "name": "disposition-close",
+         "color": "dd0000"
+        },
+        {
+         "name": "S-has-mcve",
+         "color": "862eff"
+        },
+        {
+         "name": "T-types",
+         "color": "bfd4f2"
+        },
+        {
+         "name": "fixed-by-next-solver",
+         "color": "93CE7D"
+        },
+        {
+         "name": "S-has-bisection",
+         "color": "862eff"
+        }
+       ]
+      },
+      "comments": {
+       "totalCount": 14
+      },
+      "milestone": {
+       "title": "1.99.0"
+      }
+     },
+     {
+      "id": "I_kwDOAAsO6M8AAAABTLCijg",
+      "number": 163320,
+      "title": "[ICE]: ICE with next-solver",
+      "url": "https://github.com/rust-lang/rust/issues/163320",
+      "state": "OPEN",
+      "stateReason": null,
+      "createdAt": "2026-09-25T10:32:54Z",
+      "updatedAt": "2026-09-29T14:57:45Z",
+      "author": {
+       "login": "jsen-",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/1452008?u=8a626274b608b75eeb7ab90ec65f1f0d81215084&v=4"
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "labels": {
+       "nodes": [
+        {
+         "name": "I-ICE",
+         "color": "e10c02"
+        },
+        {
+         "name": "P-medium",
+         "color": "eb6420"
+        },
+        {
+         "name": "regression-from-stable-to-nightly",
+         "color": "e4008a"
+        },
+        {
+         "name": "A-associated-items",
+         "color": "f7e101"
+        },
+        {
+         "name": "T-compiler",
+         "color": "bfd4f2"
+        },
+        {
+         "name": "C-bug",
+         "color": "f5f1fd"
+        },
+        {
+         "name": "A-const-generics",
+         "color": "f7e101"
+        },
+        {
+         "name": "T-types",
+         "color": "bfd4f2"
+        },
+        {
+         "name": "WG-trait-system-refactor",
+         "color": "c2e0c6"
+        },
+        {
+         "name": "needs-triage",
+         "color": "f28907"
+        }
+       ]
+      },
+      "comments": {
+       "totalCount": 3
+      },
+      "milestone": {
+       "title": "1.100.0"
+      }
+     }
+    ]
+   }
+  }
+ }
+}

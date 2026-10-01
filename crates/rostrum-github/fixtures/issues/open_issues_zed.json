@@ -1,0 +1,131 @@
+{
+ "data": {
+  "rateLimit": {
+   "cost": 1,
+   "remaining": 4985,
+   "resetAt": "2026-10-01T17:22:01Z"
+  },
+  "repository": {
+   "issues": {
+    "nodes": [
+     {
+      "id": "I_kwDOFExXwM8AAAABUbRfPw",
+      "number": 65045,
+      "title": "agent `terminal` and `find_path` always fail with \"tool input was not fully received\" (all other tools work)",
+      "url": "https://github.com/zed-industries/zed/issues/65045",
+      "state": "OPEN",
+      "stateReason": null,
+      "createdAt": "2026-10-01T16:41:37Z",
+      "updatedAt": "2026-10-01T16:43:09Z",
+      "author": {
+       "login": "dmitry-kuznetsov",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/8580647?v=4"
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "labels": {
+       "nodes": [
+        {
+         "name": "state:needs triage",
+         "color": "fbca04"
+        }
+       ]
+      },
+      "comments": {
+       "totalCount": 1
+      },
+      "milestone": null
+     },
+     {
+      "id": "I_kwDOFExXwM8AAAABUXj9Bg",
+      "number": 65035,
+      "title": "Font ligatures drawn across highlight boundaries take the wrong color (Python `__init__(` → trailing `__` gets bracket color)",
+      "url": "https://github.com/zed-industries/zed/issues/65035",
+      "state": "OPEN",
+      "stateReason": null,
+      "createdAt": "2026-10-01T12:06:18Z",
+      "updatedAt": "2026-10-01T16:39:37Z",
+      "author": {
+       "login": "matyssxdxd",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/97873153?u=97f234fa89c54ae6869f6abf8c282182ee17c158&v=4"
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "labels": {
+       "nodes": [
+        {
+         "name": "state:needs triage",
+         "color": "fbca04"
+        }
+       ]
+      },
+      "comments": {
+       "totalCount": 4
+      },
+      "milestone": null
+     },
+     {
+      "id": "I_kwDOFExXwM6QxPvG",
+      "number": 15138,
+      "title": "Dependency Dashboard",
+      "url": "https://github.com/zed-industries/zed/issues/15138",
+      "state": "OPEN",
+      "stateReason": null,
+      "createdAt": "2024-07-25T02:36:47Z",
+      "updatedAt": "2026-10-01T16:18:19Z",
+      "author": {
+       "login": "renovate",
+       "avatarUrl": "https://avatars.githubusercontent.com/in/2740?v=4"
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "labels": {
+       "nodes": [
+        {
+         "name": "ignore top-ranking issues",
+         "color": "F76E1D"
+        }
+       ]
+      },
+      "comments": {
+       "totalCount": 3
+      },
+      "milestone": null
+     },
+     {
+      "id": "I_kwDOFExXwM8AAAABULKlyQ",
+      "number": 64992,
+      "title": "Global skills with a symlinked SKILL.md are not discovered",
+      "url": "https://github.com/zed-industries/zed/issues/64992",
+      "state": "OPEN",
+      "stateReason": null,
+      "createdAt": "2026-09-30T15:22:50Z",
+      "updatedAt": "2026-10-01T16:01:23Z",
+      "author": {
+       "login": "bluestrike2",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/322127?v=4"
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "labels": {
+       "nodes": [
+        {
+         "name": "state:needs triage",
+         "color": "fbca04"
+        }
+       ]
+      },
+      "comments": {
+       "totalCount": 0
+      },
+      "milestone": null
+     }
+    ]
+   }
+  }
+ }
+}

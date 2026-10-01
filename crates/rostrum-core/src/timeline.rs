@@ -3,7 +3,10 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::model::{CheckState, PullState, Side, User};
+use crate::{
+    issue::CloseReason,
+    model::{CheckState, PullState, Side, User},
+};
 
 /// GraphQL node id of an issue or review comment.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -80,10 +83,43 @@ pub enum EventKind {
     HeadRefForcePushed,
     ReviewRequested { reviewer: String },
     Assigned { assignee: String },
+    Unassigned { assignee: String },
+    /// An issue closed with a recorded reason. Pull requests, and issues
+    /// closed before GitHub kept reasons, use [`EventKind::Closed`].
+    ClosedAs(CloseReason),
+    /// Another issue or pull request mentioned this one. `source` is
+    /// `owner/name#number`, the form GitHub itself writes a cross-reference.
+    CrossReferenced { source: String, title: String },
     Labeled { name: String },
     Unlabeled { name: String },
     Renamed { from: String, to: String },
     Other(String),
+}
+
+impl EventKind {
+    /// The words after the actor's login, as both the desktop and the phone
+    /// render an event.
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Merged => "merged this".into(),
+            Self::Closed => "closed this".into(),
+            Self::ClosedAs(reason) => format!("closed this as {}", reason.describe()),
+            Self::Reopened => "reopened this".into(),
+            Self::ReadyForReview => "marked ready for review".into(),
+            Self::ConvertedToDraft => "converted to draft".into(),
+            Self::HeadRefForcePushed => "force-pushed".into(),
+            Self::ReviewRequested { reviewer } => format!("requested a review from {reviewer}"),
+            Self::Assigned { assignee } => format!("assigned {assignee}"),
+            Self::Unassigned { assignee } => format!("unassigned {assignee}"),
+            Self::CrossReferenced { source, title } => {
+                format!("mentioned this in {source} “{title}”")
+            }
+            Self::Labeled { name } => format!("added the {name} label"),
+            Self::Unlabeled { name } => format!("removed the {name} label"),
+            Self::Renamed { from, to } => format!("renamed this from “{from}” to “{to}”"),
+            Self::Other(kind) => kind.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -304,5 +340,33 @@ mod tests {
         let json = r#"{"items":[],"threads":[],"checks":[],"state":"MERGED"}"#;
         let conversation: Conversation = serde_json::from_str(json).expect("decodes");
         assert_eq!(conversation.state, Some(PullState::Merged));
+    }
+
+    #[test]
+    fn issue_events_describe_themselves() {
+        assert_eq!(
+            EventKind::ClosedAs(CloseReason::NotPlanned).describe(),
+            "closed this as not planned"
+        );
+        assert_eq!(
+            EventKind::ClosedAs(CloseReason::Completed).describe(),
+            "closed this as completed"
+        );
+        assert_eq!(
+            EventKind::Unassigned {
+                assignee: "bob".into()
+            }
+            .describe(),
+            "unassigned bob"
+        );
+        assert_eq!(
+            EventKind::CrossReferenced {
+                source: "a/b#7".into(),
+                title: "Fix".into()
+            }
+            .describe(),
+            "mentioned this in a/b#7 “Fix”"
+        );
+        assert_eq!(EventKind::Closed.describe(), "closed this");
     }
 }

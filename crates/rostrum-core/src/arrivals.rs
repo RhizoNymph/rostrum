@@ -186,12 +186,9 @@ mod tests {
 
     fn loaded(name: &str, values: &[u32]) -> RepoState {
         RepoState {
-            id: name.parse().expect("valid repo id"),
             prs: values.iter().copied().map(pull).collect(),
             load: LoadState::Loaded { at: Utc::now() },
-            collapsed: false,
-            stacks: Vec::new(),
-            meta: None,
+            ..RepoState::new(name.parse().expect("valid repo id"))
         }
     }
 
