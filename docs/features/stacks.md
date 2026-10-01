@@ -29,16 +29,31 @@ and merges a whole stack at once. GitHub — through the `gh stack` extension
   worktrees, pushes each rewrite with `--force-with-lease`, then links and
   tracks the stack. Conflicts stop before anything is pushed and go to the
   conflict handler when one is configured.
+- **Add to stack**: put open pull requests on top of an existing GitHub
+  stack, in a chosen order — a plain `gh stack link <stack> <pr>...` when
+  they already chain off the top, otherwise the Arrange path (rebase onto the
+  top in scratch worktrees, leased push, then link). The stack's existing
+  members are never touched. A line of pull requests already built on a
+  stack's top is offered as "Extend with #a ← #b".
 - **Merge stack**: GitHub's atomic, all-or-nothing stack merge, with a
   confirmation listing every member's merge state and the method.
 - **Unstack**, with confirmation.
 
 ## Non-scope
 
-- **Android.** The phone gets stack members in the same contiguous order but
-  no header and no actions (`rostrum-ffi` ignores `FeedRow::StackHeader`).
-- **Editing a stack in place** (`gh stack modify`, adding to an existing
-  stack, `gh stack sync`/`rebase`). Unstack and arrange again instead.
+- **Android UI.** The phone's feed gets stack members in the same contiguous
+  order but no header and no actions (`rostrum-ffi` ignores
+  `FeedRow::StackHeader`). The *operations* are reachable from a paired phone
+  through `rostrumd` (below); a phone screen for them is not built yet.
+- **Editing a stack in place** beyond adding to its top (`gh stack modify`,
+  reordering or removing members, `gh stack sync`/`rebase`). Unstack and
+  arrange again instead.
+- **Tracking an extension locally.** gh-stack has no command that adopts
+  branches onto an already-tracked stack; an extension is made on GitHub
+  only, and `gh stack sync` in the clone pulls the additions into local
+  tracking (the outcome says so).
+- **Stack actions in the repo view.** It shows stack headers read-only; the
+  actions live in the feed.
 - **Creating pull requests.** Every member already has one; `gh stack submit`
   is never run, because it pushes on rostrum's behalf.
 - **Forks.** A pull request from a fork is never detected into a chain and
@@ -191,6 +206,39 @@ created, which turns it on for later commands) records the resolution, and
 the next run's rebase replays it and continues by itself. Stale scratch
 worktrees with no operation in progress are removed at the start of each run.
 
+### Add to stack (`rostrum_stack::run_extend_job`)
+
+The header of every GitHub stack offers **Add to stack**, which starts
+picking pull requests of that repository only (`PickTarget::Extend`; clicks
+in another repository are ignored), and — when `rostrum_core::continuations`
+finds a line of open pull requests already built on the stack's top — an
+**Extend with #a ← #b** button that opens the panel with that line ordered.
+
+`rostrum_core::plan_extend(repo, stack, order)` validates, as typed
+`ExtendError`s: the stack is one of the repository's GitHub stacks, its top
+member is open (its branch is what the additions build on), there is at least
+one addition, and every addition is open, same-repository (not a fork),
+listed once, not already in this stack, in no other stack, and not heading
+one of the stack's own branches or sharing a head with another addition.
+
+`ExtendPlan::is_chained(ix)` asks whether addition `ix` already targets what
+it must (the top's head for the first, the previous addition's head for the
+rest). `needs_rewrite()` is any addition not chained; `rewrites()` is the
+first unchained addition and every one above it — exactly the branches the
+panel names in its confirmation, since a rebased branch moves everything on
+it.
+
+`run_extend_job` runs the same pipeline as Make/Arrange (`run_chain`), rooted
+at the stack's top branch instead of a trunk: fetch the top and every
+addition's head and base, rebase what needs it onto the one below (the first
+onto the top's remote tip) in scratch worktrees, lease-push each rewrite,
+align local branches, then `gh stack link <stack> <pr>...` — numbers only, so
+`link` pushes nothing, and it retargets the additions' bases. The top branch
+and the stack's existing members are never rebased or pushed. The outcome is
+`StackOutcome::Extended { stack, report }`, or the same stop outcomes as
+Arrange (conflict, hand-off, rejected lease, link failed), each re-runnable:
+a rerun skips additions already on their new parent.
+
 ### Merge stack
 
 `rostrum_stack::merge_stack` runs `gh stack merge <number> --yes
@@ -206,6 +254,32 @@ the all-or-nothing note.
 `gh stack unstack <number>` from the clone (it looks the number up locally
 before going to GitHub, and fails outside a repository, so it needs a clone).
 The pull requests stay open with their current bases.
+
+### From a paired phone (`rostrumd`)
+
+The phone cannot run `gh`. `rostrumd` exposes Make stack, Arrange, Add to
+stack, Merge stack and Unstack as authenticated routes
+(`docs/features/remote_protocol.md`, "Stacks from a phone") and runs them
+with the functions above, unchanged: `run_stack_job`, `run_extend_job`,
+`merge_stack`, `unstack`, over `GhCli`, with the repository's configured
+clone and conflict handler and **the desktop's own scratch-worktree
+directory** (`~/.cache/rostrum/stack-worktrees`), so a conflict handed off
+from the phone can be finished, and the arrangement re-run, from either
+side.
+
+Validation is the desktop's: rostrumd fetches the repository's open pull
+requests and GitHub's stacks for the request and calls `plan_stack` /
+`plan_extend`. For a rewrite, the request's `confirm_rewrite` must equal
+`StackPlan::rewrites()` / `ExtendPlan::rewrites()` as a set — the same list
+the desktop's Arrange and Add to stack panels name — or nothing runs (409
+`rewrite_not_confirmed`); Make stack on a chain that would need a rewrite is
+refused the same way. A dry-run route returns that list for the phone to show.
+
+Each operation is a job the phone polls, holding the clone's lease in
+rostrumd's job coordinator: one job of any kind per clone at a time. (The
+desktop's own "one stack operation at a time" is per process; the desktop and
+the daemon do not coordinate, and git's own locks and the leased pushes are
+what keep a simultaneous run from both safe.)
 
 ## The push exception
 
@@ -223,9 +297,11 @@ pushed. It is kept as narrow as possible:
   for branches it rewrote, with the oid it fetched at the start as the lease.
 - `gh stack` is never allowed to push: `submit`, `push`, `sync` and `rebase`
   have no `GhStackCommand` variant, and `link` is given numbers.
-- The confirmation states it: the Arrange panel requires ticking "these
-  branches will be rebased and force-pushed (with lease)", and reordering
-  clears the tick.
+- The confirmation states it: the Arrange and Add to stack panels require
+  ticking "these branches will be rebased and force-pushed (with lease)"
+  (Add to stack names each branch), and reordering clears the tick.
+- An extension never rewrites the stack it extends: the top branch is the
+  root of the rebase, not a member of it.
 
 ## Running `gh`
 
@@ -242,6 +318,7 @@ not a terminal, so gh-stack's interactive paths are never taken.
 | Command | argv | Timeout | Cwd |
 |---|---|---|---|
 | `Link` | `stack link --base <trunk> <n>...` | 180 s | clone |
+| `LinkExtend` | `stack link <stack> <n>...` | 180 s | clone |
 | `Init` | `stack init --base <trunk> -- <branch>...` | 60 s | clone |
 | `ViewJson` | `stack view --json` | 60 s | clone |
 | `Merge` | `stack merge <stack> --yes --merge-method <m>` | 900 s | clone or scratch dir |
@@ -254,7 +331,8 @@ not a terminal, so gh-stack's interactive paths are never taken.
 | `crates/rostrum-core/src/stack/model.rs` | The types | `Stack`, `StackNumber`, `StackMembers`, `RefName`, `StackError` |
 | `crates/rostrum-core/src/stack/detect.rs` | Chain detection | `detect_chains` |
 | `crates/rostrum-core/src/stack/group.rs` | Groups, units, rollup | `stack_groups`, `StackGroup`, `units`, `FeedUnit`, `MergeRollup`, `StackIx` |
-| `crates/rostrum-core/src/stack/plan.rs` | Validating a request | `plan_stack`, `StackPlan`, `PlanMember`, `PlanError` |
+| `crates/rostrum-core/src/stack/plan.rs` | Validating a request; which members a rewrite touches | `plan_stack`, `StackPlan` (`rewrites`), `PlanMember`, `PlanError` |
+| `crates/rostrum-core/src/stack/extend.rs` | Validating an extension, chained-vs-rewrite, lines past a top | `plan_extend`, `ExtendPlan`, `ExtendError`, `continuations`, `Continuation` |
 | `crates/rostrum-core/src/stack/feed_tests.rs` | Stacks in `flatten`, including sorting | — |
 | `crates/rostrum-core/src/feed.rs` | `push_units`; `FeedRow::StackHeader`, `StackSlot`, `StackPlace`, `FeedStack`; one repository's rows for the repository view | `Feed::stack`, `repo_pull_rows` |
 | `crates/rostrum-core/src/sort/compare.rs` | feed-sort's group hook stacks sort through | `sort_key_for_group`, `compare_groups` |
@@ -268,14 +346,15 @@ not a terminal, so gh-stack's interactive paths are never taken.
 | `crates/rostrum-stack/src/gh/view.rs` | `gh stack view --json` | `StackView` |
 | `crates/rostrum-stack/src/local_file.rs` | Reading `<git-dir>/gh-stack` | `LocalStacks`, `LocalStack` |
 | `crates/rostrum-stack/src/job.rs` | Job, progress, outcomes | `StackJob`, `StackProgress`, `Progress`, `StackOutcome`, `StackReport`, `LocalTracking`, `LocalNote` |
-| `crates/rostrum-stack/src/run.rs` | Make and Arrange | `run_stack_job` |
+| `crates/rostrum-stack/src/run.rs` | Make, Arrange and Add to stack, over one shared pipeline | `run_stack_job`, `run_extend_job` |
 | `crates/rostrum-stack/src/remote.rs` | Merge and unstack | `merge_stack`, `unstack` |
 | `crates/rostrum-stack/src/error.rs` | Typed errors | `StackOpError` |
-| `crates/rostrum/src/sync/stacks.rs` | Store: reading stacks, running one operation, progress | `StackSync`, `Store::{make_stack, merge_stack, unstack, stack_op}` |
+| `crates/rostrum/src/sync/stacks.rs` | Store: reading stacks, running one operation, progress | `StackSync`, `Store::{make_stack, extend_stack, merge_stack, unstack, stack_op}` |
 | `crates/rostrum/src/feed/stacks.rs` | Header row, glyphs, confirmation panels, status line | `StackUi`, `StackPanel` |
 | `crates/rostrum/src/feed/rows.rs` | A member row: glyph, indent, pick badge around the shared body | — |
 | `crates/rostrum/src/repo_view/order.rs` | Stacks in the repository view's pull request list | `ListOrder::{slot_at, header_at}` |
-| `crates/rostrum/src/feed/arrange.rs` | Picking, ordering, trunk, rewrite confirmation | `Picking` |
+| `crates/rostrum/src/feed/arrange.rs` | Picking (for a new stack or an extension), ordering, trunk, rewrite confirmation | `Picking`, `PickTarget` |
+| `crates/rostrum/src/feed/extend.rs` | The Add to stack panel | `describe` |
 
 ## Invariants and constraints
 
@@ -297,4 +376,12 @@ not a terminal, so gh-stack's interactive paths are never taken.
 - **Only `gh stack link`, `init`, `view`, `merge` and `unstack` are ever
   run.** Tests never run a mutating `gh stack` command: the runner is a trait
   and the tests assert the exact argv a double receives.
-- **One stack operation at a time**, across all repositories.
+- **One stack operation at a time**, across all repositories, in the desktop
+  app; one job per clone in `rostrumd`.
+- **A rewrite is confirmed by name.** The desktop's panels list
+  `rewrites()` and require the tick; a phone must send exactly that list as
+  `confirm_rewrite`.
+- **Callable without the UI.** `run_stack_job`, `run_extend_job`,
+  `merge_stack` and `unstack` take plain inputs (a clone path, a validated
+  plan or a stack number, an optional handler, a scratch directory, a
+  `GhRunner`) so `rostrumd` can expose them to a paired phone.

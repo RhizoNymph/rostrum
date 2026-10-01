@@ -203,6 +203,49 @@ setting added to `Config` later stays on the desktop until someone decides it
 should travel. A missing `config.json` answers with rostrum's defaults, as
 every other route does.
 
+### Stacks
+
+A paired phone drives stacks — make, arrange, add to stack, merge, unstack —
+through `rostrum-stack`, since it cannot run `gh` itself. The protocol side is
+in `remote_protocol.md` ("Stacks from a phone"); the operations themselves in
+`stacks.md`. Every operation goes (`api/stacks.rs`, `stacks/`):
+
+1. **Clone.** `RostrumConfig::load` (fresh) must have a clone for the
+   repository — otherwise 404 — and its conflict handler, if any, comes along.
+   The clone's lease is taken from the job coordinator **first**, so a busy
+   clone is refused with 409 `busy` before GitHub is asked anything.
+2. **Snapshot.** `RepoSnapshots::snapshot` fetches the repository's open pull
+   requests (GraphQL, newest 100) and GitHub's stacks (Stacks REST API; a 404
+   means none) with `resolve_token()`'s token, which is never logged. A
+   failure is 500 with GitHub's reason.
+3. **Validate** (`stacks/validate.rs`), purely: `plan_stack` / `plan_extend`
+   from rostrum-core (400 with the plan's reason: a closed pull request, a
+   fork, a duplicate, already stacked, …); for Arrange and Add to stack,
+   `confirm_rewrite` must equal the plan's `rewrites()` heads as a set, and
+   Make stack must need no rewrite — otherwise 409 `rewrite_not_confirmed`
+   naming the branches. Merge and unstack need the stack to be one of the
+   repository's open stacks (404 otherwise). Nothing has run yet.
+4. **Job.** `Jobs::start_stack_job` records a `StackJobStatus` (id, kind,
+   repo, `running`) in the coordinator's `StackJobBook` and spawns a task that
+   owns the lease and runs the operation (`StackOps`: `GhStackOps(GhCli)` in
+   the service) with a `Progress` channel; each step is forwarded to the
+   job's record as `running { progress }`, and the final state — mapped by
+   `stacks/outcome.rs` from `StackOutcome` or `StackOpError`, with
+   rostrum-stack's own summary as `detail` — lands last. The `POST` answers
+   with the starting status; `GET /api/v1/stacks/jobs/{id}` polls. The book
+   keeps the newest 32 jobs.
+
+`POST /api/v1/stacks/plan` runs steps 1–3 without the lease and answers with
+the branches a rewrite would touch.
+
+The work runs in its own task, like every job: a phone that hangs up does not
+stop a rebase half-way. Scratch worktrees go in the desktop app's own
+directory (`~/.cache/rostrum/stack-worktrees`). Merge runs `gh stack merge`
+from the clone and unstack `gh stack unstack` from the clone, exactly as the
+desktop does. Starting, refusing and finishing a stack job are logged at
+`info` with the repository, the pull request numbers, the stack number and
+the job id.
+
 ### Concurrency
 
 No web of mutexes. Two actors own all mutable state and are fed over
@@ -395,6 +438,15 @@ saw — printing none of them.
 | `crates/rostrumd/src/rostrum_config.rs` | rostrum's `config.json`, read fresh; `MachineInfo` and the copyable `DesktopConfig` built from it | `RostrumConfig`, `clones`, `machine_info`, `desktop_config` |
 | `crates/rostrumd/src/github.rs` | GitHub token handover | `HandoverSource`, `GhHandover` |
 | `crates/rostrumd/src/tmux.rs` | Listing handoff sessions | `SessionLister`, `TmuxCli`, `TmuxSession`, `parse_sessions`, `is_no_server`, `handoff_sessions` |
+| `crates/rostrumd/src/stacks/mod.rs` | The stack request flow; the desktop's scratch directory | `default_scratch_dir` |
+| `crates/rostrumd/src/stacks/validate.rs` | Validating a stack request, the rewrite confirmation | `make`, `arrange`, `extend`, `existing_stack`, `preview`, `StackRequestError` |
+| `crates/rostrumd/src/stacks/snapshot.rs` | Open pull requests and stacks from GitHub, now | `RepoSnapshots`, `GitHubSnapshots`, `SnapshotError` |
+| `crates/rostrumd/src/stacks/ops.rs` | `rostrum-stack` behind a replaceable seam | `StackOps`, `GhStackOps`, `merge_method` |
+| `crates/rostrumd/src/stacks/outcome.rs` | Results → the job state a phone polls | `chain_state`, `merge_state`, `unstack_state` |
+| `crates/rostrumd/src/jobs/stack_jobs.rs` | The coordinator's record of stack jobs | `StackJobBook` |
+| `crates/rostrumd/src/api/stacks.rs` | The stack routes | — |
+| `crates/rostrumd/src/api/stack_tests.rs` | Stack router tests | — |
+| `crates/rostrumd/tests/stack_job.rs` | Stack jobs end to end over TLS, real git, rostrum-stack's recording `gh` | — |
 | `crates/rostrumd/src/logging.rs` | Structured logs to stdout/journal | `init`, `DEFAULT_FILTER` |
 | `crates/rostrumd/src/server.rs` | Running both routers on their listeners | `start`, `serve_http`, `serve_https`, `Servers` |
 | `crates/rostrumd/src/net/client.rs` | Loopback / tailnet / other | `ClientClass`, `throttle_key` |
@@ -438,6 +490,15 @@ saw — printing none of them.
 
 ## Invariants and constraints
 
+- **A stack rewrite runs only when confirmed by name**: the request's
+  `confirm_rewrite` equals the plan's rewritten branches, computed on the
+  desktop from GitHub's current state.
+- **Stack requests are validated against GitHub now**, with the desktop's
+  rostrum-core planners, before anything runs; a busy clone is refused
+  before even that.
+- **Tests never run `gh stack`**: the stack operations are behind `StackOps`,
+  and the end-to-end test uses rostrum-stack's recording double.
+
 - **The gating rule.** Only loopback (`127.0.0.0/8`, `::1`) and tailnet
   (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) peers, after IPv4-mapped
   normalisation, may generate codes, list devices or revoke; the `Host` must
@@ -474,7 +535,7 @@ saw — printing none of them.
 
 ## Testing
 
-`cargo test -p rostrumd` — 181 tests:
+`cargo test -p rostrumd` — 210 tests:
 
 - Unit: code lifecycle (expiry, single use, five strikes, per-address throttle
   and its window, IPv6 `/64`), address classification including mapped IPv6
@@ -494,8 +555,15 @@ saw — printing none of them.
   from a file with malformed and duplicate repositories, mixed-case authors
   and every never-sent field set, pairing and
   its refusals (410 with a paused clock, 429), the gate from every kind of
-  peer, cross-site and rebound requests, both page variants.
+  peer, cross-site and rebound requests, both page variants; every stack
+  route's 401, the dry run, the rewrite confirmation (missing, partial,
+  extra, wrong — 409, nothing run), plan errors (400) and unknown repository,
+  stack or job (404), the job lifecycle with progress, and the busy rule
+  (a second stack job and a local job on the clone are 409 while one runs).
 - Integration: the phone's real `RemoteClient` over TLS (pinning, mismatch,
   probe, pair, use including `config()`, unpair) and real
   pull/merge/rebase/abort/sync-all over the
-  API against a scratch origin, clone and worktree.
+  API against a scratch origin, clone and worktree; stack jobs through the
+  real `RemoteClient`, the real pipeline and real git with rostrum-stack's
+  recording `gh` (a refused over-confirmation, then an arrangement that
+  rebases and lease-pushes exactly the confirmed branch, and a make).

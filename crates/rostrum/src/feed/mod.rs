@@ -30,6 +30,7 @@ use crate::{
 };
 
 mod arrange;
+mod extend;
 mod sort_menu;
 mod stacks;
 

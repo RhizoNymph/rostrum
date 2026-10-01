@@ -11,6 +11,7 @@
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
+use rostrum_stack::GhCli;
 use tokio::signal::unix::{SignalKind, signal};
 
 use crate::{
@@ -21,6 +22,7 @@ use crate::{
     net::{self, NetworkView, listen},
     rostrum_config::RostrumConfig,
     server, settings,
+    stacks::{self, GhStackOps, GitHubSnapshots},
     tmux::TmuxCli,
 };
 
@@ -138,6 +140,9 @@ pub async fn run(args: Args) -> Result<(), StartupError> {
         github: Arc::new(GhHandover::new(settings.machine_name())),
         tmux: Arc::new(TmuxCli),
         network,
+        stack_ops: Arc::new(GhStackOps(Arc::new(GhCli))),
+        snapshots: Arc::new(GitHubSnapshots),
+        stack_scratch_dir: stacks::default_scratch_dir(),
     })?;
 
     let http = listen::bind_all(settings.bind(), settings.http_port()).map_err(|source| {

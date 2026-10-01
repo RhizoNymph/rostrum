@@ -23,6 +23,7 @@
 
 mod actor;
 pub mod handoffs;
+pub mod stack_jobs;
 pub mod sync;
 
 use std::{
@@ -31,9 +32,11 @@ use std::{
     sync::Arc,
 };
 
+use rostrum_core::RepoId;
 use rostrum_git::Repo;
 use rostrum_local::{LocalJob, LocalResult};
-use rostrum_remote::{PrKey, SyncRun};
+use rostrum_remote::{PrKey, StackJobId, StackJobKind, StackJobState, StackJobStatus, SyncRun};
+use rostrum_stack::{Progress, StackProgress};
 use tokio::sync::{mpsc, oneshot};
 
 pub use handoffs::{HandoffBook, HandoffRecord};
@@ -133,6 +136,19 @@ enum Command {
     Shutdown {
         reply: oneshot::Sender<()>,
     },
+    StackJobStart {
+        repo: RepoId,
+        kind: StackJobKind,
+        reply: oneshot::Sender<StackJobStatus>,
+    },
+    StackJobUpdate {
+        id: StackJobId,
+        state: StackJobState,
+    },
+    StackJobGet {
+        id: StackJobId,
+        reply: oneshot::Sender<Option<StackJobStatus>>,
+    },
 }
 
 /// Exclusive use of one clone, released on drop.
@@ -168,6 +184,9 @@ impl std::fmt::Debug for Command {
             Self::RecordHandoff { .. } => "RecordHandoff",
             Self::Handoffs { .. } => "Handoffs",
             Self::Shutdown { .. } => "Shutdown",
+            Self::StackJobStart { .. } => "StackJobStart",
+            Self::StackJobUpdate { .. } => "StackJobUpdate",
+            Self::StackJobGet { .. } => "StackJobGet",
         })
     }
 }
@@ -257,10 +276,72 @@ impl Jobs {
         self.ask(|reply| Command::Handoffs { reply }).await
     }
 
+    /// Record a stack job and run `work` in its own task, holding `lease`
+    /// (taken by the caller before validating, so a busy clone is refused
+    /// first) until it finishes. Answers at once with the job as it starts;
+    /// progress and the final state go to the job's record for polling.
+    ///
+    /// Like every job, the work outlives the request that started it.
+    pub async fn start_stack_job<F>(
+        &self,
+        lease: Lease,
+        repo: RepoId,
+        kind: StackJobKind,
+        work: F,
+    ) -> Result<StackJobStatus, JobsError>
+    where
+        F: FnOnce(Progress) -> BoxFuture<'static, StackJobState> + Send + 'static,
+    {
+        let status = self
+            .ask(|reply| Command::StackJobStart { repo, kind, reply })
+            .await?;
+        let id = status.id;
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            use futures::StreamExt;
+            let (sender, mut receiver) = futures::channel::mpsc::unbounded::<StackProgress>();
+            let forward = {
+                let tx = tx.clone();
+                async move {
+                    while let Some(progress) = receiver.next().await {
+                        let _ = tx.send(Command::StackJobUpdate {
+                            id,
+                            state: StackJobState::Running {
+                                progress: Some(progress.describe()),
+                            },
+                        });
+                    }
+                }
+            };
+            // The work owns the only sender: when it finishes, the forwarder
+            // drains what is left and ends, so the final state lands last.
+            let (state, ()) = tokio::join!(work(Progress::new(sender)), forward);
+            tracing::info!(job = %id, ?kind, state = state_name(&state), "stack job finished");
+            let _ = tx.send(Command::StackJobUpdate { id, state });
+            drop(lease);
+        });
+        Ok(status)
+    }
+
+    /// A stack job by id, while the coordinator remembers it.
+    pub async fn stack_job(&self, id: StackJobId) -> Result<Option<StackJobStatus>, JobsError> {
+        self.ask(|reply| Command::StackJobGet { id, reply }).await
+    }
+
     /// Refuse new work, stop any sync-all run between entries, and wait until
     /// the work already running has released its clones.
     pub async fn shutdown(&self) {
         let _ = self.ask(|reply| Command::Shutdown { reply }).await;
+    }
+}
+
+fn state_name(state: &StackJobState) -> &'static str {
+    match state {
+        StackJobState::Running { .. } => "running",
+        StackJobState::Done { .. } => "done",
+        StackJobState::Conflicted { .. } => "conflicted",
+        StackJobState::HandedOff { .. } => "handed_off",
+        StackJobState::Failed { .. } => "failed",
     }
 }
 

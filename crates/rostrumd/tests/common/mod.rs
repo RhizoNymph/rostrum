@@ -5,11 +5,13 @@
 
 use std::{net::SocketAddr, path::Path, sync::Arc, time::Duration};
 
+use rostrum_core::{RepoId, RepoState};
 use rostrum_local::{LocalJob, LocalResult};
 use rostrum_remote::{
     CertFingerprint, Endpoint, GitHubHandover, GitHubToken, PairRequest, PairResponse,
     PairingOffer, client::RemoteClient,
 };
+use rostrum_stack::{GhOutput, GhRunner, GhStackCommand, StackOpError};
 use rostrumd::{
     Daemon, DaemonParts, TlsIdentity,
     boxed::BoxFuture,
@@ -19,6 +21,7 @@ use rostrumd::{
     net::{NetworkView, listen},
     rostrum_config::RostrumConfig,
     server::{self, Servers},
+    stacks::{GhStackOps, RepoSnapshots, SnapshotError, StackOps},
     tmux::{SessionLister, TmuxError, TmuxSession},
     web::CodeOffer,
 };
@@ -69,6 +72,49 @@ pub struct Harness {
     _network: watch::Sender<NetworkView>,
 }
 
+/// Stack backends for a harness: none by default (a snapshot with no pull
+/// requests, and operations that must not be reached).
+pub struct StackSetup {
+    pub ops: Arc<dyn StackOps>,
+    pub snapshots: Arc<dyn RepoSnapshots>,
+    pub scratch_dir: Option<std::path::PathBuf>,
+}
+
+impl Default for StackSetup {
+    fn default() -> Self {
+        Self {
+            ops: Arc::new(GhStackOps(Arc::new(UnreachableGh))),
+            snapshots: Arc::new(FixedSnapshots(RepoState::new(RepoId::new("o", "r")))),
+            scratch_dir: None,
+        }
+    }
+}
+
+/// A `gh` that fails the test if anything runs it.
+pub struct UnreachableGh;
+
+impl GhRunner for UnreachableGh {
+    async fn run(
+        &self,
+        _cwd: &Path,
+        _repo: &RepoId,
+        command: &GhStackCommand,
+    ) -> Result<GhOutput, StackOpError> {
+        panic!("no gh expected, got {command}");
+    }
+}
+
+/// Every snapshot is this state, relabelled for the repository asked about.
+pub struct FixedSnapshots(pub RepoState);
+
+impl RepoSnapshots for FixedSnapshots {
+    fn snapshot<'a>(&'a self, repo: &'a RepoId) -> BoxFuture<'a, Result<RepoState, SnapshotError>> {
+        let mut state = self.0.clone();
+        state.id = repo.clone();
+        Box::pin(async move { Ok(state) })
+    }
+}
+
 impl Harness {
     /// Start both servers. `rostrum_config` is written as rostrum's
     /// `config.json` when given.
@@ -76,6 +122,16 @@ impl Harness {
         tag: &str,
         runner: Option<JobRunner>,
         rostrum_config: Option<serde_json::Value>,
+    ) -> Self {
+        Self::start_with(tag, runner, rostrum_config, StackSetup::default()).await
+    }
+
+    /// [`Harness::start`] with stack backends.
+    pub async fn start_with(
+        tag: &str,
+        runner: Option<JobRunner>,
+        rostrum_config: Option<serde_json::Value>,
+        stacks: StackSetup,
     ) -> Self {
         let scratch = ScratchDir::new(tag);
         if let Some(config) = rostrum_config {
@@ -113,6 +169,11 @@ impl Harness {
             github: Arc::new(FixedHandover(Some(handover()))),
             tmux: Arc::new(NoSessions),
             network: receiver,
+            stack_ops: stacks.ops,
+            snapshots: stacks.snapshots,
+            stack_scratch_dir: stacks
+                .scratch_dir
+                .unwrap_or_else(|| scratch.join("stack-worktrees")),
         })
         .expect("daemon");
         let servers = server::start(

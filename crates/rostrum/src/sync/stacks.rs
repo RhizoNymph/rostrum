@@ -16,11 +16,11 @@ use std::{
 use futures::StreamExt;
 use gpui::{Context, Task};
 use gpui_tokio::Tokio;
-use rostrum_core::{RepoId, Stack, StackNumber, StackPlan};
+use rostrum_core::{ExtendPlan, RepoId, Stack, StackNumber, StackPlan};
 use rostrum_github::{GitHubError, RepoStacks};
 use rostrum_stack::{
-    GhCli, MergeMethod, Progress, StackJob, StackOutcome, StackProgress, merge_stack,
-    run_stack_job, unstack,
+    ExtendJob, GhCli, MergeMethod, Progress, StackJob, StackOutcome, StackProgress, merge_stack,
+    run_extend_job, run_stack_job, unstack,
 };
 
 use super::Store;
@@ -56,6 +56,7 @@ impl StackSync {
 pub enum StackOpKind {
     Make,
     Arrange,
+    Extend,
     Merge,
     Unstack,
 }
@@ -65,6 +66,7 @@ impl StackOpKind {
         match self {
             Self::Make => "Make stack",
             Self::Arrange => "Arrange",
+            Self::Extend => "Add to stack",
             Self::Merge => "Merge stack",
             Self::Unstack => "Unstack",
         }
@@ -112,6 +114,15 @@ fn scratch_dir() -> PathBuf {
         .unwrap_or_else(std::env::temp_dir)
         .join("rostrum")
         .join("stack-worktrees")
+}
+
+/// How a make or extend job's result reads on the status line.
+fn verdict(result: Result<StackOutcome, rostrum_stack::StackOpError>) -> StackOpResult {
+    match result {
+        Ok(outcome) if outcome.is_success() => StackOpResult::Succeeded(outcome.summary()),
+        Ok(outcome) => StackOpResult::Stopped(outcome.summary()),
+        Err(error) => StackOpResult::Failed(error.to_string()),
+    }
 }
 
 impl Store {
@@ -247,13 +258,30 @@ impl Store {
                 handler,
                 scratch_dir: scratch_dir(),
             };
-            match run_stack_job(job, &GhCli, &progress).await {
-                Ok(outcome @ StackOutcome::Stacked(_)) => {
-                    StackOpResult::Succeeded(outcome.summary())
-                }
-                Ok(outcome) => StackOpResult::Stopped(outcome.summary()),
-                Err(error) => StackOpResult::Failed(error.to_string()),
-            }
+            verdict(run_stack_job(job, &GhCli, &progress).await)
+        })
+    }
+
+    /// Add `plan`'s pull requests to the top of its stack, from the
+    /// repository's clone: a plain `gh stack link` when they already chain
+    /// off the top, otherwise rebased onto it and lease-pushed first.
+    pub fn extend_stack(&mut self, plan: ExtendPlan, cx: &mut Context<Self>) -> Result<(), String> {
+        let Some(clone) = self.local_path(&plan.repo) else {
+            return Err(format!(
+                "{} has no local clone configured; stacks are extended from a clone",
+                plan.repo
+            ));
+        };
+        let handler = self.conflict_handler();
+        let repo = plan.repo.clone();
+        self.run_stack_op(repo, StackOpKind::Extend, cx, move |progress| async move {
+            let job = ExtendJob {
+                clone,
+                plan,
+                handler,
+                scratch_dir: scratch_dir(),
+            };
+            verdict(run_extend_job(job, &GhCli, &progress).await)
         })
     }
 

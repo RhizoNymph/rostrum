@@ -59,8 +59,11 @@ Overview:
       detects chains that could be one, renders each stack under a header in
       its repository's container and sorts it as one unit; makes stacks from
       a clone (`gh stack link`/`init`, rebasing and lease-pushing branches
-      first when arranging arbitrary pull requests), merges a whole stack
-      atomically (`gh stack merge`) and unstacks. Desktop only for now.
+      first when arranging arbitrary pull requests), adds pull requests to the
+      top of an existing stack (`gh stack link <stack> <pr>...`, rebasing onto
+      the top first when they do not already chain), merges a whole stack
+      atomically (`gh stack merge`) and unstacks. A paired phone drives the
+      same operations through rostrumd; the phone's own UI is not built yet.
     author_filter: >
       Narrowing the feed to chosen people — authored, or optionally also
       assigned/review-requested — and the persistence of every feed setting
@@ -104,8 +107,9 @@ Overview:
       over the tailnet only — generates pairing codes and revokes phones; its
       HTTPS API (self-signed, pinned by fingerprint) serves the
       remote_protocol routes by driving rostrum-local on the configured
-      clones. State is owned by two actors: pairing codes and devices, and
-      which clone is busy.
+      clones, and drives stacks (make, arrange, add to stack, merge, unstack)
+      through rostrum-stack as polled jobs. State is owned by two actors:
+      pairing codes and devices, and which clone is busy (plus the jobs).
 
   data_flow: >
     At startup the app resolves a GitHub token (`gh auth token`, falling back to
@@ -240,6 +244,16 @@ Overview:
     preferences (`GET /api/v1/config`) — never its clones, conflict handler,
     refresh interval or notifications.
 
+    A phone drives stacks the same way it drives local jobs, but as jobs it
+    polls: a stack request names the repository and pull requests; rostrumd
+    takes the clone's lease, fetches the repository's open pull requests and
+    stacks from GitHub, validates with rostrum-core's `plan_stack` /
+    `plan_extend` (and, for a rewrite, that `confirm_rewrite` names exactly
+    the branches `rewrites()` returns), then runs `run_stack_job`,
+    `run_extend_job`, `merge_stack` or `unstack` with the configured clone,
+    conflict handler and the desktop's scratch-worktree directory, recording
+    progress and the outcome for `GET /api/v1/stacks/jobs/{id}`.
+
 Features Index:
   ui_foundation:
     description: Theme, components, text rendering, selection, markdown.
@@ -295,8 +309,8 @@ Features Index:
     description: >
       Stacks of pull requests — GitHub's (Stacks API, cached) and detected
       chains — grouped and sorted as one unit in the feed; Make stack, Arrange
-      (rebase + leased force-push), atomic Merge stack, and Unstack via `gh
-      stack`.
+      (rebase + leased force-push), Add to stack (append to an existing
+      stack's top), atomic Merge stack, and Unstack via `gh stack`.
     entry_points: [crates/rostrum-core/src/stack/mod.rs, crates/rostrum-stack/src/lib.rs, crates/rostrum/src/feed/stacks.rs, crates/rostrum/src/sync/stacks.rs]
     depends_on: [repo_feed, feed_sort, github_sync, local_git, conflict_handoff]
     doc: docs/features/stacks.md
@@ -344,9 +358,9 @@ Features Index:
     depends_on: [android_core, android_app]
     doc: docs/features/android_profiles.md
   rostrumd:
-    description: Desktop daemon — pairing page and APK download (HTTP), the phone's local-git API (HTTPS), systemd user service.
-    entry_points: [crates/rostrumd/src/main.rs, crates/rostrumd/src/app.rs, crates/rostrumd/src/api/mod.rs, crates/rostrumd/src/web/mod.rs]
-    depends_on: [remote_protocol, local_git, conflict_handoff, github_sync]
+    description: Desktop daemon — pairing page and APK download (HTTP), the phone's local-git and stack API (HTTPS), systemd user service.
+    entry_points: [crates/rostrumd/src/main.rs, crates/rostrumd/src/app.rs, crates/rostrumd/src/api/mod.rs, crates/rostrumd/src/web/mod.rs, crates/rostrumd/src/stacks/mod.rs]
+    depends_on: [remote_protocol, local_git, conflict_handoff, github_sync, stacks]
     doc: docs/features/rostrumd.md
 ```
 
@@ -387,7 +401,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 | Diff parsing | hand-rolled | `diffy` requires `---`/`+++` headers GitHub's per-file patches lack, and exposes neither `\ No newline` nor the raw `@@` line |
 | Highlighting | `syntect` (pure-Rust regex) | One dependency covering many languages, versus matching the tree-sitter ABI across a grammar crate per language. Tree-sitter remains the better long-term choice |
 | Local git | Drive the `git` CLI, not libgit2 | Inherits the user's credential helpers, ssh agent, hooks, and `rerere` for free; libgit2's rebase is a partial substitute and its credential negotiation would have to be reimplemented. `auth.rs` already shells out to `gh` |
-| Local writes | Never push — with one exception: arranging pull requests into a stack | A local merge or rebase leaves the clone ahead, and that count is the cue to push. Arranging is the exception because rebasing a branch onto another is invisible to its pull request until pushed. It goes through one function (`Repo::push_with_lease`, always `--force-with-lease=<ref>:<expected-oid>`, never a bare force), runs only after every member rebased cleanly, only behind an explicit confirmation, and `gh stack` is never allowed to push on rostrum's behalf. See `docs/features/stacks.md` |
+| Local writes | Never push — with one exception: rebasing pull requests into a stack (Arrange, or Add to stack when the additions do not already chain) | A local merge or rebase leaves the clone ahead, and that count is the cue to push. Arranging is the exception because rebasing a branch onto another is invisible to its pull request until pushed. It goes through one function (`Repo::push_with_lease`, always `--force-with-lease=<ref>:<expected-oid>`, never a bare force), runs only after every member rebased cleanly, never on a stack's existing members, only behind an explicit confirmation naming the branches, and `gh stack` is never allowed to push on rostrum's behalf. See `docs/features/stacks.md` |
 | Stacks | GitHub's Stacks API is the source of truth; `gh stack` performs every stack write | The API needs no clone, so every watched repository groups; gh-stack owns link/merge/unstack semantics, and its local file is read, never written |
 | `gh` environment | Inherited (like tmux), minus `GIT_DIR`-family variables, with `GH_REPO` pinned | `gh` authenticates with the user's own setup; the removed variables would change which repository a nested `git` reads, and a pinned `GH_REPO` stops a fork remote redirecting a merge |
 | Feed distance | One batched `Ref.compare` per repository after each refresh | A GraphQL field cannot read a sibling's value, so the count cannot join the feed query; aliasing one `compare` per PR keeps it to one request, cost 1 |

@@ -10,7 +10,7 @@
 use gpui::{AnyElement, App, Context, Entity, SharedString, div, prelude::*, rems};
 use rostrum_core::{
     Chrome, MergeStatus, PrNumber, RepoId, RepoIx, Stack, StackIx, StackNumber, StackPlace,
-    plan_stack,
+    continuations, plan_stack,
 };
 use rostrum_stack::MergeMethod;
 use rostrum_ui::{
@@ -42,6 +42,13 @@ pub(super) enum StackPanel {
     /// Link a detected chain on GitHub and track it in the clone.
     Make {
         stack: Stack,
+    },
+    /// Put the picked pull requests on top of an existing stack.
+    Extend {
+        repo: RepoId,
+        stack: StackNumber,
+        order: Vec<PrNumber>,
+        confirmed: bool,
     },
     /// Order the picked pull requests and choose a trunk.
     Arrange {
@@ -111,9 +118,45 @@ impl FeedView {
         let number = group.stack.number;
         let stack_value = group.stack.clone();
 
+        // A line of open pull requests already built on this stack's top.
+        let continuation: Option<Vec<PrNumber>> = number.and_then(|number| {
+            continuations(state)
+                .into_iter()
+                .find(|c| c.stack == number)
+                .map(|c| c.additions.as_slice().to_vec())
+        });
+        let repo_id = state.id.clone();
+
         let actions = match number {
             Some(number) => h_flex()
                 .gap_1()
+                .when_some(continuation, |el, additions| {
+                    let repo_id = repo_id.clone();
+                    el.child(
+                        Button::new(
+                            ("stack-continue", stack.0),
+                            format!("Extend with {}", chain_text(&additions)),
+                        )
+                        .disabled(busy || !has_clone)
+                        .tooltip("These pull requests already build on the stack's top; add them to it")
+                        .on_click(cx.listener(move |this, _, _window, cx| {
+                            this.open_extend(repo_id.clone(), number, additions.clone(), cx)
+                        })),
+                    )
+                })
+                .child({
+                    let repo_id = repo_id.clone();
+                    Button::new(("stack-add", stack.0), "Add to stack")
+                        .disabled(busy || !has_clone)
+                        .tooltip(if has_clone {
+                            "Pick open pull requests to put on top of this stack"
+                        } else {
+                            "Stacks are extended from the repository's clone; configure one first"
+                        })
+                        .on_click(cx.listener(move |this, _, _window, cx| {
+                            this.start_extending(repo_id.clone(), number, cx)
+                        }))
+                })
                 .child(
                     Button::new(("stack-merge", stack.0), "Merge stack")
                         .style(ButtonStyle::Primary)
@@ -268,6 +311,18 @@ impl FeedView {
                 }
                 Err(err) => Err(err),
             },
+            StackPanel::Extend { .. } => match self.extension(cx) {
+                Ok(plan) => {
+                    let started = self
+                        .store
+                        .update(cx, |store, cx| store.extend_stack(plan, cx));
+                    if started.is_ok() {
+                        self.stack_ui.picking = None;
+                    }
+                    started
+                }
+                Err(err) => Err(err),
+            },
             StackPanel::Merge {
                 stack,
                 number,
@@ -370,6 +425,10 @@ impl FeedView {
             StackPanel::Arrange { .. } => {
                 let (body, ready) = self.render_arrange_body(cx);
                 (body, "Arrange", ButtonStyle::Danger, ready)
+            }
+            StackPanel::Extend { .. } => {
+                let (body, ready) = self.render_extend_body(cx);
+                (body, "Add to stack", ButtonStyle::Danger, ready)
             }
             StackPanel::Merge {
                 stack,

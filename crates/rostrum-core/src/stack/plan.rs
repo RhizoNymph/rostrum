@@ -66,6 +66,19 @@ impl StackPlan {
             .any(|(ix, member)| &member.base != self.parent_of(ix))
     }
 
+    /// The members whose branches an arrangement will rebase and force-push:
+    /// the first one whose base is not already its parent, and every member
+    /// above it (their parent moves when it is rebased). Empty when nothing
+    /// needs a rewrite. This is the list a confirmation must name — the
+    /// desktop's Arrange panel and `rostrumd`'s `confirm_rewrite` check both
+    /// use it.
+    pub fn rewrites(&self) -> &[PlanMember] {
+        let first = (0..self.members.len())
+            .find(|ix| &self.members[*ix].base != self.parent_of(*ix))
+            .unwrap_or(self.members.len());
+        &self.members[first..]
+    }
+
     /// The stack this plan describes, before GitHub has numbered it.
     pub fn as_stack(&self) -> Stack {
         Stack {
@@ -196,6 +209,39 @@ mod tests {
 
     fn main() -> RefName {
         RefName::new("main").expect("valid")
+    }
+
+    fn rewritten_heads(plan: &StackPlan) -> Vec<&str> {
+        plan.rewrites().iter().map(|m| m.head.as_str()).collect()
+    }
+
+    #[test]
+    fn a_chained_plan_rewrites_nothing() {
+        let state = repo(vec![
+            link(1, "a", "main"),
+            link(2, "b", "a"),
+            link(3, "c", "b"),
+        ]);
+        let plan = plan_stack(&state, &order(&[1, 2, 3]), main()).expect("valid");
+        assert!(plan.rewrites().is_empty());
+    }
+
+    #[test]
+    fn the_rewrite_is_the_first_unchained_member_and_everything_above_it() {
+        // #2 targets main rather than a: it and #3 (built on it) move.
+        let state = repo(vec![
+            link(1, "a", "main"),
+            link(2, "b", "main"),
+            link(3, "c", "b"),
+        ]);
+        let plan = plan_stack(&state, &order(&[1, 2, 3]), main()).expect("valid");
+        assert_eq!(rewritten_heads(&plan), vec!["b", "c"]);
+
+        // An unchained bottom moves the whole stack.
+        let state = repo(vec![link(1, "a", "dev"), link(2, "b", "a")]);
+        let plan = plan_stack(&state, &order(&[1, 2]), main()).expect("valid");
+        assert_eq!(rewritten_heads(&plan), vec!["a", "b"]);
+        assert_eq!(plan.needs_rewrite(), !plan.rewrites().is_empty());
     }
 
     fn order(numbers: &[u32]) -> Vec<PrNumber> {
