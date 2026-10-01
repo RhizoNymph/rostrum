@@ -5,30 +5,31 @@
 //! row draw the portion of the border that belongs to it. See
 //! `docs/features/repo_feed.md` for why nesting lists does not work.
 
-mod pr_row;
+mod rows;
 
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding,
-    ListAlignment, ListState, SharedString, Subscription, Window, actions, div, list, prelude::*,
-    px, rems,
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, ListAlignment,
+    ListState, SharedString, Subscription, Window, actions, div, list, prelude::*, px, rems,
 };
 use rostrum_core::{
-    AuthorEntry, Chrome, Feed, FeedFilter, FeedRow, LoginKey, PrIx, RepoId, RepoIx, RepoState,
-    Selection, VisibleAuthors, authors::visible as visible_authors, flatten,
+    AuthorEntry, Feed, FeedFilter, FeedRow, FeedTab, LoginKey, RepoId, RepoState, Selection,
+    VisibleAuthors, authors::visible as visible_authors, flatten_tab, tab_counts,
 };
 use rostrum_ui::{
     ActiveTheme, InputEvent, Popover, PopoverAnchor, TextInput,
-    components::{Button, ButtonStyle, Checkbox, Chip, h_flex, v_flex},
+    components::{Button, ButtonStyle, Checkbox, Tab, h_flex, tab_bar, v_flex},
 };
 
-pub(crate) use pr_row::{pr_row_content, relative_time};
+pub(crate) use rows::{issue_row_content, pr_row_content, relative_time};
 
 use crate::{
     nav::{self, Nav},
     sync::{Store, SyncKind},
 };
+
+mod sort_menu;
 
 actions!(
     feed,
@@ -42,6 +43,8 @@ actions!(
         DismissFilter,
         ToggleCollapse,
         OpenRepo,
+        NextTab,
+        PreviousTab,
     ]
 );
 
@@ -71,6 +74,11 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", DismissFilter, Some(FILTER_CONTEXT)),
         KeyBinding::new("c", ToggleCollapse, Some(FEED_CONTEXT)),
         KeyBinding::new("o", OpenRepo, Some(FEED_CONTEXT)),
+        // Brackets, not a modifier chord: they sit beside `j`/`k` on the
+        // home row and read as "left"/"right", and like them they are inert
+        // while typing in the filter box.
+        KeyBinding::new("]", NextTab, Some(FEED_CONTEXT)),
+        KeyBinding::new("[", PreviousTab, Some(FEED_CONTEXT)),
     ]);
 }
 
@@ -81,16 +89,21 @@ pub enum FeedEvent {
     FocusDetail,
     /// Switch the left pane to this repository's own view.
     OpenRepo(RepoId),
+    /// Open the new-issue form, with this repository chosen when the request
+    /// came from its header, or the form's own default when it came from the
+    /// tab bar.
+    NewIssue { repo: Option<RepoId> },
 }
 
 /// Corner radius of a repo container, in pixels.
 const ROW_RADIUS: f32 = 8.;
 
-/// Which header popover is open. At most one: opening either closes the other.
+/// Which header popover is open. At most one: opening any closes the others.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HeaderPopover {
     Authors,
     Repos,
+    Sort,
 }
 
 pub struct FeedView {
@@ -102,6 +115,7 @@ pub struct FeedView {
     popover: Option<HeaderPopover>,
     authors_anchor: PopoverAnchor,
     repos_anchor: PopoverAnchor,
+    sort_anchor: PopoverAnchor,
     /// Why the last add attempt failed, shown under the input.
     repo_error: Option<String>,
     focus_handle: FocusHandle,
@@ -114,7 +128,7 @@ impl FeedView {
     pub fn new(store: Entity<Store>, cx: &mut Context<Self>) -> Self {
         let feed = Rc::new(build(&store, cx));
         let list = ListState::new(feed.len(), ListAlignment::Top, px(400.));
-        let filter = cx.new(|cx| TextInput::new("Filter pull requests…", cx).lines(1, 1));
+        let filter = cx.new(|cx| TextInput::new("Filter…", cx).lines(1, 1));
         let repo_input = cx.new(|cx| TextInput::new("owner/name or a GitHub URL", cx).lines(1, 1));
 
         let subscriptions = vec![
@@ -140,6 +154,7 @@ impl FeedView {
             popover: None,
             authors_anchor: PopoverAnchor::default(),
             repos_anchor: PopoverAnchor::default(),
+            sort_anchor: PopoverAnchor::default(),
             repo_error: None,
             focus_handle: cx.focus_handle(),
             feed,
@@ -347,10 +362,10 @@ impl FeedView {
         let Some(target) = nav::navigate(&self.feed, current, nav) else {
             return;
         };
-        let Some(FeedRow::PrRow { repo, pr }) = self.feed.row(target) else {
+        let Some(row) = self.feed.row(target) else {
             return;
         };
-        self.select(repo, pr, cx);
+        self.select(row, cx);
         self.list.scroll_to_reveal_item(target);
         cx.notify();
     }
@@ -376,6 +391,24 @@ impl FeedView {
         self.navigate(Nav::Last, cx);
     }
 
+    fn next_tab(&mut self, _: &NextTab, _window: &mut Window, cx: &mut Context<Self>) {
+        let tab = self.store.read(cx).state.tab.next();
+        self.set_tab(tab, cx);
+    }
+
+    fn previous_tab(&mut self, _: &PreviousTab, _window: &mut Window, cx: &mut Context<Self>) {
+        let tab = self.store.read(cx).state.tab.previous();
+        self.set_tab(tab, cx);
+    }
+
+    /// Switch lists. The selection is left alone, so the detail pane keeps
+    /// showing whatever was open; `j`/`k` then enter the new tab's list from
+    /// its end, since the old selection has no row there.
+    fn set_tab(&mut self, tab: FeedTab, cx: &mut Context<Self>) {
+        self.store.update(cx, |store, cx| store.set_tab(tab, cx));
+        self.list.scroll_to(gpui::ListOffset::default());
+    }
+
     fn open_detail(&mut self, _: &OpenDetail, _window: &mut Window, cx: &mut Context<Self>) {
         cx.emit(FeedEvent::FocusDetail);
     }
@@ -398,7 +431,7 @@ impl FeedView {
         }
     }
 
-    /// `o`: open the selected pull request's repository in its own view.
+    /// `o`: open the selected item's repository in its own view.
     fn open_repo(&mut self, _: &OpenRepo, _window: &mut Window, cx: &mut Context<Self>) {
         let repo = self
             .store
@@ -452,211 +485,16 @@ impl FeedView {
         cx.notify();
     }
 
-    fn select(&mut self, repo: RepoIx, pr: PrIx, cx: &mut Context<Self>) {
+    /// Select the item a row shows, by identity. Rows other than items, and
+    /// rows whose indices a refresh has since invalidated, select nothing.
+    fn select(&mut self, row: FeedRow, cx: &mut Context<Self>) {
         self.store.update(cx, |store, cx| {
-            let Some(repo_state) = store.state.repos.get(repo.0) else {
+            let Some(selection) = selection_for(&store.state.repos, row) else {
                 return;
             };
-            let Some(pull) = repo_state.prs.get(pr.0) else {
-                return;
-            };
-            store.state.selection = Some(Selection::PullRequest {
-                repo: repo_state.id.clone(),
-                number: pull.number,
-            });
+            store.state.selection = Some(selection);
             cx.notify();
         });
-    }
-
-    fn render_row(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
-        let Some(row) = self.feed.row(ix) else {
-            return div().into_any_element();
-        };
-        tracing::trace!(ix, ?row, "render row");
-        let chrome = self.feed.chrome(ix);
-
-        match row {
-            FeedRow::Spacer { .. } => div().h(px(10.)).into_any_element(),
-            FeedRow::RepoHeader { repo } => self.render_repo_header(repo, chrome, cx),
-            FeedRow::PrRow { repo, pr } => self.render_pr_row(repo, pr, chrome, ix, cx),
-            // The desktop feed is built for the pull request tab only.
-            FeedRow::IssueRow { .. } => div().into_any_element(),
-            FeedRow::RepoEmpty { repo } => {
-                self.render_notice(repo, chrome, "No open pull requests", cx)
-            }
-            FeedRow::RepoLoading { repo } => self.render_notice(repo, chrome, "Loading…", cx),
-            FeedRow::RepoError { repo } => {
-                let message = self
-                    .repo_state(repo, cx)
-                    .and_then(|r| r.load.error_message().map(str::to_string))
-                    .unwrap_or_else(|| "Refresh failed".to_string());
-                self.render_error(repo, chrome, message, cx)
-            }
-        }
-    }
-
-    fn repo_state<'a>(&self, repo: RepoIx, cx: &'a App) -> Option<&'a RepoState> {
-        self.store.read(cx).state.repos.get(repo.0)
-    }
-
-    fn render_repo_header(
-        &mut self,
-        repo: RepoIx,
-        chrome: Chrome,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let Some(state) = self.repo_state(repo, cx) else {
-            return div().into_any_element();
-        };
-
-        let name = state.id.to_string();
-        let count = state.prs.len();
-        let collapsed = state.collapsed;
-        let failed = state.load.is_failed();
-        let id = state.id.clone();
-        let store = self.store.clone();
-
-        card(chrome, cx)
-            .id(("repo-header", repo.0))
-            .h(px(38.))
-            .px_3()
-            .bg(cx.theme().surface_raised)
-            .child(
-                h_flex()
-                    .size_full()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_color(cx.theme().text_subtle)
-                            .text_size(rems(0.7))
-                            .child(if collapsed { "▸" } else { "▾" }),
-                    )
-                    .child(
-                        // The name opens the repository's own view; the rest
-                        // of the header still collapses it.
-                        div()
-                            .id(("repo-name", repo.0))
-                            .text_color(cx.theme().text)
-                            .text_size(rems(0.82))
-                            .cursor_pointer()
-                            .hover(|el| el.text_color(cx.theme().accent))
-                            .child(name)
-                            .on_click(cx.listener({
-                                let id = id.clone();
-                                move |_, _, _window, cx| {
-                                    cx.stop_propagation();
-                                    cx.emit(FeedEvent::OpenRepo(id.clone()));
-                                }
-                            })),
-                    )
-                    .child(
-                        div()
-                            .text_color(cx.theme().text_subtle)
-                            .text_size(rems(0.75))
-                            .child(format!("{count}")),
-                    )
-                    .when(failed, |el| {
-                        el.child(Chip::new("error").color(cx.theme().danger))
-                    })
-                    .child(div().flex_1())
-                    .child(
-                        div()
-                            .id(("open-repo", repo.0))
-                            .px_1()
-                            .cursor_pointer()
-                            .text_size(rems(0.72))
-                            .text_color(cx.theme().text_subtle)
-                            .hover(|el| el.text_color(cx.theme().accent))
-                            .child("open ›")
-                            .on_click(cx.listener({
-                                let id = id.clone();
-                                move |_, _, _window, cx| {
-                                    cx.stop_propagation();
-                                    cx.emit(FeedEvent::OpenRepo(id.clone()));
-                                }
-                            })),
-                    ),
-            )
-            .on_click(move |_, _window, cx| {
-                store.update(cx, |store, cx| store.toggle_collapsed(&id, cx));
-            })
-            .into_any_element()
-    }
-
-    fn render_pr_row(
-        &mut self,
-        repo: RepoIx,
-        pr: PrIx,
-        chrome: Chrome,
-        ix: usize,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let Some(state) = self.repo_state(repo, cx) else {
-            return div().into_any_element();
-        };
-        let Some(pull) = state.prs.get(pr.0) else {
-            return div().into_any_element();
-        };
-
-        let selected = self
-            .store
-            .read(cx)
-            .state
-            .selection
-            .as_ref()
-            .is_some_and(|s| {
-                matches!(s, Selection::PullRequest { repo, number }
-                    if *repo == state.id && *number == pull.number)
-            });
-
-        let sync = self.store.read(cx).sync_result(&state.id, pull.number);
-        let theme = cx.theme().clone();
-        let content = pr_row_content(pull, sync, ix, &theme);
-
-        card(chrome, cx)
-            .id(("pr", ix))
-            .px_3()
-            .py_2()
-            .when(selected, |el| el.bg(theme.surface_selected))
-            .hover(|el| el.bg(theme.surface_hover))
-            .cursor_pointer()
-            .child(content)
-            .on_click(cx.listener(move |this, _, _window, cx| this.select(repo, pr, cx)))
-            .into_any_element()
-    }
-
-    fn render_notice(
-        &mut self,
-        repo: RepoIx,
-        chrome: Chrome,
-        message: &str,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        card(chrome, cx)
-            .id(("notice", repo.0))
-            .px_3()
-            .py_3()
-            .text_color(cx.theme().text_subtle)
-            .text_size(rems(0.78))
-            .child(message.to_string())
-            .into_any_element()
-    }
-
-    fn render_error(
-        &mut self,
-        repo: RepoIx,
-        chrome: Chrome,
-        message: String,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        card(chrome, cx)
-            .id(("error", repo.0))
-            .px_3()
-            .py_3()
-            .text_color(cx.theme().danger)
-            .text_size(rems(0.78))
-            .child(message)
-            .into_any_element()
     }
 
     /// The authors popover: every author with open work, selected ones and the
@@ -783,6 +621,46 @@ impl FeedView {
         .on_dismiss(cx.listener(|this, _, _window, cx| this.close_popover(cx)))
     }
 
+    /// "Pull requests | Issues" across the top of the pane, each with the
+    /// number of open items the filter lets through, and — on the Issues
+    /// tab — the way to open a new one.
+    fn render_tabs(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let store = self.store.read(cx);
+        let active = store.state.tab;
+        let counts = tab_counts(&store.state.repos, &store.state.filter);
+        let tabs = FeedTab::ALL
+            .iter()
+            .map(|tab| Tab::new(tab.label()).badge(counts.get(*tab)))
+            .collect();
+        let entity = cx.entity();
+
+        h_flex()
+            .flex_none()
+            .px_3()
+            .pb_2()
+            .items_end()
+            .child(div().flex_1().child(tab_bar(
+                tabs,
+                active.index(),
+                cx,
+                move |ix, _window, cx| {
+                    entity.update(cx, |this, cx| this.set_tab(FeedTab::from_index(ix), cx));
+                },
+            )))
+            .when(active == FeedTab::Issues, |el| {
+                el.child(
+                    div().pl_2().pb_1().child(
+                        Button::new("new-issue", "New issue")
+                            .style(ButtonStyle::Primary)
+                            .tooltip("Open an issue in one of the watched repositories")
+                            .on_click(cx.listener(|_, _, _window, cx| {
+                                cx.emit(FeedEvent::NewIssue { repo: None })
+                            })),
+                    ),
+                )
+            })
+    }
+
     fn render_filter_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let store = self.store.read(cx);
@@ -792,7 +670,8 @@ impl FeedView {
         let repo_count = store.state.repos.len();
         let author_count = store.state.filter.authors.len();
         let active = store.state.filter.is_active();
-        let counts = visible_counts(&store.state.repos, &store.state.filter);
+        let tab = store.state.tab;
+        let counts = visible_counts(&store.state.repos, &store.state.filter, tab);
         let has_clone = store.has_any_clone();
         let syncing = store.is_syncing();
         let autostash = store.autostash();
@@ -814,22 +693,29 @@ impl FeedView {
                 h_flex()
                     .gap_2()
                     .child(div().flex_1().min_w_0().child(self.filter.clone()))
-                    .child(
-                        Button::new("hide-drafts", "drafts")
-                            .style(if hide_drafts {
-                                ButtonStyle::Primary
-                            } else {
-                                ButtonStyle::Subtle
-                            })
-                            .tooltip(if hide_drafts {
-                                "Show draft pull requests"
-                            } else {
-                                "Hide draft pull requests"
-                            })
-                            .on_click(cx.listener(|this, _, _window, cx| this.toggle_drafts(cx))),
-                    )
+                    // Drafts are a pull request notion; on the Issues tab the
+                    // toggle would do nothing, so it is not offered there.
+                    .when(tab == FeedTab::PullRequests, |el| {
+                        el.child(
+                            Button::new("hide-drafts", "drafts")
+                                .style(if hide_drafts {
+                                    ButtonStyle::Primary
+                                } else {
+                                    ButtonStyle::Subtle
+                                })
+                                .tooltip(if hide_drafts {
+                                    "Show draft pull requests"
+                                } else {
+                                    "Hide draft pull requests"
+                                })
+                                .on_click(
+                                    cx.listener(|this, _, _window, cx| this.toggle_drafts(cx)),
+                                ),
+                        )
+                    })
                     .child(self.authors_button(author_count, cx))
-                    .child(self.repos_button(repo_count, cx)),
+                    .child(self.repos_button(repo_count, cx))
+                    .child(self.sort_button(cx)),
             )
             .child(
                 h_flex()
@@ -924,10 +810,10 @@ fn author_label(entry: &AuthorEntry) -> String {
     }
 }
 
-/// How much of the feed a filter is letting through.
+/// How much of the active tab's list a filter is letting through.
 ///
-/// Counted over every repository's pull requests rather than over feed rows:
-/// a collapsed repo hides rows without the filter having rejected anything, and
+/// Counted over every repository's items rather than over feed rows: a
+/// collapsed repo hides rows without the filter having rejected anything, and
 /// reporting that as "filtered out" would be a lie.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct VisibleCounts {
@@ -935,18 +821,18 @@ struct VisibleCounts {
     total: usize,
 }
 
-fn visible_counts(repos: &[RepoState], filter: &FeedFilter) -> VisibleCounts {
-    let mut counts = VisibleCounts {
-        visible: 0,
-        total: 0,
-    };
-    for pr in repos.iter().flat_map(|repo| &repo.prs) {
-        counts.total += 1;
-        if filter.accepts(pr) {
-            counts.visible += 1;
-        }
+fn visible_counts(repos: &[RepoState], filter: &FeedFilter, tab: FeedTab) -> VisibleCounts {
+    let total = repos
+        .iter()
+        .map(|repo| match tab {
+            FeedTab::PullRequests => repo.prs.len(),
+            FeedTab::Issues => repo.issues.len(),
+        })
+        .sum();
+    VisibleCounts {
+        visible: tab_counts(repos, filter).get(tab),
+        total,
     }
-    counts
 }
 
 impl EventEmitter<FeedEvent> for FeedView {}
@@ -973,6 +859,9 @@ impl Render for FeedView {
             .on_action(cx.listener(Self::dismiss_filter))
             .on_action(cx.listener(Self::toggle_collapse))
             .on_action(cx.listener(Self::open_repo))
+            .on_action(cx.listener(Self::next_tab))
+            .on_action(cx.listener(Self::previous_tab))
+            .child(self.render_tabs(cx))
             .child(self.render_filter_bar(cx))
             .child(
                 div()
@@ -994,48 +883,58 @@ impl Render for FeedView {
 
 fn build(store: &Entity<Store>, cx: &App) -> Feed {
     let store = store.read(cx);
-    flatten(&store.state.repos, &store.state.filter)
+    flatten_tab(&store.state.repos, &store.state.filter, store.state.tab)
 }
 
-/// Draw the portion of the container border this row owns.
-fn card(chrome: Chrome, cx: &App) -> Div {
-    let theme = cx.theme();
-
-    if chrome == Chrome::None {
-        return div();
-    }
-
-    let base = div()
-        .bg(theme.surface)
-        .border_l_1()
-        .border_r_1()
-        .border_color(theme.border);
-
-    match chrome {
-        Chrome::Top => base
-            .border_t_1()
-            .rounded_tl(px(ROW_RADIUS))
-            .rounded_tr(px(ROW_RADIUS)),
-        Chrome::Bottom => base
-            .border_b_1()
-            .rounded_bl(px(ROW_RADIUS))
-            .rounded_br(px(ROW_RADIUS)),
-        Chrome::Solo => base
-            .border_t_1()
-            .border_b_1()
-            .rounded_tl(px(ROW_RADIUS))
-            .rounded_tr(px(ROW_RADIUS))
-            .rounded_bl(px(ROW_RADIUS))
-            .rounded_br(px(ROW_RADIUS)),
-        Chrome::Middle | Chrome::None => base,
+/// The identity a feed row stands for, resolved against the state it was
+/// built from.
+fn selection_for(repos: &[RepoState], row: FeedRow) -> Option<Selection> {
+    match row {
+        FeedRow::PrRow { repo, pr } => {
+            let state = repos.get(repo.0)?;
+            Some(Selection::PullRequest {
+                repo: state.id.clone(),
+                number: state.prs.get(pr.0)?.number,
+            })
+        }
+        FeedRow::IssueRow { repo, issue } => {
+            let state = repos.get(repo.0)?;
+            Some(Selection::Issue {
+                repo: state.id.clone(),
+                number: state.issues.get(issue.0)?.number,
+            })
+        }
+        FeedRow::RepoHeader { .. }
+        | FeedRow::RepoEmpty { .. }
+        | FeedRow::RepoError { .. }
+        | FeedRow::RepoLoading { .. }
+        | FeedRow::Spacer { .. } => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
+    use rostrum_core::{IssueIx, IssueNumber, PrIx, PrNumber, RepoIx};
 
     use super::*;
+
+    fn issue(number: u32) -> rostrum_core::Issue {
+        rostrum_core::Issue {
+            number: IssueNumber(number),
+            node_id: rostrum_core::NodeId(format!("I_{number}")),
+            title: format!("Issue {number}"),
+            url: String::new(),
+            state: rostrum_core::IssueState::Open,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            author: None,
+            assignees: Vec::new(),
+            labels: Vec::new(),
+            comment_count: 0,
+            milestone: None,
+        }
+    }
 
     fn pr(number: u32, draft: bool) -> rostrum_core::PullRequest {
         rostrum_core::PullRequest {
@@ -1062,18 +961,104 @@ mod tests {
             comment_count: 0,
             checks: None,
             base_divergence: None,
+            pushed_at: None,
         }
     }
 
     fn repo(name: &str, prs: Vec<rostrum_core::PullRequest>, collapsed: bool) -> RepoState {
         RepoState {
-            id: name.parse().expect("valid repo id"),
             prs,
             load: rostrum_core::LoadState::Loaded { at: Utc::now() },
-            issues: Vec::new(),
-            issues_load: rostrum_core::LoadState::Idle,
             collapsed,
+            ..RepoState::new(name.parse().expect("valid repo id"))
         }
+    }
+
+    #[test]
+    fn issue_counts_report_what_the_filter_lets_through() {
+        let mut first = repo("a/b", vec![pr(1, false)], false);
+        first.issues = vec![issue(1), issue(2)];
+        first.issues[1].title = "needle".into();
+        let repos = vec![first];
+
+        assert_eq!(
+            visible_counts(&repos, &FeedFilter::default(), FeedTab::Issues),
+            VisibleCounts {
+                visible: 2,
+                total: 2
+            }
+        );
+        let narrowed = FeedFilter {
+            query: "needle".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            visible_counts(&repos, &narrowed, FeedTab::Issues),
+            VisibleCounts {
+                visible: 1,
+                total: 2
+            }
+        );
+        // The pull request tab counts its own list.
+        assert_eq!(
+            visible_counts(&repos, &FeedFilter::default(), FeedTab::PullRequests),
+            VisibleCounts {
+                visible: 1,
+                total: 1
+            }
+        );
+    }
+
+    /// A row resolves to the identity of what it shows, of the right kind,
+    /// and chrome rows select nothing.
+    #[test]
+    fn rows_select_by_identity_and_kind() {
+        let mut state = repo("a/b", vec![pr(4, false)], false);
+        state.issues = vec![issue(9)];
+        let repos = vec![state];
+        let id: RepoId = "a/b".parse().expect("valid");
+
+        assert_eq!(
+            selection_for(
+                &repos,
+                FeedRow::PrRow {
+                    repo: RepoIx(0),
+                    pr: PrIx(0)
+                }
+            ),
+            Some(Selection::PullRequest {
+                repo: id.clone(),
+                number: PrNumber(4)
+            })
+        );
+        assert_eq!(
+            selection_for(
+                &repos,
+                FeedRow::IssueRow {
+                    repo: RepoIx(0),
+                    issue: IssueIx(0)
+                }
+            ),
+            Some(Selection::Issue {
+                repo: id,
+                number: IssueNumber(9)
+            })
+        );
+        assert_eq!(
+            selection_for(&repos, FeedRow::RepoHeader { repo: RepoIx(0) }),
+            None
+        );
+        // An index a refresh has invalidated selects nothing.
+        assert_eq!(
+            selection_for(
+                &repos,
+                FeedRow::IssueRow {
+                    repo: RepoIx(0),
+                    issue: IssueIx(5)
+                }
+            ),
+            None
+        );
     }
 
     #[test]
@@ -1083,7 +1068,7 @@ mod tests {
             repo("c/d", vec![pr(3, false)], false),
         ];
 
-        let counts = visible_counts(&repos, &FeedFilter::default());
+        let counts = visible_counts(&repos, &FeedFilter::default(), FeedTab::PullRequests);
         assert_eq!(
             counts,
             VisibleCounts {
@@ -1100,6 +1085,7 @@ mod tests {
                 hide_empty_repos: false,
                 ..Default::default()
             },
+            FeedTab::PullRequests,
         );
         assert_eq!(
             counts,
@@ -1116,7 +1102,7 @@ mod tests {
     fn counts_ignore_collapsed_repos() {
         let repos = vec![repo("a/b", vec![pr(1, false), pr(2, false)], true)];
         assert_eq!(
-            visible_counts(&repos, &FeedFilter::default()),
+            visible_counts(&repos, &FeedFilter::default(), FeedTab::PullRequests),
             VisibleCounts {
                 visible: 2,
                 total: 2

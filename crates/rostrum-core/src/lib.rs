@@ -11,7 +11,9 @@ pub mod issue;
 pub mod model;
 pub mod navigation;
 pub mod probe;
+pub mod repo_meta;
 pub mod review;
+pub mod sort;
 pub mod state;
 pub mod tabs;
 pub mod timeline;
@@ -21,8 +23,8 @@ pub(crate) mod test_support;
 
 pub use arrivals::{Arrival, ArrivalKind, Baseline};
 pub use authors::{AuthorEntry, VisibleAuthors, issue_roster, roster};
-pub use feed::flatten;
-pub use feed::{Chrome, Feed, FeedFilter, FeedRow, IssueIx, PrIx, RepoIx, flatten_tab};
+pub use feed::{Chrome, Feed, FeedFilter, FeedRow, IssueIx, PrIx, RepoIx};
+pub use feed::{flatten, flatten_in, flatten_tab, flatten_tab_in};
 pub use issue::{
     CloseReason, EmptyTitle, Issue, IssueDetail, IssueNumber, IssueState, IssueTitle, Milestone,
 };
@@ -32,12 +34,16 @@ pub use model::{
 };
 pub use navigation::{RepoScreen, Screen};
 pub use probe::{MergeProbeBudget, needs_merge_probe};
+pub use repo_meta::{OwnerKind, RepoMeta, RepoOwner};
 pub use review::{DraftAnchor, drafts_are_stale};
-pub use tabs::{FeedTab, TabCounts, tab_counts};
+pub use sort::{
+    FeedOrder, FeedSort, ItemSortKey, KeyKind, RepoSortKey, Sort, SortDirection, SortKey,
+};
 pub use state::{
     AppState, LoadState, RepoState, Selection, apply_divergences, carry_forward_divergence,
     divergence_query,
 };
+pub use tabs::{FeedTab, TabCounts, tab_counts};
 pub use timeline::{
     CheckRun, CommentId, Conversation, EventKind, ReviewId, ReviewState, ReviewThread,
     ThreadComment, ThreadId, TimelineItem,

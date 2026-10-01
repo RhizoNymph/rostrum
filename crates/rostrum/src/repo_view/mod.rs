@@ -5,12 +5,15 @@
 //! repository's name, stars, a link to GitHub and the trunk editor. With
 //! nothing selected the right pane shows the branch tree
 //! ([`branches::BranchesPane`]); selecting a row opens the same detail the
-//! feed opens. See `docs/features/repo_view.md`.
+//! feed opens — a `PrDetail` or an `IssuePane`. Both lists follow the feed's
+//! item sort ([`order::ListOrder`]) and draw their rows with the feed's own
+//! row bodies. See `docs/features/repo_view.md`.
 
 pub mod branches;
 mod issues;
 pub mod model;
 mod nav;
+mod order;
 mod trunk_editor;
 
 use gpui::{
@@ -23,11 +26,16 @@ use rostrum_ui::{
     components::{Button, ButtonStyle, h_flex, v_flex},
 };
 
-use crate::{feed::pr_row_content, nav::Nav, sync::Store};
+use crate::{
+    feed::{issue_row_content, pr_row_content},
+    nav::Nav,
+    sync::Store,
+};
 
 use self::{
     model::RepoBranches,
     nav::{Position, Section, step},
+    order::ListOrder,
 };
 
 actions!(
@@ -68,12 +76,21 @@ pub enum RepoViewEvent {
     /// Return to the multi-repository feed.
     Back,
     FocusDetail,
+    /// Put the branch tree in the right pane. The selection is already
+    /// cleared; this also tells the workspace to close a new-issue form,
+    /// which is not a selection.
+    ShowBranches,
+    /// Open the new-issue form for this view's repository.
+    NewIssue,
 }
 
 pub struct RepoView {
     store: Entity<Store>,
     pub repo: RepoId,
     branches: Entity<RepoBranches>,
+    /// Which pull request and issue each list row shows, in the feed's item
+    /// sort. Rebuilt on every store change.
+    order: ListOrder,
     pulls: ListState,
     issues: ListState,
     focus_handle: FocusHandle,
@@ -92,7 +109,8 @@ impl RepoView {
         branches: Entity<RepoBranches>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (pulls, issues) = list_lengths(&store, &repo, cx);
+        let order = list_order(&store, &repo, cx);
+        let (pulls, issues) = (order.pulls(), order.issues());
         let trunk_input = cx.new(|cx| TextInput::new("branch name", cx).lines(1, 1));
         let subscriptions = vec![
             cx.observe(&store, |this, _, cx| this.store_changed(cx)),
@@ -107,6 +125,7 @@ impl RepoView {
             store,
             repo,
             branches,
+            order,
             pulls: ListState::new(pulls, ListAlignment::Top, px(400.)),
             issues: ListState::new(issues, ListAlignment::Top, px(400.)),
             focus_handle: cx.focus_handle(),
@@ -119,45 +138,43 @@ impl RepoView {
     }
 
     /// Keep each list's item count equal to the repository's pull requests
-    /// and issues. Rows are addressed by index and re-read on every paint, so
-    /// only a change in count needs a list told.
+    /// and issues, in sort order. Rows are re-read through `order` on every
+    /// paint; a change in count resets a list, and a reorder of the same
+    /// count re-measures it in place so the scroll position holds.
     fn store_changed(&mut self, cx: &mut Context<Self>) {
-        let (pulls, issues) = list_lengths(&self.store, &self.repo, cx);
+        let order = list_order(&self.store, &self.repo, cx);
+        if order == self.order {
+            cx.notify();
+            return;
+        }
+        let (pulls, issues) = (order.pulls(), order.issues());
         if pulls != self.pulls.item_count() {
             self.pulls.reset(pulls);
+        } else {
+            self.pulls.splice(0..pulls, pulls);
         }
         if issues != self.issues.item_count() {
             self.issues.reset(issues);
+        } else {
+            self.issues.splice(0..issues, issues);
         }
+        self.order = order;
         cx.notify();
     }
 
     // --- selection ------------------------------------------------------------
 
+    /// The displayed row of the current selection, if it is in this view.
     fn current_position(&self, cx: &App) -> Option<Position> {
         let store = self.store.read(cx);
         let selection = store.state.selection.as_ref()?;
-        if selection.repo() != &self.repo {
-            return None;
-        }
         let repo = store.state.repo(&self.repo)?;
-        match selection {
-            Selection::PullRequest { number, .. } => repo
-                .prs
-                .iter()
-                .position(|pr| pr.number == *number)
-                .map(Position::pull),
-            Selection::Issue { number, .. } => repo
-                .issues
-                .iter()
-                .position(|issue| issue.number == *number)
-                .map(Position::issue),
-        }
+        self.order.position_of(repo, selection)
     }
 
     fn navigate(&mut self, nav: Nav, cx: &mut Context<Self>) {
-        let pulls = self.pulls.item_count();
-        let issues = self.issues.item_count();
+        let pulls = self.order.pulls();
+        let issues = self.order.issues();
         let Some(target) = step(pulls, issues, self.current_position(cx), nav) else {
             return;
         };
@@ -168,7 +185,8 @@ impl RepoView {
                     .read(cx)
                     .state
                     .repo(&self.repo)
-                    .and_then(|repo| repo.prs.get(target.index))
+                    .zip(self.order.pull_at(target.index))
+                    .and_then(|(repo, ix)| repo.prs.get(ix.0))
                     .map(|pr| pr.number);
                 if let Some(number) = number {
                     self.select_pull(number, cx);
@@ -181,7 +199,8 @@ impl RepoView {
                     .read(cx)
                     .state
                     .repo(&self.repo)
-                    .and_then(|repo| repo.issues.get(target.index))
+                    .zip(self.order.issue_at(target.index))
+                    .and_then(|(repo, ix)| repo.issues.get(ix.0))
                     .map(|issue| issue.number);
                 if let Some(number) = number {
                     self.select_issue(number, cx);
@@ -214,6 +233,7 @@ impl RepoView {
                 cx.notify();
             }
         });
+        cx.emit(RepoViewEvent::ShowBranches);
     }
 
     fn on_select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
@@ -327,7 +347,13 @@ impl RepoView {
             )
     }
 
-    fn render_section_header(&self, label: &str, count: Option<usize>, cx: &App) -> AnyElement {
+    fn render_section_header(
+        &self,
+        label: &str,
+        count: Option<usize>,
+        action: Option<AnyElement>,
+        cx: &App,
+    ) -> AnyElement {
         let theme = cx.theme();
         h_flex()
             .flex_none()
@@ -348,15 +374,17 @@ impl RepoView {
                     .text_color(theme.text_subtle)
                     .child(count.map_or_else(|| "—".to_string(), |count| count.to_string())),
             )
+            .when_some(action, |el, action| el.child(div().flex_1()).child(action))
             .into_any_element()
     }
 
+    /// The `ix`th displayed pull request.
     fn render_pull(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let store = self.store.read(cx);
         let Some(repo) = store.state.repo(&self.repo) else {
             return div().into_any_element();
         };
-        let Some(pull) = repo.prs.get(ix) else {
+        let Some(pull) = self.order.pull_at(ix).and_then(|pr| repo.prs.get(pr.0)) else {
             return div().into_any_element();
         };
         let selected = store.state.selection.as_ref().is_some_and(|selection| {
@@ -382,12 +410,14 @@ impl RepoView {
             .into_any_element()
     }
 
+    /// The `ix`th displayed issue.
     fn render_issue(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let store = self.store.read(cx);
         let Some(issue) = store
             .state
             .repo(&self.repo)
-            .and_then(|repo| repo.issues.get(ix))
+            .zip(self.order.issue_at(ix))
+            .and_then(|(repo, issue)| repo.issues.get(issue.0))
         else {
             return div().into_any_element();
         };
@@ -396,7 +426,7 @@ impl RepoView {
                 if *repo == self.repo && *number == issue.number)
         });
         let theme = cx.theme().clone();
-        let content = issues::issue_row_content(issue, &theme);
+        let content = issue_row_content(issue, &theme);
         let number = issue.number;
 
         div()
@@ -414,13 +444,10 @@ impl RepoView {
     }
 }
 
-/// How many pull requests and issues the repository holds.
-fn list_lengths(store: &Entity<Store>, repo: &RepoId, cx: &App) -> (usize, usize) {
-    store
-        .read(cx)
-        .state
-        .repo(repo)
-        .map_or((0, 0), |repo| (repo.prs.len(), repo.issues.len()))
+/// The repository's pull requests and issues in the feed's item sort.
+fn list_order(store: &Entity<Store>, repo: &RepoId, cx: &App) -> ListOrder {
+    let state = &store.read(cx).state;
+    ListOrder::new(state.repo(repo), state.filter.sort.items)
 }
 
 /// `1234` → `1.2k`, the way GitHub shows a star count.
@@ -443,8 +470,8 @@ impl Focusable for RepoView {
 impl Render for RepoView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let pulls = self.pulls.item_count();
-        let issue_count = self.issues.item_count();
+        let pulls = self.order.pulls();
+        let issue_count = self.order.issues();
         let issues_load = self
             .store
             .read(cx)
@@ -483,7 +510,12 @@ impl Render for RepoView {
                         v_flex()
                             .flex_1()
                             .min_h_0()
-                            .child(self.render_section_header("Pull requests", Some(pulls), cx))
+                            .child(self.render_section_header(
+                                "Pull requests",
+                                Some(pulls),
+                                None,
+                                cx,
+                            ))
                             .child(if pulls == 0 {
                                 div()
                                     .p_3()
@@ -517,11 +549,21 @@ impl Render for RepoView {
                             .min_h_0()
                             .border_t_1()
                             .border_color(theme.border)
-                            .child(self.render_section_header(
-                                "Issues",
-                                issues::header_count(&issues_load, issue_count),
-                                cx,
-                            ))
+                            .child(
+                                self.render_section_header(
+                                    "Issues",
+                                    issues::header_count(&issues_load, issue_count),
+                                    Some(
+                                        Button::new("repo-new-issue", "+ New issue")
+                                            .tooltip("Open a new issue in this repository")
+                                            .on_click(cx.listener(|_, _, _window, cx| {
+                                                cx.emit(RepoViewEvent::NewIssue)
+                                            }))
+                                            .into_any_element(),
+                                    ),
+                                    cx,
+                                ),
+                            )
                             .child(if issue_count == 0 {
                                 div()
                                     .p_3()

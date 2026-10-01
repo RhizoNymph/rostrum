@@ -243,22 +243,31 @@ mod tests {
     }
 
     async fn db() -> Db {
-        Db::open_in_memory().await.expect("in-memory database opens")
+        Db::open_in_memory()
+            .await
+            .expect("in-memory database opens")
     }
 
     #[tokio::test]
     async fn issues_round_trip_in_their_saved_order() {
         let db = db().await;
         let issues = vec![issue(9), issue(2), issue(5)];
-        db.save_issues(&repo("rostrum"), &issues).await.expect("save");
-        assert_eq!(db.load_issues(&repo("rostrum")).await.expect("load"), issues);
+        db.save_issues(&repo("rostrum"), &issues)
+            .await
+            .expect("save");
+        assert_eq!(
+            db.load_issues(&repo("rostrum")).await.expect("load"),
+            issues
+        );
     }
 
     #[tokio::test]
     async fn saving_issues_replaces_rather_than_appends() {
         let db = db().await;
         let repo = repo("rostrum");
-        db.save_issues(&repo, &[issue(1), issue(2)]).await.expect("save");
+        db.save_issues(&repo, &[issue(1), issue(2)])
+            .await
+            .expect("save");
         db.save_issues(&repo, &[issue(3)]).await.expect("save");
         assert_eq!(db.load_issues(&repo).await.expect("load"), vec![issue(3)]);
 
@@ -271,8 +280,14 @@ mod tests {
         let db = db().await;
         db.save_issues(&repo("a"), &[issue(1)]).await.expect("save");
         db.save_issues(&repo("b"), &[issue(2)]).await.expect("save");
-        assert_eq!(db.load_issues(&repo("a")).await.expect("load"), vec![issue(1)]);
-        assert_eq!(db.load_issues(&repo("b")).await.expect("load"), vec![issue(2)]);
+        assert_eq!(
+            db.load_issues(&repo("a")).await.expect("load"),
+            vec![issue(1)]
+        );
+        assert_eq!(
+            db.load_issues(&repo("b")).await.expect("load"),
+            vec![issue(2)]
+        );
         assert!(
             db.load_pull_requests(&repo("a"))
                 .await
@@ -317,7 +332,9 @@ mod tests {
     async fn corrupt_issue_rows_are_misses_and_are_dropped() {
         let db = db().await;
         let repo = repo("rostrum");
-        db.save_issues(&repo, &[issue(1), issue(2)]).await.expect("save");
+        db.save_issues(&repo, &[issue(1), issue(2)])
+            .await
+            .expect("save");
         db.save_issue_detail(&repo, &detail(1)).await.expect("save");
         sqlx::query("UPDATE cache_issue SET payload = '{' WHERE number = 1")
             .execute(db.pool())

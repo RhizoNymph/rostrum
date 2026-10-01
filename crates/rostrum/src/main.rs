@@ -2,8 +2,11 @@
 
 mod detail;
 mod feed;
+mod issue;
+mod loadable;
 mod nav;
 mod notify;
+mod pickers;
 mod repo_view;
 mod sync;
 
@@ -14,7 +17,7 @@ use gpui::{
     WindowBounds, WindowOptions, actions, div, prelude::*, px, rems, size,
 };
 use gpui_platform::application;
-use rostrum_core::{RepoId, Screen, Selection};
+use rostrum_core::{FeedTab, RepoId, Screen, Selection};
 use rostrum_diff::Highlighter;
 use rostrum_ui::{
     ActiveTheme,
@@ -24,6 +27,7 @@ use rostrum_ui::{
 use crate::{
     detail::PrDetail,
     feed::{FeedEvent, FeedView},
+    issue::{IssuePane, NewIssueEvent, NewIssueForm},
     notify::Notifier,
     repo_view::{RepoView, RepoViewEvent, branches::BranchesPane, model::RepoBranches},
     sync::AuthStatus,
@@ -51,6 +55,42 @@ struct RepoPanes {
     _subscription: Subscription,
 }
 
+/// What the right-hand side of the split is showing.
+enum DetailPane {
+    PullRequest(Entity<PrDetail>),
+    Issue(Entity<IssuePane>),
+    /// The new-issue form. Not a selection: opening it clears the selection,
+    /// and creating the issue selects it, which replaces the form.
+    NewIssue {
+        form: Entity<NewIssueForm>,
+        /// Held so the form's cancel event keeps reaching the workspace.
+        _cancelled: Subscription,
+    },
+}
+
+impl DetailPane {
+    /// The selection this pane shows, if it shows one.
+    fn selection(&self, cx: &App) -> Option<Selection> {
+        match self {
+            Self::PullRequest(detail) => {
+                let detail = detail.read(cx);
+                Some(Selection::PullRequest {
+                    repo: detail.repo.clone(),
+                    number: detail.number,
+                })
+            }
+            Self::Issue(pane) => {
+                let pane = pane.read(cx);
+                Some(Selection::Issue {
+                    repo: pane.repo.clone(),
+                    number: pane.number,
+                })
+            }
+            Self::NewIssue { .. } => None,
+        }
+    }
+}
+
 struct Workspace {
     store: Entity<Store>,
     feed: Entity<FeedView>,
@@ -61,7 +101,7 @@ struct Workspace {
     repo: Option<RepoPanes>,
     /// Rebuilt whenever the selection changes; dropping the previous entity
     /// cancels its in-flight requests.
-    detail: Option<Entity<PrDetail>>,
+    detail: Option<DetailPane>,
     /// Focus target for the detail side of the split. Lives on the workspace
     /// rather than on `PrDetail` so it survives the entity being rebuilt.
     detail_focus: FocusHandle,
@@ -87,6 +127,7 @@ impl Workspace {
                     window.focus(&this.detail_focus, cx);
                 }
                 FeedEvent::OpenRepo(repo) => this.open_repo(repo.clone(), window, cx),
+                FeedEvent::NewIssue { repo } => this.open_new_issue(repo.clone(), cx),
             }),
         ];
 
@@ -131,6 +172,18 @@ impl Workspace {
                 cx.subscribe_in(&view, window, |this, _, event, window, cx| match event {
                     RepoViewEvent::Back => this.close_repo(window, cx),
                     RepoViewEvent::FocusDetail => window.focus(&this.detail_focus, cx),
+                    RepoViewEvent::ShowBranches => {
+                        // The selection is already cleared; a new-issue form
+                        // is not a selection, so it has to be closed here.
+                        if matches!(this.detail, Some(DetailPane::NewIssue { .. })) {
+                            this.detail = None;
+                            cx.notify();
+                        }
+                    }
+                    RepoViewEvent::NewIssue => {
+                        let repo = this.screen.repo().cloned();
+                        this.open_new_issue(repo, cx);
+                    }
                 });
             self.repo = Some(RepoPanes {
                 view,
@@ -152,7 +205,17 @@ impl Workspace {
         self.store.update(cx, |store, cx| {
             let mut selection = store.state.selection.take();
             screen.back(&mut selection);
+            // The view lists both kinds; the feed shows one tab at a time.
+            // Land on the tab that holds what is selected, so it is visible.
+            let tab = match &selection {
+                Some(Selection::PullRequest { .. }) => Some(FeedTab::PullRequests),
+                Some(Selection::Issue { .. }) => Some(FeedTab::Issues),
+                None => None,
+            };
             store.state.selection = selection;
+            if let Some(tab) = tab {
+                store.set_tab(tab, cx);
+            }
             cx.notify();
         });
         if self.repo.take().is_some() {
@@ -174,37 +237,68 @@ impl Workspace {
         }
 
         let selection = self.store.read(cx).state.selection.clone();
-        let current = self.detail.as_ref().map(|detail| {
-            let detail = detail.read(cx);
-            (detail.repo.clone(), detail.number)
-        });
+        let current = self.detail.as_ref().map(|pane| pane.selection(cx));
 
-        // The desktop has no issue detail pane yet, so an issue selection
-        // shows the same placeholder as no selection at all.
-        let selected_pr = match selection {
-            Some(Selection::PullRequest { repo, number }) => Some((repo, number)),
-            Some(Selection::Issue { .. }) | None => None,
-        };
-        match (selected_pr, current) {
-            // Same pull request as before: leave the entity alone so its
-            // loaded conversation and scroll position survive a refresh.
-            (Some(selected), Some(current)) if selected == current => {}
-            (Some((repo, number)), _) => {
-                let store = self.store.clone();
-                let highlighter = self.highlighter.clone();
-                self.detail =
-                    Some(cx.new(|cx| PrDetail::new(store, repo, number, highlighter, cx)));
-            }
-            (None, Some(_)) => self.detail = None,
-            (None, None) => {}
+        match (selection, current) {
+            // Same item as before: leave the entity alone so its loaded
+            // conversation and scroll position survive a refresh.
+            (Some(selection), Some(Some(shown))) if selection == shown => {}
+            (Some(selection), _) => self.detail = Some(self.open(selection, cx)),
+            // The form is not a selection, so a store change with nothing
+            // selected must not close it mid-typing.
+            (None, Some(None)) | (None, None) => {}
+            (None, Some(Some(_))) => self.detail = None,
         }
+        cx.notify();
+    }
+
+    fn open(&self, selection: Selection, cx: &mut Context<Self>) -> DetailPane {
+        let store = self.store.clone();
+        match selection {
+            Selection::PullRequest { repo, number } => {
+                let highlighter = self.highlighter.clone();
+                DetailPane::PullRequest(
+                    cx.new(|cx| PrDetail::new(store, repo, number, highlighter, cx)),
+                )
+            }
+            Selection::Issue { repo, number } => {
+                DetailPane::Issue(cx.new(|cx| IssuePane::new(store, repo, number, cx)))
+            }
+        }
+    }
+
+    /// Show the new-issue form, preset to `repo` when it came from a
+    /// repository's header. The selection is cleared so the form is the one
+    /// thing the pane shows; picking a row, or creating the issue, replaces it.
+    fn open_new_issue(&mut self, repo: Option<RepoId>, cx: &mut Context<Self>) {
+        let store = self.store.clone();
+        let form = cx.new(|cx| NewIssueForm::new(store, repo, cx));
+        let subscription = cx.subscribe(&form, |this, _, event, cx| match event {
+            NewIssueEvent::Cancelled => {
+                this.detail = None;
+                cx.notify();
+            }
+        });
+        self.detail = Some(DetailPane::NewIssue {
+            form,
+            _cancelled: subscription,
+        });
+        self.store.update(cx, |store, cx| {
+            store.state.selection = None;
+            store.set_tab(FeedTab::Issues, cx);
+            cx.notify();
+        });
         cx.notify();
     }
 
     fn refresh(&mut self, _: &Refresh, _window: &mut Window, cx: &mut Context<Self>) {
         self.store.update(cx, |store, cx| store.refresh_all(cx));
-        if let Some(detail) = self.detail.clone() {
-            detail.update(cx, |detail, cx| detail.refresh(cx));
+        match &self.detail {
+            Some(DetailPane::PullRequest(detail)) => {
+                detail.update(cx, |detail, cx| detail.refresh(cx));
+            }
+            Some(DetailPane::Issue(pane)) => pane.update(cx, |pane, cx| pane.refresh(cx)),
+            Some(DetailPane::NewIssue { .. }) | None => {}
         }
     }
 }
@@ -220,10 +314,10 @@ impl Render for Workspace {
             AuthStatus::Failed { message } => (message.clone(), theme.danger),
         };
         let total = store.state.total_open_prs();
+        let issues = store.state.total_open_issues();
         let repo_count = store.state.repos.len();
         let refreshing = store.is_refreshing();
         let warnings: Vec<String> = store.warnings.iter().map(|w| w.0.clone()).collect();
-        let issue_selected = matches!(store.state.selection, Some(Selection::Issue { .. }));
 
         v_flex()
             .size_full()
@@ -251,7 +345,9 @@ impl Render for Workspace {
                         div()
                             .text_size(rems(0.75))
                             .text_color(theme.text_subtle)
-                            .child(format!("{total} open across {repo_count} repos")),
+                            .child(format!(
+                                "{total} pull requests and {issues} issues open across {repo_count} repos"
+                            )),
                     )
                     .child(div().flex_1())
                     .when(refreshing, |el| {
@@ -319,20 +415,16 @@ impl Render for Workspace {
                             .overflow_hidden()
                             .key_context(DETAIL_CONTEXT)
                             .track_focus(&self.detail_focus)
-                            .map(|el| match (self.detail.clone(), &self.repo) {
-                                (Some(detail), _) => el.child(detail),
-                                (None, _) if issue_selected => el.child(
-                                    div()
-                                        .size_full()
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .text_size(rems(0.85))
-                                        .text_color(theme.text_subtle)
-                                        .child(
-                                            "Issue details are not available on the desktop yet",
-                                        ),
-                                ),
+                            .map(|el| match (&self.detail, &self.repo) {
+                                (Some(DetailPane::PullRequest(detail)), _) => {
+                                    el.child(detail.clone())
+                                }
+                                (Some(DetailPane::Issue(pane)), _) => el.child(pane.clone()),
+                                (Some(DetailPane::NewIssue { form, .. }), _) => {
+                                    el.child(form.clone())
+                                }
+                                // Nothing selected inside a repository's view:
+                                // its branch tree.
                                 (None, Some(panes)) => el.child(panes.branches.clone()),
                                 (None, None) => el.child(
                                     div()
@@ -342,10 +434,10 @@ impl Render for Workspace {
                                         .justify_center()
                                         .text_size(rems(0.85))
                                         .text_color(theme.text_subtle)
-                                        .child(if total == 0 {
-                                            "No pull requests loaded"
+                                        .child(if total + issues == 0 {
+                                            "Nothing loaded yet"
                                         } else {
-                                            "Select a pull request"
+                                            "Select a pull request or an issue"
                                         }),
                                 ),
                             }),

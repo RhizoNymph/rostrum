@@ -1,6 +1,7 @@
 # rostrum
 
-Open pull requests across many GitHub repositories, in one native feed.
+Open pull requests and issues across many GitHub repositories, in one native
+feed.
 
 Built in Rust on [GPUI](https://gpui.rs). Repositories are stacked vertically,
 each in its own container, in a single continuous scroll.
@@ -11,8 +12,9 @@ Complete: the multi-repo feed, the conversation timeline with markdown, the
 syntax-highlighted diff, inline comments (single- and multi-line) with
 pending-review batching, review submission, merge/close, draft conversion in
 both directions, branch divergence with merge/rebase from the base, local clone
-sync, a local SQLite cache, text selection, keyboard navigation, filtering, and
-optional desktop notifications. `docs/OVERVIEW.md` lists what is deliberately
+sync, an Issues tab with its own detail pane and issue creation, a local SQLite
+cache, text selection, keyboard navigation, filtering, and optional desktop
+notifications. `docs/OVERVIEW.md` lists what is deliberately
 still missing.
 
 ## Requirements
@@ -51,6 +53,8 @@ cargo run -p rostrum --example review -- zed-industries/zed 62051
   "repos": ["zed-industries/zed", "rust-lang/rust"],
   "refresh_secs": 60,
   "prs_per_repo": 25,
+  "issues_per_repo": 25,
+  "feed_tab": "pull_requests",
   "notifications": false,
   "clones": {
     "zed-industries/zed": "~/Code/zed"
@@ -113,7 +117,8 @@ Settings live in `~/.config/rostrum/rostrumd.json`; see
 
 | Key | Action |
 |---|---|
-| `j` / `k` | Next / previous pull request |
+| `j` / `k` | Next / previous pull request, or issue on the Issues tab |
+| `[` / `]` | Pull requests tab / Issues tab |
 | `g g` / `shift-g` | First / last |
 | `enter` | Focus the detail pane |
 | `/` | Focus the filter box |
@@ -139,6 +144,26 @@ Click a pull request, then use the tabs:
 
 Labels are editable from the header: remove one with its `×`, or open the picker
 to toggle any of the repository's labels.
+
+## Issues
+
+The tab bar at the top of the feed switches between **Pull requests** and
+**Issues**; each tab shows how many open items the current filter lets
+through, and the choice is remembered. Issues sit in the same per-repository
+containers and obey the same search, author filter (where "involved" means
+assigned), hidden-empty and collapse settings.
+
+Click an issue for its pane: title, state, labels and assignees (both editable
+through pickers), then the description, comments and events — closes and
+reopens with their reasons, label and assignee changes, renames, and
+cross-references from other issues and pull requests. Below it, comment, close
+as completed, close as not planned, or reopen; none of these ask for
+confirmation, since each is undone by another.
+
+**New issue** — on the Issues tab bar, or `+ New issue` on a repository's
+header — opens a form with a repository chooser, a title, a markdown body with
+Write/Preview, and labels and assignees. It will not send without a title;
+once created, the new issue opens in its pane.
 
 The buttons at the bottom post a comment, submit the pending review as
 **Approve** or **Request changes**, or merge/close. Merge and close ask for

@@ -8,11 +8,11 @@ use std::{
 };
 
 use rostrum_core::{
-    FeedFilter, FeedTab, LoginKey, RepoId,
+    FeedFilter, FeedSort, FeedTab, ItemSortKey, LoginKey, RepoId, RepoSortKey, Sort,
     branches::{TrunkChoice, TrunkName},
     model::ParseRepoIdError,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -99,6 +99,56 @@ pub struct Config {
     /// hand-editable; [`Config::trunk_choice`] validates them on the way out.
     #[serde(default)]
     pub trunks: BTreeMap<String, Vec<String>>,
+    /// How repository containers are ordered in the feed.
+    ///
+    /// Read leniently: a value this build cannot decode — a typo, a key from
+    /// a newer build — falls back to the default sort rather than failing the
+    /// whole file, which would cost the user their repository list over a
+    /// preference about order.
+    #[serde(default = "default_repo_sort", deserialize_with = "lenient_repo_sort")]
+    pub repo_sort: Sort<RepoSortKey>,
+    /// How items are ordered within each repository. Lenient for the same
+    /// reason as `repo_sort`.
+    #[serde(default = "default_item_sort", deserialize_with = "lenient_item_sort")]
+    pub item_sort: Sort<ItemSortKey>,
+}
+
+fn default_repo_sort() -> Sort<RepoSortKey> {
+    FeedSort::default().repos
+}
+
+fn default_item_sort() -> Sort<ItemSortKey> {
+    FeedSort::default().items
+}
+
+fn lenient_repo_sort<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Sort<RepoSortKey>, D::Error> {
+    lenient(deserializer, default_repo_sort)
+}
+
+fn lenient_item_sort<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Sort<ItemSortKey>, D::Error> {
+    lenient(deserializer, default_item_sort)
+}
+
+/// Decode a field that falls back to `fallback()` when it is present but
+/// unreadable, instead of failing the document around it.
+///
+/// Only the field's own shape is forgiven: the surrounding JSON still has to
+/// parse, so a truncated file is still reported as malformed.
+fn lenient<'de, D, T>(deserializer: D, fallback: fn() -> T) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: DeserializeOwned,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match T::deserialize(value) {
+        Ok(parsed) => Ok(parsed),
+        // Deliberately not an error: see `Config::repo_sort`.
+        Err(_unreadable) => Ok(fallback()),
+    }
 }
 
 impl Default for Config {
@@ -122,6 +172,8 @@ impl Default for Config {
             authors: BTreeSet::new(),
             include_involved: false,
             trunks: BTreeMap::new(),
+            repo_sort: default_repo_sort(),
+            item_sort: default_item_sort(),
         }
     }
 }
@@ -269,6 +321,10 @@ impl Config {
                 .cloned()
                 .collect(),
             include_involved: self.include_involved,
+            sort: FeedSort {
+                repos: self.repo_sort,
+                items: self.item_sort,
+            },
         }
     }
 
@@ -280,6 +336,8 @@ impl Config {
         self.hide_empty_repos = filter.hide_empty_repos;
         self.authors = filter.authors.clone();
         self.include_involved = filter.include_involved;
+        self.repo_sort = filter.sort.repos;
+        self.item_sort = filter.sort.items;
     }
 
     /// Parse the configured repositories, reporting malformed entries rather
@@ -393,9 +451,8 @@ impl Config {
     }
 }
 
-fn lenient_tab<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<FeedTab, D::Error> {
-    let value = serde_json::Value::deserialize(deserializer)?;
-    Ok(serde_json::from_value(value).unwrap_or_default())
+fn lenient_tab<'de, D: Deserializer<'de>>(deserializer: D) -> Result<FeedTab, D::Error> {
+    lenient(deserializer, FeedTab::default)
 }
 
 /// Expand a leading `~` against the home directory.
@@ -417,6 +474,7 @@ fn expand_tilde(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rostrum_core::SortDirection;
 
     /// A config file in a directory of its own, removed when the test ends.
     /// Matching the pattern already used in `rostrum-handoff` and `rostrum-db`
@@ -499,6 +557,7 @@ mod tests {
             hide_empty_repos: false,
             authors: BTreeSet::from([LoginKey::new("alice")]),
             include_involved: true,
+            sort: FeedSort::default(),
         };
 
         let mut config = Config::default();
@@ -949,5 +1008,143 @@ mod tests {
                 .expect("config should still parse");
         assert_eq!(config.feed_tab, FeedTab::PullRequests);
         assert_eq!(config.repos, vec!["x/y".to_string()]);
+    }
+
+    // --- feed sort ----------------------------------------------------------
+
+    fn sorted(repos: Sort<RepoSortKey>, items: Sort<ItemSortKey>) -> FeedFilter {
+        FeedFilter {
+            sort: FeedSort { repos, items },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_default_sort_is_repos_by_pushed_and_items_by_created() {
+        let filter = Config::default().feed_filter();
+        assert_eq!(filter.sort, FeedSort::default());
+        assert_eq!(filter.sort.repos, Sort::new(RepoSortKey::Pushed));
+        assert_eq!(filter.sort.items, Sort::new(ItemSortKey::Created));
+    }
+
+    #[test]
+    fn both_sorts_survive_a_restart() {
+        let temp = TempConfig::new("sort");
+        let filter = sorted(
+            Sort::with_direction(RepoSortKey::Stars, SortDirection::Ascending),
+            Sort::with_direction(ItemSortKey::Title, SortDirection::Descending),
+        );
+
+        let mut config = Config::default();
+        config.absorb_filter(&filter);
+        let restored = temp.round_trip(&config).feed_filter();
+
+        assert_eq!(restored.sort, filter.sort);
+    }
+
+    /// The sort is not a filter: switching it never counts as filtering, and
+    /// clearing the filter leaves it as chosen.
+    #[test]
+    fn the_sort_is_not_a_filter() {
+        let filter = sorted(Sort::new(RepoSortKey::Name), Sort::new(ItemSortKey::Author));
+        assert!(!filter.is_active());
+
+        let narrowed = FeedFilter {
+            hide_drafts: true,
+            query: "x".into(),
+            ..filter.clone()
+        };
+        let cleared = narrowed.cleared();
+        assert_eq!(cleared.sort, filter.sort);
+        assert!(!cleared.hide_drafts);
+        assert!(cleared.query.is_empty());
+    }
+
+    #[test]
+    fn a_config_from_before_sorting_loads_with_the_default_sort() {
+        let config: Config = serde_json::from_str(
+            r#"{ "repos": ["a/b"], "hide_drafts": true, "authors": ["alice"] }"#,
+        )
+        .expect("older config should parse");
+        let filter = config.feed_filter();
+        assert_eq!(filter.sort, FeedSort::default());
+        assert!(filter.hide_drafts);
+    }
+
+    #[test]
+    fn the_sort_is_written_in_a_hand_editable_shape() {
+        let mut config = Config::default();
+        config.absorb_filter(&sorted(
+            Sort::new(RepoSortKey::Owner),
+            Sort::new(ItemSortKey::Updated),
+        ));
+        let json: serde_json::Value =
+            serde_json::to_value(&config).expect("config should serialise");
+        assert_eq!(
+            json["repo_sort"],
+            serde_json::json!({ "key": "owner", "direction": "ascending" })
+        );
+        assert_eq!(
+            json["item_sort"],
+            serde_json::json!({ "key": "updated", "direction": "descending" })
+        );
+    }
+
+    /// A hand-written sort may leave out the direction; it then takes the
+    /// key's default, the same as choosing the key in the menu.
+    #[test]
+    fn a_hand_written_sort_without_a_direction_takes_the_default() {
+        let config: Config = serde_json::from_str(
+            r#"{ "repo_sort": { "key": "stars" }, "item_sort": { "key": "title" } }"#,
+        )
+        .expect("config should parse");
+        let sort = config.feed_filter().sort;
+        assert_eq!(sort.repos, Sort::new(RepoSortKey::Stars));
+        assert_eq!(sort.repos.direction(), SortDirection::Descending);
+        assert_eq!(sort.items.direction(), SortDirection::Ascending);
+    }
+
+    /// A sort the build does not understand — a typo, a key from a newer
+    /// build, or stars on the item sort — costs that one sort its setting,
+    /// not the whole file its repositories.
+    #[test]
+    fn an_unreadable_sort_falls_back_without_losing_the_rest_of_the_config() {
+        let config: Config = serde_json::from_str(
+            r#"{
+                "repos": ["a/b", "c/d"],
+                "repo_sort": { "key": "no-such-key" },
+                "item_sort": { "key": "stars", "direction": "descending" }
+            }"#,
+        )
+        .expect("config should still parse");
+        assert_eq!(config.repos, ["a/b", "c/d"]);
+        assert_eq!(config.feed_filter().sort, FeedSort::default());
+
+        let half: Config =
+            serde_json::from_str(r#"{ "repo_sort": 7, "item_sort": { "key": "author" } }"#)
+                .expect("config should still parse");
+        assert_eq!(half.repo_sort, Sort::new(RepoSortKey::Pushed));
+        assert_eq!(half.item_sort, Sort::new(ItemSortKey::Author));
+    }
+
+    /// The sort and the tab are separate settings in one file; saving one
+    /// must not reset the other.
+    #[test]
+    fn the_sort_and_the_tab_survive_a_restart_together() {
+        let temp = TempConfig::new("sort-and-tab");
+        let filter = sorted(
+            Sort::with_direction(RepoSortKey::Name, SortDirection::Descending),
+            Sort::new(ItemSortKey::Updated),
+        );
+
+        let mut config = Config {
+            feed_tab: FeedTab::Issues,
+            ..Default::default()
+        };
+        config.absorb_filter(&filter);
+        let restored = temp.round_trip(&config);
+
+        assert_eq!(restored.feed_tab, FeedTab::Issues);
+        assert_eq!(restored.feed_filter().sort, filter.sort);
     }
 }

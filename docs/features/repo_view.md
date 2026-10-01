@@ -11,7 +11,8 @@ on it beneath, and pull requests stacked on those beneath them. Desktop only.
 - Navigation between the feed and a repository's view, and what happens to
   the selection on the way in and out.
 - The sidebar: header (name, stars, *Open on GitHub*, *Branches*, the trunk
-  editor), and two independently scrolling virtualized lists.
+  editor), and two independently scrolling virtualized lists, each in the
+  feed's item sort, the issues half with a **+ New issue** button.
 - The branch tree: trunk resolution, the comparison batch, tree building and
   its placement rules, and drawing it.
 - Per-repository trunk configuration in `config.json`.
@@ -19,12 +20,18 @@ on it beneath, and pull requests stacked on those beneath them. Desktop only.
 ## Non-scope
 
 - Fetching pull requests and issues. The view reads `RepoState::prs` and
-  `RepoState::issues` from the store exactly as the feed does; issues are
-  fetched by `feat/issues` (until the desktop store does so, the issues half
-  says "not loaded yet").
+  `RepoState::issues` from the store exactly as the feed does; both are
+  fetched for every watched repository in the store's poll cycle (see
+  `docs/features/issues.md`), so the issues half fills in on its own.
 - The detail panes. Selecting a pull request opens the same `PrDetail` the
-  feed opens. There is no desktop issue detail yet; selecting an issue shows
-  a placeholder in the right pane.
+  feed opens, and selecting an issue the same `IssuePane`
+  (`IssuePane::new(store, repo, number, cx)`); the workspace's `DetailPane`
+  follows the selection whichever list set it. The new-issue form is the
+  feed's `NewIssueForm`, preset to this repository.
+- Choosing the sort. The view follows the feed's item sort; the Sort popover
+  lives in the feed header (see `docs/features/feed_sort.md`).
+- Filtering. The view lists every open pull request and issue of the
+  repository; the feed's search and author filter do not narrow it.
 - Local worktree drift in the tree. `rostrum_local::local_state` can answer
   it per branch, but it fetches per branch; see *Deferred*.
 - The Android app.
@@ -56,7 +63,14 @@ Keys in the view (`RepoView` context, on the lists only): `j`/`k`/`↓`/`↑`
 move through pull requests and on into issues as one sequence, without
 wrapping (`repo_view::nav::step`, unit tested); `g g`/`shift-g` jump to the
 ends; `enter` focuses the detail pane; `b` clears the selection to show the
-branch tree.
+branch tree (and closes a new-issue form, which is not a selection, via
+`RepoViewEvent::ShowBranches`). Movement is over *displayed* rows: `step`
+works on display positions and `ListOrder` maps them to items, so `j`
+follows the sorted order.
+
+Leaving with an item selected switches the feed to the tab that lists it —
+the view shows both kinds at once, the feed one tab at a time — so the
+selection is visible on return. `[`/`]` are feed keys and do nothing here.
 
 Entering a repository creates three entities — `RepoBranches` (data),
 `RepoView` (left pane) and `BranchesPane` (right pane) — held together in
@@ -164,11 +178,27 @@ turns it into the configured list it amounted to (`TrunkChoice::adding` /
 ## Layout
 
 The sidebar is a fixed 50/50 vertical split. Each half is a header with a
-count (`—` for issues until they have loaded once) and its own `gpui::list`
-over `RepoState::prs` / `RepoState::issues`, so each scrolls and virtualizes
-independently. Pull request rows are drawn by `feed::pr_row_content`, the
-same function the feed uses, so the two lists cannot drift apart in what a
-row says.
+count (`—` for issues until they have loaded once) and its own `gpui::list`,
+so each scrolls and virtualizes independently. Pull request and issue rows
+are drawn by `feed::pr_row_content` and `feed::issue_row_content`, the same
+bodies the feed's rows use (`crates/rostrum/src/feed/rows.rs`), so the two
+places cannot drift apart in what a row says.
+
+### Order
+
+`order::ListOrder` holds each list's display order as positions into
+`RepoState::prs` / `RepoState::issues`: every item, unfiltered, ordered by
+the feed's **item** sort (`FeedFilter::sort.items`) with `order_items` /
+`order_issues`. So the view reads in the same order as that repository's
+run in the feed, and issues sort exactly as on the Issues tab — including
+"pushed", which for an issue means its last update. Row `ix` of a list is
+`order.pull_at(ix)` / `order.issue_at(ix)`; a selection's row is
+`order.position_of(repo, selection)`, which never matches across kinds.
+
+`RepoView::store_changed` rebuilds the order on every store change. A change
+in count resets a list; a reorder at the same count `splice`s it in place, so
+the scroll position holds while the measured heights are refreshed; an
+unchanged order leaves both lists alone.
 
 ## Invariants
 
@@ -181,15 +211,17 @@ row says.
 - `Workspace::repo` is `Some` exactly when `Workspace::screen` is
   `Screen::Repo`; a repository removed while open sends the view back to the
   feed.
-- Each list's `ListState` item count equals its vector's length
-  (`RepoView::store_changed` resets on change).
+- Each list's `ListState` item count equals its `ListOrder` length, which
+  equals the vector's length (`RepoView::store_changed` resets or splices on
+  change).
+- Both lists are in the feed's item sort; rows are addressed by display
+  position, never by vector index.
 
 ## Deferred
 
 - **Local worktree drift** in the tree. Doing it per branch means a fetch per
   branch through `local_state`; worth a batched local comparison first.
 - **Resizable split.** Fixed 50/50 for now.
-- **Desktop issue detail and issue fetching**: owned by `feat/issues`.
 - **Cross-fork heads that share a trunk's name** can compare against the base
   repository's branch of that name, as in the feed; telling them apart needs
   `isCrossRepository` on the feed query.
@@ -212,7 +244,18 @@ row says.
 | `crates/rostrum/src/repo_view/model.rs` | `RepoBranches` (fetch, refresh-on-poll, `set_choice`), `BranchFetchError`, `Store::set_trunk_choice` |
 | `crates/rostrum/src/repo_view/branches.rs` | `BranchesPane`, the tree's rendering |
 | `crates/rostrum/src/repo_view/trunk_editor.rs` | The trunks popover |
-| `crates/rostrum/src/repo_view/issues.rs` | Issue rows and the issues half's empty states |
+| `crates/rostrum/src/repo_view/issues.rs` | The issues half's header count and empty states |
+| `crates/rostrum/src/repo_view/order.rs` | `ListOrder`: both lists in the item sort, display row ↔ item, selection lookup |
 | `crates/rostrum/src/repo_view/nav.rs` | `step`: keyboard movement across both lists |
-| `crates/rostrum/src/feed/pr_row.rs` | `pr_row_content`, shared by the feed and the view |
-| `crates/rostrum/src/main.rs` | `Workspace::open_repo` / `close_repo`, pane switching |
+| `crates/rostrum/src/feed/rows.rs` | `pr_row_content`, `issue_row_content`: the row bodies shared by the feed and the view |
+| `crates/rostrum/src/main.rs` | `Workspace::open_repo` / `close_repo`, pane switching (`DetailPane`: `PrDetail`, `IssuePane`, new-issue form, or the branch tree when nothing is selected in a repository) |
+
+## Naming note
+
+Two types are called `RepoMeta`. `rostrum_core::RepoMeta` (`repo_meta.rs`,
+re-exported at the crate root) is what the feed's repository sort reads —
+owner, push and creation times, stars — fetched with the feed query and
+cached. `rostrum_core::branches::RepoMeta` is the branch view's own answer —
+URL, stars, default branch and which probed trunks exist — fetched when a
+repository's view opens. They come from different queries at different
+times and are not interchangeable.

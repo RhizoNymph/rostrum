@@ -39,7 +39,7 @@ When no PR is selected the pane shows an empty state with aggregate counts.
 ```
 AppState (Entity)
 ├── repos: Vec<RepoState>
-├── selection: Option<(RepoId, PrNumber)>
+├── selection: Option<Selection>   // PullRequest { repo, number } | Issue { .. }
 └── detail: Option<Entity<PrDetail>>
 
 PrDetail (Entity)
@@ -54,8 +54,10 @@ PrDetail (Entity)
 └── refresh: Option<Task<()>>
 ```
 
-Selection is stored as `(RepoId, PrNumber)`, never as feed indices — indices are
-positional and invalidated by every refresh.
+Selection is stored as `Selection::PullRequest { repo, number }`, never as feed
+indices — indices are positional and invalidated by every refresh. An issue
+selection opens the issue pane instead (`docs/features/issues.md`); the
+workspace's `DetailPane` holds whichever is showing.
 
 Changing selection replaces the `PrDetail` entity outright rather than mutating
 it. Dropping the old entity cancels its in-flight `Task`s automatically, which is
@@ -239,6 +241,10 @@ The palette loads **lazily** — only when the picker is first opened, never whe
 the pull request opens — and is cached on `PrDetail.repo_labels`, so reopening
 the picker costs nothing.
 
+The chips and the picker are drawn by `crate::pickers` (`label_chip`,
+`label_picker`), shared with the issue pane and the new-issue form; the pull
+request pane supplies only what a click does.
+
 Both add and remove route through the same `mutate()` helper as every other
 mutation, inheriting the in-flight guard, the error banner, and the
 authoritative reload. While a mutation is in flight the affordances drop their
@@ -270,7 +276,8 @@ scheduled in phase 2.
 ## Invariants
 
 - Exactly one `PrDetail` entity exists at a time; replacing it cancels prior tasks.
-- Selection is `(RepoId, PrNumber)`, resolved to indices only at render time.
+- Selection is `Selection::PullRequest { repo, number }`, resolved to indices
+  only at render time.
 - A `ThreadId` maps to exactly one stored thread, shared by both views.
 - Timeline items are ordered by `created_at` ascending.
 - Destructive or outward-facing actions (merge, close) require confirmation.
