@@ -16,7 +16,7 @@ use gpui::{Context, Task};
 use gpui_tokio::Tokio;
 use rostrum_core::{
     AppState, AuthorEntry, Divergence, FeedFilter, ItemSortKey, LoadState, LoginKey,
-    MergeProbeBudget, PrNumber, PullRequest, RepoId, RepoMeta, RepoSortKey, RepoState, User,
+    MergeProbeBudget, PrNumber, PullRequest, RepoId, RepoMeta, RepoSortKey, RepoState, Stack, User,
     apply_divergences, carry_forward_divergence, divergence_query, needs_merge_probe, roster,
 };
 use rostrum_db::Db;
@@ -26,6 +26,10 @@ use rostrum_handoff::PrMeta;
 
 use rostrum_config::{Config, ConflictHandler, Warning};
 use rostrum_local::{LocalJob, LocalOp, LocalResult, run_local_job};
+
+mod stacks;
+
+pub use stacks::StackOpResult;
 
 #[derive(Clone, Debug)]
 pub enum AuthStatus {
@@ -145,6 +149,7 @@ struct CachedRepo {
     id: RepoId,
     prs: Vec<PullRequest>,
     meta: Option<RepoMeta>,
+    stacks: Vec<Stack>,
 }
 
 pub struct Store {
@@ -184,6 +189,9 @@ pub struct Store {
     /// Local cache. `None` until it opens, and `None` forever if it fails —
     /// the app works without it, just without a warm start.
     db: Option<Arc<Db>>,
+    /// GitHub's stacks per repository and the running stack operation; see
+    /// [`stacks`].
+    stacks: stacks::StackSync,
     _hydrate: Option<Task<()>>,
 }
 
@@ -211,6 +219,7 @@ impl Store {
             sync_task: None,
             viewer: None,
             db: None,
+            stacks: stacks::StackSync::default(),
             _hydrate: None,
         };
         store.open_database(cx);
@@ -244,8 +253,14 @@ impl Store {
                 for id in repos {
                     let prs = db.load_pull_requests(&id).await?;
                     let meta = db.load_repo_meta(&id).await?;
-                    if !prs.is_empty() || meta.is_some() {
-                        cached.push(CachedRepo { id, prs, meta });
+                    let stacks = db.load_stacks(&id).await?;
+                    if !prs.is_empty() || meta.is_some() || !stacks.is_empty() {
+                        cached.push(CachedRepo {
+                            id,
+                            prs,
+                            meta,
+                            stacks,
+                        });
                     }
                 }
                 Ok::<_, rostrum_db::DbError>((db, cached))
@@ -268,7 +283,14 @@ impl Store {
     fn hydrate(&mut self, db: Arc<Db>, cached: Vec<CachedRepo>, cx: &mut Context<Self>) {
         self.db = Some(db);
 
-        for CachedRepo { id, prs, meta } in cached {
+        for CachedRepo {
+            id,
+            prs,
+            meta,
+            stacks,
+        } in cached
+        {
+            self.hydrate_stacks(&id, stacks);
             let Some(repo) = self.state.repo_mut(&id) else {
                 continue;
             };
@@ -320,6 +342,7 @@ impl Store {
         // Dropping the in-flight tasks cancels their requests.
         self.pending.remove(id);
         self.divergence_probes.remove(id);
+        self.stacks.forget(id);
         // A verdict for a repository that is no longer listed has no row to
         // sit on, and would resurface if the repo were re-added.
         if let Some(sync) = &mut self.sync {
@@ -763,6 +786,7 @@ impl Store {
 
                 self.probe_merge_state(id, cx);
                 self.fetch_divergences(id, cx);
+                self.fetch_stacks(id, cx);
 
                 if let Some(limit) = fetched.rate_limit {
                     tracing::debug!(

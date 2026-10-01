@@ -32,10 +32,11 @@ use crate::{
     sync::{Store, SyncKind},
 };
 
+mod arrange;
+mod sort_menu;
 mod stacks;
 
-use stacks::{STACK_INDENT, stack_glyph};
-mod sort_menu;
+use stacks::{STACK_INDENT, StackUi, stack_glyph};
 
 actions!(
     feed,
@@ -111,6 +112,8 @@ pub struct FeedView {
     focus_handle: FocusHandle,
     feed: Rc<Feed>,
     list: ListState,
+    /// Stack selection, confirmations and the trunk input; see [`stacks`].
+    stack_ui: StackUi,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -120,6 +123,7 @@ impl FeedView {
         let list = ListState::new(feed.len(), ListAlignment::Top, px(400.));
         let filter = cx.new(|cx| TextInput::new("Filter pull requests…", cx).lines(1, 1));
         let repo_input = cx.new(|cx| TextInput::new("owner/name or a GitHub URL", cx).lines(1, 1));
+        let stack_ui = StackUi::new(cx);
 
         let subscriptions = vec![
             cx.observe(&store, |this, _, cx| this.store_changed(cx)),
@@ -127,6 +131,12 @@ impl FeedView {
                 if matches!(event, InputEvent::Changed) {
                     let query = filter.read(cx).text().to_string();
                     this.set_query(query, cx);
+                }
+            }),
+            // The arrangement re-validates as the trunk is typed.
+            cx.subscribe(&stack_ui.trunk_input, |_, _, event, cx| {
+                if matches!(event, InputEvent::Changed) {
+                    cx.notify();
                 }
             }),
             // Enter in the repo box adds it, so the mouse is optional.
@@ -149,6 +159,7 @@ impl FeedView {
             focus_handle: cx.focus_handle(),
             feed,
             list,
+            stack_ui,
             _subscriptions: subscriptions,
         }
     }
@@ -614,6 +625,10 @@ impl FeedView {
 
         let theme = cx.theme().clone();
         let glyph = stack.map(|slot| stack_glyph(slot.place));
+        // While picking for an arrangement a row is a toggle, not a selection.
+        let pick = self.pick_badge(&state.id, pull.number);
+        let pick_repo = state.id.clone();
+        let pick_number = pull.number;
 
         card(chrome, cx)
             .id(("pr", ix))
@@ -629,6 +644,22 @@ impl FeedView {
                     .child(
                         h_flex()
                             .gap_2()
+                            .when_some(pick, |el, pick| {
+                                el.child(
+                                    div()
+                                        .w(px(18.))
+                                        .text_size(rems(0.72))
+                                        .text_color(if pick.is_some() {
+                                            theme.accent
+                                        } else {
+                                            theme.text_subtle
+                                        })
+                                        .child(match pick {
+                                            Some(n) => format!("[{n}]"),
+                                            None => "[ ]".to_string(),
+                                        }),
+                                )
+                            })
                             .when_some(glyph, |el, glyph| {
                                 el.child(
                                     div()
@@ -725,7 +756,13 @@ impl FeedView {
                             })),
                     ),
             )
-            .on_click(cx.listener(move |this, _, _window, cx| this.select(repo, pr, cx)))
+            .on_click(cx.listener(move |this, _, _window, cx| {
+                if this.is_picking() {
+                    this.toggle_pick(pick_repo.clone(), pick_number, cx)
+                } else {
+                    this.select(repo, pr, cx)
+                }
+            }))
             .into_any_element()
     }
 
@@ -976,6 +1013,22 @@ impl FeedView {
                         .child(sync_button("sync-merge-base", SyncKind::MergeBase, cx))
                         .child(sync_button("sync-rebase-base", SyncKind::RebaseBase, cx))
                         .child(
+                            Button::new("arrange-start", "Arrange PRs")
+                                .style(if self.is_picking() {
+                                    ButtonStyle::Primary
+                                } else {
+                                    ButtonStyle::Subtle
+                                })
+                                .tooltip("Pick pull requests of one repository to stack, rebasing them onto each other")
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    if this.is_picking() {
+                                        this.stop_picking(cx)
+                                    } else {
+                                        this.start_picking(cx)
+                                    }
+                                })),
+                        )
+                        .child(
                             Checkbox::new("sync-autostash", "Stash local changes", autostash)
                                 .on_toggle(cx.listener(move |this, _, _window, cx| {
                                     this.store.update(cx, |store, cx| {
@@ -1078,6 +1131,7 @@ impl Render for FeedView {
             .on_action(cx.listener(Self::dismiss_filter))
             .on_action(cx.listener(Self::toggle_collapse))
             .child(self.render_filter_bar(cx))
+            .child(self.render_stack_bar(cx))
             .child(
                 div()
                     .flex_1()

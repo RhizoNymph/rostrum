@@ -5292,6 +5292,7 @@ dependencies = [
  "rostrum-handoff",
  "rostrum-local",
  "rostrum-md",
+ "rostrum-stack",
  "rostrum-ui",
  "serde",
  "serde_json",
