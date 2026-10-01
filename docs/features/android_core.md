@@ -23,7 +23,19 @@ each.
   default, and the feed's persisted filter preferences.
 - The feed: cached and refreshed snapshots, per-repository load state and
   body, filtering, collapse, the author roster, distance from base, and
-  background merge-state re-checks delivered through an observer.
+  background merge-state re-checks delivered through an observer. Two tabs
+  (pull requests, issues) with per-tab counts, and the saved repository and
+  item sorts (`docs/features/feed_sort.md`).
+- Stacks, read only (`docs/features/stacks.md`): the feed and the
+  repository screen deliver a stack as one item — header, then its visible
+  members bottom first — sorting as one unit, as on the desktop.
+- Issues (`docs/features/issues.md`): the Issues tab's rows, the issue
+  screen (header plus timeline, markdown flattened), comment, close as
+  completed or not planned, reopen, labels, assignees, and creating an
+  issue. Issues are cached like pull requests.
+- A repository's own screen (`docs/features/repo_view.md`): its pull
+  requests (stacks grouped) and issues unfiltered in the item sort, its
+  facts, its branch tree with ahead/behind, and its trunk setting.
 - Pull request detail: header with the merge verdict and draft action,
   the conversation with markdown flattened to blocks, threads, checks,
   labels, and every PR-level mutation (comment, reply, labels, merge with all
@@ -58,6 +70,12 @@ each.
   `ring` not `aws-lc-rs`, no subprocesses.
 - Resolving threads, editing or deleting comments, pagination past 100 —
   the same gaps as the desktop (see `docs/OVERVIEW.md`).
+- Phase 2, with seams left for them: editing an issue's title and body and
+  paging its timeline back ("load earlier") — `feat/issue-edit-paging`,
+  landing as methods beside the ones in `src/issues/mod.rs` and fields on
+  `IssueDetail`; stack actions from the phone through the paired desktop —
+  `feat/remote-stacks`, hanging off `PullItem.Stack` and `src/stacks.rs`.
+- Issues in background notifications.
 
 ## API
 
@@ -70,7 +88,10 @@ Kotlin names are camelCase; every call that touches state or I/O is
 | lifecycle | `RostrumCore.open(dataDir)`, `warnings()` |
 | session | `setGithubToken(token?) → GitHubStatus`, `githubStatus()`, `viewer() → UserRef` |
 | settings | `settings()`, `addRepo(input) → "owner/name"`, `removeRepo(repo) → Boolean`, `setRefreshInterval(s)`, `setPrsPerRepo(n)`, `setNotifications(newPullRequests, reviewRequests)`, `setAutostash(b)` — setters return `Settings` |
-| feed | `cachedFeed()`, `refreshFeed()`, `refreshRepo(repo)`, `setQuery(q)`, `setFilter(FeedPreferences)`, `toggleAuthor(login)`, `clearFilter()`, `toggleCollapsed(repo)` — all return `FeedSnapshot`; `authorRoster(limit?) → AuthorRoster`, `setFeedObserver(FeedObserver?)` |
+| feed | `cachedFeed()`, `refreshFeed()`, `refreshRepo(repo)`, `setQuery(q)`, `setFilter(FeedPreferences)`, `toggleAuthor(login)`, `clearFilter()` (keeps the sort), `toggleCollapsed(repo)`, `setFeedTab(FeedTab)` — all return `FeedSnapshot`; `authorRoster(limit?) → AuthorRoster` (the active tab's authors), `setFeedObserver(FeedObserver?)` |
+| sort | `sortSettings() → SortSettings`; `setRepoSort(RepoSortKey, SortDirection?)`, `setItemSort(ItemSortKey, SortDirection?)` → `FeedSnapshot` (no direction: a new key starts at its default, the same key keeps its direction) |
+| issues | `issueDetail(repo, n) → IssueDetail`, `cachedIssueDetail(repo, n) → IssueDetail?`, `commentOnIssue(repo, n, body)`, `closeIssue(repo, n, CloseIssueAs)`, `reopenIssue(repo, n)`, `addIssueLabel(repo, n, label)`, `removeIssueLabel(repo, n, label)`, `assignableUsers(repo) → List<UserRef>`, `addIssueAssignee(repo, n, login)`, `removeIssueAssignee(repo, n, login)`, `createIssue(repo, title, body, labels, assignees) → UInt` (the new number); labels to offer come from `repositoryLabels(repo)` |
+| repository | `repoOverview(repo) → RepoOverview` (no network), `branchTree(repo) → BranchTree`, `trunks(repo) → TrunkSettings`, `setTrunks(repo, names?) → TrunkSettings` |
 | detail | `pullDetail(repo, n)`, `cachedPullDetail(repo, n)`, `pullHeader(repo, n)`, `repositoryLabels(repo)`, `addLabel`, `removeLabel`, `addComment`, `replyToThread(repo, n, threadId, body)`, `merge(repo, n, method, title?, message?, expectedHeadSha)`, `closePullRequest`, `reopenPullRequest`, `setDraft(repo, n, draft)`, `updateBranch(repo, n, method, expectedHeadOid)` |
 | files | `filesOverview(repo, n) → FilesOverview`, `fileDiff(repo, n, fileIndex) → FileDiff` |
 | review | `pendingReview`, `addDraft(repo, n, anchor, rangeStart?, body)`, `editDraft(…, draftId, body)`, `removeDraft(…, draftId)`, `discardDrafts` — all return `PendingReview`; `submitReview(repo, n, event, body, includeDrafts)` |
@@ -81,25 +102,57 @@ Kotlin names are camelCase; every call that touches state or I/O is
 
 Key records and enums, by screen:
 
-- **Feed**: `FeedSnapshot { revision, repos: [RepoSection], hiddenEmptyRepos,
-  totalOpen, visibleOpen, query, preferences, filterActive,
-  mergeStatesSettling, viewer }`. `RepoSection { repo, load: RepoLoad, openCount,
-  visibleCount, collapsed, body: RepoBody }` where `RepoBody` is `Collapsed |
-  Loading | Failed(reason) | Empty | Pulls(pulls)` — straight from
-  `rostrum_core::flatten`. `PrSummary` carries number, title, author,
+- **Feed**: `FeedSnapshot { revision, tab: FeedTab, tabCounts: TabCounts
+  { pullRequests, issues }, sort: SortSettings, repos: [RepoSection],
+  hiddenEmptyRepos, totalOpen, visibleOpen, query, preferences, filterActive,
+  mergeStatesSettling, viewer }` — everything but `tabCounts` is for the
+  active tab (`FeedTab` = `PULL_REQUESTS | ISSUES`). `RepoSection { repo,
+  load: RepoLoad, openCount, visibleCount, collapsed, body: RepoBody }` where
+  `RepoBody` is `Collapsed | Loading | Failed(reason) | Empty |
+  Pulls(items: [PullItem]) | Issues(issues: [IssueSummary])` — straight from
+  `rostrum_core::flatten_tab`, in the saved sort. `PullItem` is
+  `Single(pull: PrSummary) | Stack(stack: StackSummary, members:
+  [PrSummary])`. `PrSummary` carries number, title, author,
   created/updated `Instant`s, draft, CI state and colour role, review decision
   and chip, `MergeStatus` and chip, `BaseDivergence { behind, ahead, baseRef,
   fastForwards, summary }` and the `↓N` chip, labels with ARGB colours,
   +/−, `reviewRequested`, `isYours`, head/base refs.
-  Stacks (`docs/features/stacks.md`) are desktop-only for now: the snapshot
-  skips `FeedRow::StackHeader`, so a stack's members arrive contiguous and
-  bottom first but without a header or actions.
+  `AuthorChip.openItems` counts the active tab's items.
+- **Sort**: `SortSettings { repoKey, repoDirection, repoDirectionLabel,
+  itemKey, itemDirection, itemDirectionLabel, summary, repoOptions:
+  [RepoSortOption], itemOptions: [ItemSortOption] }`; each option has `key,
+  label, defaultDirection, descendingLabel, ascendingLabel` ("Newest first",
+  "A→Z", "Most"…). `RepoSortKey` = `PUSHED | UPDATED | CREATED | OWNER |
+  NAME | STARS`; `ItemSortKey` = `PUSHED | UPDATED | CREATED | AUTHOR |
+  TITLE`; `SortDirection` = `ASCENDING | DESCENDING`.
+- **Stacks**: `StackSummary { kind: StackKind, title, trunk, memberCount,
+  absent, rollup: StackRollup? }`, `StackKind` = `GitHub(number) | Chain`,
+  title `Stack 7 · 3 PRs` or `Stackable chain · 3 PRs`, `StackRollup {
+  mergeable, total, worst: MergeStatus, label, role }`.
+- **Issues**: `IssueSummary { repo, number, title, url, status: IssueStatus,
+  statusChip, author?, createdAt, updatedAt, labels, assignees,
+  commentCount, milestone?, isYours, assignedToYou }`, `IssueStatus` =
+  `Open | Closed(reason: IssueCloseReason?)`, `IssueCloseReason` =
+  `COMPLETED | NOT_PLANNED | DUPLICATE`, `CloseIssueAs` = `COMPLETED |
+  NOT_PLANNED`. `IssueDetail { issue, timeline: [TimelineEntry] }`, the
+  same entries as a pull request's.
+- **Repository**: `RepoOverview { repo, url, stars?, defaultBranch?, pulls:
+  [PullItem], issues: [IssueSummary], pullsLoad, issuesLoad }`. `BranchTree
+  { repo, url, stars, defaultBranch?, trunks: TrunkSettings, rows:
+  [BranchRow] }`, `BranchRow` = `Trunk(name, drift: TrunkDrift, pulls) |
+  OtherBases | Base(name, pulls) | Pull(depth, number, head, base, drift:
+  BranchDrift?, note: BranchNote?, stackLabel?, pull: PrSummary?)`,
+  `TrunkDrift` = `Default | Missing | Unknown | Known(drift)`, `BranchDrift
+  { ahead, behind }`, `BranchNote` = `BREAKS_CYCLE | AMBIGUOUS_BASE`,
+  `TrunkSettings { detected, configured, existing }`.
 - **Detail**: `PullDetail { header, timeline, threads, checks,
   unresolvedThreads, pendingReview }`. `PullHeader` adds state
   (open/closed/merged), `headSha` (pass back as the expected head), reviewers,
   `MergeVerdict { status, sentence, blocksMerge, role, chip }`, divergence,
   and `DraftAction { toDraft, label }`. `TimelineEntry.kind` is
   `Description | Comment | Review | Event`, bodies as `List<MdBlock>`.
+  `TimelineEvent` includes the issue events `ClosedAs(reason)`,
+  `Unassigned(assignee)` and `CrossReferenced(source, title)`.
 - **Markdown**: `MdBlock { kind, spans, quoteDepth, listDepth }` with
   `MdBlockKind` = `Paragraph | Heading(level) | Code(language?, code) |
   ListItem(ordered, number, checked?) | Rule | TableRow(cells, header) |
@@ -212,6 +265,61 @@ Compose UI ──suspend call──▶ UniFFI scaffolding (async_runtime = "toki
    re-check per `rostrum_core::MergeProbeBudget` (2s, 4s, 8s, then quiet until
    the next full refresh), applied through the same path and delivered to the
    observer. `mergeStatesSettling` says one is pending.
+
+Issues and stacks ride the same refresh. On a full refresh (not the
+background notification check, which stays pull-requests-only) each
+repository's fetch is the pull request query joined with the open-issues
+query (`issuesPerRepo`, default 25), then — when it has open pull requests
+— the Stacks API. A 404 there means the repository has no stacks; it is
+remembered for an hour and not asked again. A failed stacks read keeps the
+last answer; a failed issues read keeps the issues and fails only the
+Issues tab's load. The pull request result decides staleness: a fetch whose
+pull requests lost to a newer one applies nothing. Each part is cached
+(`Write::Issues`, `Write::Stacks`, `Write::RepoMeta`) and hydrated with the
+pull requests on the next launch.
+
+### Sort, tabs and stacks in the snapshot
+
+- The snapshot comes from `rostrum_core::flatten_tab(repos, filter, tab)`,
+  which orders repositories by the repository sort and items by the item
+  sort, a stack sorting as one unit by its bottom member. The phone does no
+  ordering of its own.
+- `stacks::PullItems` folds the rows: a `StackHeader` opens a
+  `PullItem.Stack`, the `PrRow`s that carry a stack slot join it, anything
+  else closes it. Stack titles, member counts and the merge rollup come from
+  `StackGroup` and `MergeRollup`, the desktop's own.
+- Sort setters go through `Config::absorb_filter` and publish; the tab
+  through `Config::feed_tab`. Both are read back at open.
+
+### Issues
+
+- `issueDetail` fetches the issue with its comments and timeline (one
+  GraphQL query), keeps it in memory, caches it, and renders it off the
+  caller's thread like `pullDetail`; `cachedIssueDetail` reads memory, then
+  SQLite.
+- Each action is one `IssueMutation` REST call, then a re-read of that
+  repository's open issues (whose failure is logged, not reported — the
+  action itself succeeded), so a close drops the row from the tab.
+- `createIssue` builds an `IssueDraft`: no blank title reaches GitHub
+  (`InvalidInput`), repeats in the label and assignee lists collapse, a
+  blank body is omitted.
+- `assignableUsers` is fetched once per repository per session.
+
+### Repository screen
+
+- `repoOverview` reads the feed's state for one watched repository:
+  `repo_pull_rows` (pull requests and stack groups in the item sort,
+  unfiltered) folded through `PullItems`, and `order_issues`. `url`, `stars`
+  and `defaultBranch` come from the last branch-tree fetch, else the feed's
+  repository facts and the plain GitHub URL.
+- `branchTree` is the desktop's `fetch_branches`: the trunk choice from
+  `config.json`, `repo_branch_meta` probing its names, `Trunks::resolve`,
+  `ComparePlan` answered by one `divergences` batch, then `build_tree` and
+  `rows()`. Each pull request row carries its feed row and its stack label
+  (`stack N` / `chain`, from `stack_groups`). A repository with no commits
+  has no rows.
+- `setTrunks` validates every name with `TrunkName::parse` before writing
+  (`InvalidInput` names the bad one); `None` returns to detection.
 
 ### Detail, diff and review
 
@@ -393,10 +501,18 @@ the data directory for every secret that passed through.
 | `src/session.rs` | Token, trust, viewer; GitHub API root | `GitHubStatus`, `Session`, `GitHubApi` |
 | `src/settings.rs` | Settings screen | `Settings` |
 | `src/feed/types.rs` | Feed records and the observer trait | `FeedSnapshot`, `RepoSection`, `RepoBody`, `PrSummary`, `FeedObserver`, … |
-| `src/feed/state.rs` | Feed state, fetch sequencing, `set_repos`, snapshot from `flatten` | `FeedState`, `Applied` |
-| `src/feed/refresh.rs` | Fetch pipeline and merge-state probes | `fetch_repo`, `Scope`, `Probes`, `ProbeSlot` |
+| `src/feed/state.rs` | Feed state, fetch sequencing, `set_repos`, issues and stacks, hydration, snapshot from `flatten_tab` | `FeedState`, `Applied`, `Cached` |
+| `src/feed/refresh.rs` | Fetch pipeline (pull requests, issues, stacks) and merge-state probes | `fetch_repo`, `fetch_all`, `RepoFetch`, `Scope`, `Probes`, `ProbeSlot` |
 | `src/feed/chips.rs` | Chip text and colour roles (the desktop's rules) | `merge_chip`, `behind_chip`, `base_divergence`, … |
 | `src/feed/summary.rs` | Feed row | `summarize` |
+| `src/sort.rs` | The two sorts: records, conversions, setters | `SortSettings`, `RepoSortKey`, `ItemSortKey`, `SortDirection`, `settings`, `chosen` |
+| `src/stacks.rs` | Stack header records and the row folder | `PullItem`, `StackSummary`, `StackKind`, `StackRollup`, `PullItems` |
+| `src/issues/types.rs` | Issue records | `IssueSummary`, `IssueDetail`, `IssueStatus`, `IssueCloseReason`, `CloseIssueAs` |
+| `src/issues/summary.rs` | Issue row and status chip | `summarize_issue`, `status_chip` |
+| `src/issues/mod.rs` | Issue screen, actions, creation | — |
+| `src/repo_view/types.rs` | Repository screen records | `RepoOverview`, `BranchTree`, `BranchRow`, `TrunkDrift`, `BranchDrift`, `TrunkSettings` |
+| `src/repo_view/tree.rs` | Core branch tree → rows | `rows` |
+| `src/repo_view/mod.rs` | Overview, branch-tree fetch, trunks | `parse_trunks`, `trunk_settings` |
 | `src/detail/types.rs` | Detail records | `PullDetail`, `PullHeader`, `MergeVerdict`, `TimelineEntry`, … |
 | `src/detail/header.rs` | Header derivation | `header` |
 | `src/detail/timeline.rs` | Timeline, threads, checks | `timeline`, `thread_view`, `check_view` |
@@ -422,6 +538,7 @@ the data directory for every secret that passed through.
 | `tests/profiles.rs` | Registry persistence, ordering, switching, isolation, removal, and pairing into profiles against a TLS stand-in | — |
 | `tests/remote_pairing.rs` | Pairing, every desktop call, and copying the desktop's config against a TLS stand-in | — |
 | `tests/github_flows.rs` | Refresh, probes, notifications, mutations against a GitHub stand-in | — |
+| `tests/issues_stacks.rs` | Tabs, sorts, stacks, the issue screen and actions, creation, the repository screen, branch tree and trunks against the GitHub stand-in | — |
 | `tests/core_offline.rs` | Cache-only flows and restarts | — |
 | `tests/bindings.rs` | Kotlin generation from the library this test run built (the newest `librostrum_ffi` under the profile directory, since `cargo test` does not copy it up) | — |
 
@@ -487,5 +604,13 @@ against the library `cargo test` builds and checks the surface.
   always match.
 - **Android-buildable.** `ring` for TLS, bundled SQLite, no subprocesses; the
   bindgen's `cli` feature is compiled only for the host.
+- **A stack is one item.** Its members travel inside `PullItem.Stack`, so
+  no sort, filter or Kotlin code can separate them from their header; a
+  filter narrows the members, never the grouping.
+- **The phone orders nothing.** Repository, item and stack order are
+  `rostrum_core::sort`'s, shared with the desktop; the sort survives
+  `clearFilter`.
+- **Background checks stay cheap.** The notification check reads pull
+  requests only; issues and stacks are fetched on full refreshes.
 - **No exported method is named `close` or `destroy`**, which UniFFI's
   Kotlin objects reserve for releasing the Rust side.
