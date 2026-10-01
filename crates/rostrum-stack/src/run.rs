@@ -28,7 +28,7 @@ use std::{
 };
 
 use rostrum_config::ConflictHandler;
-use rostrum_core::{PrNumber, RepoId};
+use rostrum_core::{PlanMember, PrNumber, RepoId, StackMembers, StackNumber};
 use rostrum_git::{
     BranchName, ConflictPolicy, GitError, Oid, Outcome, PushOutcome, RefExpectation, Remote,
     RemoteRef, Repo, Rev,
@@ -38,7 +38,10 @@ use rostrum_handoff::{HandoffError, PrMeta, hand_off, session_exists, session_na
 use crate::{
     error::StackOpError,
     gh::{GhRunner, GhStackCommand, StackView},
-    job::{LocalNote, LocalTracking, Progress, StackJob, StackOutcome, StackProgress, StackReport},
+    job::{
+        ExtendJob, LocalNote, LocalTracking, Progress, StackJob, StackOutcome, StackProgress,
+        StackReport,
+    },
     local_file::LocalStacks,
 };
 
@@ -55,7 +58,7 @@ struct Member {
     base: BranchName,
 }
 
-/// Run a [`StackJob`] to an outcome.
+/// Run a [`StackJob`] to an outcome: make a new stack.
 ///
 /// `Err` means the job could not get as far as an outcome — the clone would
 /// not open, a fetch failed, `gh` is missing — and, by rostrum-git's
@@ -72,11 +75,81 @@ pub async fn run_stack_job<R: GhRunner>(
         handler,
         scratch_dir,
     } = job;
-    let repo_id = plan.repo.clone();
     let trunk = BranchName::new(plan.trunk.as_str())?;
-    let members = plan
-        .members()
-        .iter()
+    let chain = Chain {
+        repo_id: plan.repo.clone(),
+        root: trunk.clone(),
+        root_number: None,
+        members: members_of(plan.members())?,
+        rewrite: plan.needs_rewrite(),
+        target: Target::New {
+            trunk,
+            members: plan.as_stack().members,
+        },
+    };
+    run_chain(chain, &clone, handler, &scratch_dir, gh, progress).await
+}
+
+/// Run an [`ExtendJob`] to an outcome: add pull requests to the top of a
+/// stack GitHub already has.
+///
+/// The same pipeline as [`run_stack_job`], rooted at the stack's top member
+/// instead of a trunk: additions that already chain off the top are linked
+/// as they are; otherwise each is rebased onto the one below (the first onto
+/// the top) and pushed with a lease. The stack's existing members are never
+/// rebased or pushed. The final call is `gh stack link <stack> <pr>...`.
+pub async fn run_extend_job<R: GhRunner>(
+    job: ExtendJob,
+    gh: &R,
+    progress: &Progress,
+) -> Result<StackOutcome, StackOpError> {
+    let ExtendJob {
+        clone,
+        plan,
+        handler,
+        scratch_dir,
+    } = job;
+    let chain = Chain {
+        repo_id: plan.repo.clone(),
+        root: BranchName::new(plan.top.head.as_str())?,
+        root_number: Some(plan.top.number),
+        members: members_of(plan.additions())?,
+        rewrite: plan.needs_rewrite(),
+        target: Target::Extend {
+            stack: plan.stack,
+            additions: plan.addition_numbers().clone(),
+        },
+    };
+    run_chain(chain, &clone, handler, &scratch_dir, gh, progress).await
+}
+
+/// What the pipeline links once its branches are in place.
+enum Target {
+    New {
+        trunk: BranchName,
+        members: StackMembers,
+    },
+    Extend {
+        stack: StackNumber,
+        additions: StackMembers,
+    },
+}
+
+/// A line of branches to put on top of `root`, bottom first.
+struct Chain {
+    repo_id: RepoId,
+    /// The branch the bottom member builds on: the trunk, or the top of the
+    /// stack being extended. Never pushed.
+    root: BranchName,
+    /// The pull request `root` belongs to, when it is one.
+    root_number: Option<PrNumber>,
+    members: Vec<Member>,
+    rewrite: bool,
+    target: Target,
+}
+
+fn members_of(plan: &[PlanMember]) -> Result<Vec<Member>, GitError> {
+    plan.iter()
         .map(|m| {
             Ok(Member {
                 number: m.number,
@@ -86,8 +159,26 @@ pub async fn run_stack_job<R: GhRunner>(
                 base: BranchName::new(m.base.as_str())?,
             })
         })
-        .collect::<Result<Vec<_>, GitError>>()?;
-    let rewrite = plan.needs_rewrite();
+        .collect()
+}
+
+/// Fetch, rebase, lease-push, align local branches, link, track.
+async fn run_chain<R: GhRunner>(
+    chain: Chain,
+    clone: &Path,
+    handler: Option<ConflictHandler>,
+    scratch_dir: &Path,
+    gh: &R,
+    progress: &Progress,
+) -> Result<StackOutcome, StackOpError> {
+    let Chain {
+        repo_id,
+        root,
+        root_number,
+        members,
+        rewrite,
+        target,
+    } = chain;
 
     if rewrite && let Some(handler) = &handler {
         preflight_handler(handler, &repo_id, &members).await?;
@@ -97,11 +188,11 @@ pub async fn run_stack_job<R: GhRunner>(
         Some(_) => ConflictPolicy::Leave,
         None => ConflictPolicy::Abort,
     };
-    let repo = Repo::open(&clone).await?.with_conflict_policy(policy);
+    let repo = Repo::open(clone).await?.with_conflict_policy(policy);
 
     // 1. Fetch, and record the leases.
     progress.send(StackProgress::Fetching);
-    let mut to_fetch = BTreeSet::from([trunk.clone()]);
+    let mut to_fetch = BTreeSet::from([root.clone()]);
     for member in &members {
         to_fetch.insert(member.head.clone());
         to_fetch.insert(member.base.clone());
@@ -109,9 +200,15 @@ pub async fn run_stack_job<R: GhRunner>(
     for branch in to_fetch {
         repo.fetch(&RemoteRef::origin(branch)).await?;
     }
-    let trunk_oid = remote_oid(&repo, &trunk)
+    let root_oid = remote_oid(&repo, &root)
         .await?
-        .ok_or_else(|| StackOpError::MissingTrunk(trunk.to_string()))?;
+        .ok_or_else(|| match root_number {
+            Some(number) => StackOpError::MissingOnRemote {
+                branch: root.to_string(),
+                number,
+            },
+            None => StackOpError::MissingTrunk(root.to_string()),
+        })?;
     let mut leases = Vec::with_capacity(members.len());
     let mut old_bases = Vec::with_capacity(members.len());
     for member in &members {
@@ -135,13 +232,13 @@ pub async fn run_stack_job<R: GhRunner>(
     let mut results = leases.clone();
     let mut pushed = Vec::new();
     if rewrite {
-        let scratch_dir = prepare_scratch_dir(&scratch_dir)?;
+        let scratch_dir = prepare_scratch_dir(scratch_dir)?;
         prune_scratch(&repo, &scratch_dir).await;
 
         for ix in 0..members.len() {
             let member = &members[ix];
             let (parent_branch, parent_oid) = match ix {
-                0 => (&trunk, trunk_oid.clone()),
+                0 => (&root, root_oid.clone()),
                 _ => (&members[ix - 1].head, results[ix - 1].clone()),
             };
             let retargeted = &member.base != parent_branch;
@@ -213,9 +310,15 @@ pub async fn run_stack_job<R: GhRunner>(
 
     // 5. Link on GitHub.
     progress.send(StackProgress::Linking);
-    let link = GhStackCommand::Link {
-        base: trunk.clone(),
-        members: plan.as_stack().members,
+    let link = match &target {
+        Target::New { trunk, members } => GhStackCommand::Link {
+            base: trunk.clone(),
+            members: members.clone(),
+        },
+        Target::Extend { stack, additions } => GhStackCommand::LinkExtend {
+            stack: *stack,
+            additions: additions.clone(),
+        },
     };
     let linked = match gh.run(repo.root(), &repo_id, &link).await {
         Ok(output) => output.require_success(&link).map(drop),
@@ -232,15 +335,32 @@ pub async fn run_stack_job<R: GhRunner>(
     }
 
     // 6. Track in the clone.
-    progress.send(StackProgress::Tracking);
-    let local = track_locally(gh, &repo, &repo_id, &trunk, &members).await;
-    tracing::info!(repo = %repo_id, rewritten = pushed.len(), ?local, "stack created");
-
-    Ok(StackOutcome::Stacked(StackReport {
-        rewritten: pushed,
+    let report = |local| StackReport {
+        rewritten: pushed.clone(),
         local,
-        notes,
-    }))
+        notes: notes.clone(),
+    };
+    match target {
+        Target::New { trunk, .. } => {
+            progress.send(StackProgress::Tracking);
+            let local = track_locally(gh, &repo, &repo_id, &trunk, &members).await;
+            tracing::info!(repo = %repo_id, rewritten = pushed.len(), ?local, "stack created");
+            Ok(StackOutcome::Stacked(report(local)))
+        }
+        Target::Extend { stack, .. } => {
+            // gh-stack has no "adopt these branches onto a tracked stack";
+            // `gh stack sync` pulls GitHub's additions into local tracking.
+            let local = LocalTracking::Skipped(
+                "extended on GitHub only; run `gh stack sync` in the clone to track the new branches"
+                    .into(),
+            );
+            tracing::info!(repo = %repo_id, stack = stack.get(), rewritten = pushed.len(), "stack extended");
+            Ok(StackOutcome::Extended {
+                stack,
+                report: report(local),
+            })
+        }
+    }
 }
 
 async fn remote_oid(repo: &Repo, branch: &BranchName) -> Result<Option<Oid>, GitError> {

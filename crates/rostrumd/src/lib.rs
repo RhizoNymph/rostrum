@@ -34,6 +34,7 @@ pub mod registry;
 pub mod rostrum_config;
 pub mod server;
 pub mod settings;
+pub mod stacks;
 pub mod state_file;
 #[cfg(test)]
 pub(crate) mod testkit;

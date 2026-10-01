@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     issue::CloseReason,
+    paging::ConversationPaging,
     model::{CheckState, PullState, Side, User},
 };
 
@@ -54,6 +55,13 @@ pub struct ReviewThread {
     pub is_resolved: bool,
     pub is_outdated: bool,
     pub comments: Vec<ThreadComment>,
+    /// The review whose comment started this thread. A review and the threads
+    /// it opened can arrive on different pages, so the link is recorded on the
+    /// thread and the reviews' `thread_ids` are rebuilt from it
+    /// ([`Conversation::relink_threads`]). Defaulted so threads cached before
+    /// it existed still decode.
+    #[serde(default)]
+    pub opening_review: Option<ReviewId>,
 }
 
 impl ReviewThread {
@@ -190,6 +198,11 @@ pub struct Conversation {
     /// cached before the field existed still decodes.
     #[serde(default)]
     pub state: Option<PullState>,
+    /// Whether older comments, reviews, threads or events remain beyond the
+    /// pages held, and where to fetch them from. Cached with the rest, so a
+    /// cold start knows whether "load earlier" is still on offer.
+    #[serde(default)]
+    pub paging: ConversationPaging,
 }
 
 impl Conversation {
@@ -273,6 +286,7 @@ mod tests {
             is_resolved: false,
             is_outdated: false,
             comments: vec![],
+            opening_review: None,
         };
         let conversation = Conversation {
             threads: vec![thread.clone()],
@@ -306,6 +320,7 @@ mod tests {
             is_resolved: false,
             is_outdated: line.is_none(),
             comments: vec![],
+            opening_review: None,
         }
     }
 

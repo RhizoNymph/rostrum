@@ -25,7 +25,7 @@ new one.
 - The Android app's issue screens: see `docs/features/android_issues_repo.md`.
   They reuse the gpui-free model, requests and cache through `rostrum-ffi`.
 - Notifications for new issues. `Baseline` watches pull requests only.
-- Editing an issue's title or body, milestones, issue types, sub-issues,
+- Milestones, issue types, sub-issues,
   reactions, pinning, locking, transferring, and marking duplicates. GitHub's
   third close reason, `duplicate`, is shown when GitHub reports it but cannot
   be chosen here — it is set by marking a duplicate, not by closing.
@@ -191,8 +191,8 @@ selected leaves the form up.
 
 `IssuePane::new` (`crates/rostrum/src/issue/mod.rs`) paints from the cache
 (`Db::load_issue_detail`, gap-filling only) and fetches `ISSUE_DETAIL`: the
-summary fields plus the body, the first 100 comments, and the first 100
-timeline events of the types it renders — `CLOSED_EVENT` (with `stateReason`),
+summary fields plus the body, and the newest page (100) of comments and of the
+timeline events it renders — `CLOSED_EVENT` (with `stateReason`),
 `REOPENED_EVENT`, `LABELED_EVENT`, `UNLABELED_EVENT`, `ASSIGNED_EVENT`,
 `UNASSIGNED_EVENT`, `RENAMED_TITLE_EVENT`, `CROSS_REFERENCED_EVENT`. The
 decode reuses the pull request conversation's `IssueCommentNode` and
@@ -200,7 +200,82 @@ decode reuses the pull request conversation's `IssueCommentNode` and
 chronologically, and is cached by `Db::save_issue_detail`.
 
 Until the detail answers, the header comes from the feed's copy of the issue,
-so the pane paints at once.
+so the pane paints at once. A reload keeps earlier pages already loaded
+(`refreshed_by`); see [Paging](#paging).
+
+### Paging
+
+Long conversations are read newest page first. Every long connection — an
+issue's comments and events; a pull request's comments, reviews, review
+threads and events — is selected `last: $pageSize, before: $<name>Before`
+(`PAGE_SIZE` is 100) with `totalCount` and `pageInfo { startCursor
+hasPreviousPage }`, and switched by `@include(if: $with<Name>)`. One document
+therefore serves both requests: the newest page includes every connection
+from its newest end; an earlier page includes only the connections that have
+a cursor, each from its own. `graphql::page_variables` builds the variables;
+`conversation_variables` and `issue_variables` wrap it, and a test checks them
+against each document's declarations.
+
+The rules are pure, in `crates/rostrum-core/src/paging.rs`:
+
+- `PageState::{Complete, Earlier { before, total }}` per connection, in
+  `ConversationPaging` on the `Conversation` (serde-defaulted, so cached
+  conversations from before paging read as complete). How many remain is
+  derived — `total` minus what is held — so the "Load earlier (N more)" count
+  cannot drift from the merged items.
+- `PageUpdate` is what one fetched page says, `None` for a connection the page
+  left out, which then keeps its state.
+- `Conversation::merge_earlier(page, update)` adds what is not already held
+  (comments and reviews by id, the body once, events by equality since they
+  carry no id), stores each thread once by `ThreadId`, relinks reviews to
+  threads, sorts body-first then chronologically, and advances paging.
+- `Conversation::refreshed_by(fresh)` is what a reload shows: the newest page
+  just fetched, plus the earlier pages already loaded. Per connection, entries
+  older than `fresh`'s oldest are carried with the cursor that reaches further
+  back; an entry missing inside `fresh`'s window was deleted and goes. A
+  deletion further back cannot be seen without refetching every page and shows
+  until the pane is reopened.
+- `ReviewThread::opening_review` records which review opened a thread, since
+  a review and its threads can arrive on different pages (the captured
+  fixture is exactly this case); `Conversation::relink_threads` rebuilds each
+  review's `thread_ids` from it, each thread listed at most once.
+
+"Load earlier (N more)" sits at the top of the timeline in both panes while
+`has_earlier()`; a click calls `conversation_earlier` / `issue_earlier` with
+`earlier_request()`, merges the page and caches the merged conversation, so a
+cold start offers the next page from where the user left off. One fetch at a
+time (`earlier_loading`).
+
+### Editing the title and description
+
+**Edit** beside the title, or **Edit description** above the body, opens the
+editor: the title becomes an input, and the body becomes a
+`MarkdownEditor` (`crates/rostrum/src/markdown_editor.rs`, Write/Preview, the
+same entity the new-issue form uses) with Save and Cancel. `ctrl-enter` in the
+body saves.
+
+The rules are `IssueEditor` (`crates/rostrum-github/src/issues/edit.rs`),
+gpui-free beside `IssueDraft`. It remembers the issue as it was when editing
+began — `updatedAt`, title, body.
+
+1. `IssueEditor::request(title, body)` refuses a blank title
+   (`EditError::EmptyTitle`) and an edit that changes nothing
+   (`EditError::Unchanged`, which simply closes the editor — a no-op PATCH
+   would still bump `updatedAt`).
+2. Save re-reads the issue (`issue_detail`) and asks `IssueEditor::check`.
+   It is a **conflict** only if GitHub's `updatedAt` moved since the editor
+   opened *and* the title or description now differs from the editor's
+   starting text — comments, labels and assignments move `updatedAt` without
+   touching what the edit would overwrite.
+3. Clear: the edit goes out as `IssueMutation::Edit(IssueEdit)` —
+   `PATCH /repos/{o}/{r}/issues/{n}` `{"title", "body"}`, both always sent so
+   an empty body clears the description — through the pane's `mutate()`
+   (in-flight guard, error banner, authoritative reload). Success closes the
+   editor; failure leaves it open with the text.
+4. Conflict: the editor names the other version and offers **Reload** —
+   take their title and description as the new starting point, refilling
+   the inputs — or **Overwrite** — `IssueEditor::overwrite` sends this text
+   over theirs, still never with a blank title.
 
 The timeline is drawn by `detail::conversation::render_plain_item`, the same
 function the pull request pane uses for its body, comments and events, so the
@@ -282,6 +357,13 @@ stays, with GitHub's reason, and nothing typed is lost.
   costs the rest of the file. It is saved alongside `repo_sort`/`item_sort`,
   and the tab and the sort both survive a restart together.
 - **Issues follow the item sort**; "pushed" on an issue is its "updated".
+- **A connection is paged only backwards, and an entry is held once.**
+  Merging the same page twice changes nothing; threads are keyed by
+  `ThreadId` and listed by at most one review.
+- **The cached conversation is the merged set**, with its cursors.
+- **An issue edit never sends a blank title**, never sends an unchanged edit,
+  and never replaces someone else's title or description without the user
+  seeing it first.
 - **Cache tables are additive.** `cache_issue` and `cache_issue_detail` are
   created `IF NOT EXISTS` on every open, so they appeared without a schema
   bump and the cached pull requests survived. Both are pruned like the rest of
@@ -300,6 +382,11 @@ stays, with GitHub's reason, and nothing typed is lost.
 | `crates/rostrum-github/src/issues/wire.rs` | GraphQL documents and decoding | `OPEN_ISSUES`, `ISSUE_DETAIL`, `IssueNode`, `issue_state` |
 | `crates/rostrum-github/src/issues/rest.rs` | REST request bodies | `IssueMutation`, `RestCall`, `IssueStateChange`, `CloseAs`, `CommentBody`, `Assignees`, `CreateIssue`, `CreatedIssue`, `AssignableUser` |
 | `crates/rostrum-github/src/issues/draft.rs` | The new-issue form's rules | `IssueDraft`, `DraftError` |
+| `crates/rostrum-github/src/issues/edit.rs` | The issue editor's rules and conflict check | `IssueEditor`, `EditCheck`, `EditError` |
+| `crates/rostrum-core/src/paging.rs` | Paging state, merge, dedup, reload carry-over, thread relinking | `PageState`, `ConversationPaging`, `PageUpdate`, `EarlierRequest`, `Connection` |
+| `crates/rostrum-github/src/paging_tests.rs` | Paging against captured pages (`fixtures/paging/`) | — |
+| `crates/rostrum/src/issue/edit.rs` | The editor's inputs and save flow | — |
+| `crates/rostrum/src/markdown_editor.rs` | Write/Preview markdown input | `MarkdownEditor` |
 | `crates/rostrum-github/src/issues/client.rs` | Client methods | `open_issues`, `issue_detail`, `mutate_issue`, `create_issue`, `assignable_users`, `RepoIssues` |
 | `crates/rostrum-github/src/conversation.rs` | Shared timeline decoding, now with issue events | `TimelineEventNode`, `ReferenceSource`, `close_reason` |
 | `crates/rostrum-github/fixtures/issues/*.json` | Responses captured from the live API | — |
@@ -340,3 +427,8 @@ stays, with GitHub's reason, and nothing typed is lost.
   corruption-as-miss, and pruning.
 - **Navigation** on the Issues tab and across tabs, and identity selection
   from rows.
+- **Paging**: cursor variables and documents, decoding captured pages with
+  `hasPreviousPage`, merging across captured pages without duplicates, thread
+  relinking across pages, reload carry-over, and the cached merged set.
+- **Editing**: the PATCH body, title and no-op validation, the conflict and
+  non-conflict checks, reload and overwrite.

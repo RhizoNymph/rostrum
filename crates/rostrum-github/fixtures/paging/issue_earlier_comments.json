@@ -1,0 +1,86 @@
+{
+ "data": {
+  "rateLimit": {
+   "cost": 1,
+   "remaining": 4994,
+   "resetAt": "2026-10-01T20:04:20Z"
+  },
+  "repository": {
+   "issue": {
+    "id": "I_kwDOAAsO6M6MhuMq",
+    "number": 126600,
+    "title": "`std::process::exit` is not thread-safe in combination with C code calling `exit`",
+    "url": "https://github.com/rust-lang/rust/issues/126600",
+    "state": "OPEN",
+    "stateReason": null,
+    "body": "Calling `exit` concurrently from Rust and C (or from 2 different copies of the Rust runtime in the same binary) is UB. This is permitted by the C standard, and can actually cause trouble in practice since not all versions of all libc implementations do proper locking when traversing the list of `atexit` functions. For programs only using Rust, we mitigated this by adding a lock, but this only helps when *all* calls to `exit` come from Rust (and they must come from the same Rust runtime). Note that returning from `main` is equivalent to calling `exit` so it can also cause this issue.\n\n### Current status\n\nMitigation on our end (only covers pure Rust programs): #126606\n\nThe current status is that the specification language stems from a time when C did not specify multithreading and the intent was to forbid reentrancy. External discussion indicates that there's intent to fix it both in libc implementations and the specs:\n\n- glibc: https://sourceware.org/bugzilla/show_bug.cgi?id=31997\n  - patch: https://sourceware.org/pipermail/libc-alpha/2024-July/158579.html\n- POSIX: https://austingroupbugs.net/view.php?id=1845\n   - also [a comment](https://austingroupbugs.net/view.php?id=1845#c6853) mentioning taking it to the C committee.\n- libc-coord (including musl author): https://www.openwall.com/lists/libc-coord/2024/07/24/4\n- musl patch: https://git.musl-libc.org/cgit/musl/commit/?id=8cca79a72cccbdb54726125d690d7d0095fc2409\n- freebsd patch: https://reviews.freebsd.org/D46108\n- bionic: https://android.googlesource.com/platform/bionic.git/+/089f4d17265480a5ad9311bcbd8890bc9f361801%5E%21/\n\n### Original bugreport (partially outdated)\n\nThe current implementation of `std::process::exit` is unsound on Linux and possibly related platforms where it defers to libc's `exit()` function. `exit()` [is documented to be](https://man7.org/linux/man-pages/man3/exit.3.html#ATTRIBUTES) not thread-safe, and hence `std::process::exit` is not thread-safe either, despite being a non-`unsafe` function.\n\nTo show that this isn't just a theoretical problem, here is a minimal example that segfaults on my machine (Ubuntu with glibc 2.37):\n\n```rust\nuse std::thread;\n\nfn main() {\n    for _ in 0..32 {\n        unsafe { libc::atexit(exit_handler) };\n    }\n    for _ in 0..2 {\n        thread::spawn(|| std::process::exit(0));\n    }\n}\n\nextern \"C\" fn exit_handler() {\n    thread::sleep_ms(1000);\n}\n```\n\nThe example contains `unsafe` code, but only to install exit handlers. AFAICT nothing about the `libc::atexit` call is unsafe. The UB is introduced by calling `std::process::exit` concurrently afterwards.\n\nIf you are curious, https://github.com/MaterializeInc/database-issues/issues/6528 lays out what causes the segfault (it's a use-after-free). That's not terribly relevant though, given that glibc has no obligation to ensure `exit()` is thread safe when it's clearly documented not to be. Instead, Rust should either mark `std::process::exit` as `unsafe` (which is something it could do for the 2024 edition), or introduce locking to ensure only a single thread gets to call `exit()` at a time.\n\n",
+    "createdAt": "2024-06-17T15:36:23Z",
+    "updatedAt": "2025-06-21T13:22:17Z",
+    "author": {
+     "login": "teskje",
+     "avatarUrl": "https://avatars.githubusercontent.com/u/4521314?u=0a2bd7f3189da01d5081a231a488bd84db3a741f&v=4"
+    },
+    "assignees": {
+     "nodes": []
+    },
+    "labels": {
+     "nodes": [
+      {
+       "name": "I-unsound",
+       "color": "e11d21"
+      },
+      {
+       "name": "C-bug",
+       "color": "f5f1fd"
+      },
+      {
+       "name": "T-libs",
+       "color": "bfd4f2"
+      },
+      {
+       "name": "A-process",
+       "color": "f7e101"
+      }
+     ]
+    },
+    "milestone": null,
+    "comments": {
+     "totalCount": 156,
+     "pageInfo": {
+      "startCursor": "Y3Vyc29yOnYyOpHOkQDonw==",
+      "hasPreviousPage": true
+     },
+     "nodes": [
+      {
+       "id": "IC_kwDOAAsO6M6RAOif",
+       "body": "The pure Rust fix would be to have some Rust API for adding on exit functions. This could side-step the issue entirely so long as you ignore C.\n\nNote that we already have [a lock to mitigate this issue](https://github.com/rust-lang/rust/blob/be01dabfefd2daa4574b974f571c7852085d60cb/library/std/src/sys/exit_guard.rs#L32). However it's by no means a fix.\n",
+       "createdAt": "2024-10-23T16:12:58Z",
+       "author": {
+        "login": "ChrisDenton",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/4459874?v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M6RASgJ",
+       "body": "> AFAICT the status appears to be \"wait until the rest of the world is fixed\", which IMO is tantamount to closing this issue as WONTFIX, given the prospects of that ever happening. \n\nThings are looking rosier than that. Posix, musl and glibc agreed to improve things and if I read the comments on the posix issue correctly they'll also bring it to the appropriate C committee.",
+       "createdAt": "2024-10-23T16:18:56Z",
+       "author": {
+        "login": "the8472",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/1065730?v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M6RC-Jp",
+       "body": "I have gathered a short summary and a few links from other comments into the top comment. Edit away if there's anything to correct.",
+       "createdAt": "2024-10-23T21:13:36Z",
+       "author": {
+        "login": "the8472",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/1065730?v=4"
+       }
+      }
+     ]
+    }
+   }
+  }
+ }
+}

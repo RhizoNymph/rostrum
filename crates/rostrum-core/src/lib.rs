@@ -9,6 +9,7 @@ pub mod branches;
 pub mod feed;
 pub mod issue;
 pub mod model;
+pub mod paging;
 pub mod navigation;
 pub mod probe;
 pub mod repo_meta;
@@ -36,12 +37,16 @@ pub use model::{
     PrNumber, PullRequest, PullState, Relation, RepoId, ReviewDecision, Side, User,
 };
 pub use navigation::{RepoScreen, Screen};
+pub use paging::{
+    Connection, ConversationPaging, EarlierRequest, PageCursor, PageState, PageUpdate,
+};
 pub use probe::{MergeProbeBudget, needs_merge_probe};
 pub use repo_meta::{OwnerKind, RepoMeta, RepoOwner};
 pub use review::{DraftAnchor, drafts_are_stale};
 pub use sort::{
     FeedOrder, FeedSort, ItemSortKey, KeyKind, RepoSortKey, Sort, SortDirection, SortKey,
 };
+pub use stack::{Continuation, ExtendError, ExtendPlan, continuations, plan_extend};
 pub use stack::{
     FeedUnit, MergeRollup, PlanError, PlanMember, RefName, Stack, StackError, StackGroup, StackIx,
     StackMembers, StackNumber, StackPlan, plan_stack,

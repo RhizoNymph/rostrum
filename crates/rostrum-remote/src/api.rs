@@ -439,6 +439,10 @@ pub enum ApiErrorCode {
     RateLimited,
     /// Another job or a sync-all is already running on that worktree.
     Busy,
+    /// A stack operation would rewrite branches the request did not confirm
+    /// (or confirms branches it would not rewrite). The message names the
+    /// branches; ask `STACK_PLAN` again and confirm exactly those.
+    RewriteNotConfirmed,
     Internal,
 }
 
@@ -453,6 +457,7 @@ impl ApiErrorCode {
             Self::PairingCodeExpired => 410,
             Self::RateLimited => 429,
             Self::Busy => 409,
+            Self::RewriteNotConfirmed => 409,
             Self::Internal => 500,
         }
     }
@@ -624,6 +629,7 @@ mod tests {
             ApiErrorCode::PairingCodeExpired,
             ApiErrorCode::RateLimited,
             ApiErrorCode::Busy,
+            ApiErrorCode::RewriteNotConfirmed,
         ] {
             assert!((400..500).contains(&code.http_status()), "{code:?}");
         }

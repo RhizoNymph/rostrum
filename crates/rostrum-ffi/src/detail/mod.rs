@@ -28,7 +28,36 @@ use crate::{
     types::LabelView,
 };
 
+/// Whether earlier pages remain, and how many entries they hold, as both
+/// detail records report it.
+pub(crate) fn earlier_of(conversation: &Conversation) -> (bool, Option<u32>) {
+    if conversation.has_earlier() {
+        (true, Some(conversation.earlier_remaining()))
+    } else {
+        (false, None)
+    }
+}
+
 impl RostrumCore {
+    /// Keep a conversation for `key` in memory and the cache.
+    async fn keep_conversation(
+        &self,
+        key: &PullKey,
+        conversation: Arc<Conversation>,
+    ) -> Result<(), RostrumError> {
+        let store = key.clone();
+        self.actor
+            .call(move |state| {
+                state.writer.send(Write::Conversation {
+                    repo: store.repo.clone(),
+                    number: store.number,
+                    conversation: (*conversation).clone(),
+                });
+                state.conversations.insert(store, conversation);
+            })
+            .await
+    }
+
     /// Assemble the detail from a conversation, the feed's pull request and
     /// the pending review. Markdown is flattened off the caller's thread.
     async fn detail_from(
@@ -48,6 +77,7 @@ impl RostrumCore {
             })
             .await?;
         let repo = key.repo.clone();
+        let (has_earlier, earlier_count) = earlier_of(&conversation);
         let detail = tokio::task::spawn_blocking(move || PullDetail {
             header: header(&repo, &pr, viewer.as_ref(), conversation.state),
             timeline: timeline::timeline(&conversation, &repo),
@@ -63,6 +93,8 @@ impl RostrumCore {
                 .collect(),
             unresolved_threads: count(conversation.unresolved_thread_count()),
             pending_review,
+            has_earlier,
+            earlier_count,
         })
         .await?;
         Ok(detail)
@@ -86,20 +118,47 @@ impl RostrumCore {
         let fetched = self
             .github(client.conversation(&key.repo, key.number).await)
             .await?;
-        let conversation = Arc::new(fetched);
-        let store = key.clone();
-        let kept = conversation.clone();
-        self.actor
-            .call(move |state| {
-                state.writer.send(Write::Conversation {
-                    repo: store.repo.clone(),
-                    number: store.number,
-                    conversation: (*kept).clone(),
-                });
-                state.conversations.insert(store, kept);
-            })
-            .await?;
+        // The fetch is the newest page; earlier pages already loaded stay.
+        let conversation = Arc::new(match self.known_conversation(&key).await? {
+            Some(held) => held.refreshed_by(fetched),
+            None => fetched,
+        });
+        self.keep_conversation(&key, conversation.clone()).await?;
         self.detail_from(&key, conversation).await
+    }
+
+    /// Fetch the page before the oldest held of every conversation part that
+    /// has one, merge it in, cache the result and return the detail. With
+    /// nothing earlier, the held detail comes back without a request. The
+    /// pull request must have been opened (`pull_detail`) first.
+    pub async fn load_earlier_pull(
+        &self,
+        repo: String,
+        number: u32,
+    ) -> Result<PullDetail, RostrumError> {
+        let key = PullKey::parse(&repo, number)?;
+        self.ensure_hydrated().await?;
+        let held = self.known_conversation(&key).await?.ok_or_else(|| {
+            RostrumError::invalid(format!("open {repo}#{number} before loading earlier"))
+        })?;
+        let request = held.earlier_request();
+        if request.is_empty() {
+            return self.detail_from(&key, held).await;
+        }
+        let client = self.actor.try_call(|state| state.github()).await?;
+        let (page, update) = self
+            .github(
+                client
+                    .conversation_earlier(&key.repo, key.number, &request)
+                    .await,
+            )
+            .await?;
+        let mut merged = (*held).clone();
+        merged.merge_earlier(page, &update);
+        tracing::debug!(repo = %key.repo, number, items = merged.items.len(), remaining = merged.earlier_remaining(), "earlier pull request page merged");
+        let merged = Arc::new(merged);
+        self.keep_conversation(&key, merged.clone()).await?;
+        self.detail_from(&key, merged).await
     }
 
     /// The last fetched detail from the cache, or `None`. No network.

@@ -85,6 +85,16 @@ Review threads appear in two places — inline in the diff and in the conversati
 timeline. They are stored once, keyed by `ThreadId`, and referenced from both;
 they are never duplicated, so resolving a thread in one view updates the other.
 
+Long conversations are paged: the newest 100 comments, reviews, review
+threads and events load first, and "Load earlier (N more)" at the top of the
+Conversation tab fetches the previous page of each that has one
+(`PrDetail::load_earlier`, `GitHubClient::conversation_earlier`) and merges it
+with `Conversation::merge_earlier` — no duplicates, chronological, threads
+stored once by `ThreadId` and relinked to the review that opened them even when
+the two arrive on different pages. A reload keeps the earlier pages loaded
+(`Conversation::refreshed_by`), and the merged set is cached with its cursors.
+The rules and their tests are in `docs/features/issues.md#paging`.
+
 The timeline is variable-height and can be long, so it too is rendered with
 `list`/`ListState` over a flattened row vector, consistent with the feed and the
 diff view.

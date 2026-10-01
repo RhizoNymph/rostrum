@@ -144,6 +144,7 @@ mod tests {
                 body: "a **note**".into(),
                 created_at: chrono::Utc::now(),
             }],
+            opening_review: None,
         }
     }
 

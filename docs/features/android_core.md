@@ -26,13 +26,20 @@ each.
   background merge-state re-checks delivered through an observer. Two tabs
   (pull requests, issues) with per-tab counts, and the saved repository and
   item sorts (`docs/features/feed_sort.md`).
-- Stacks, read only (`docs/features/stacks.md`): the feed and the
-  repository screen deliver a stack as one item — header, then its visible
-  members bottom first — sorting as one unit, as on the desktop.
+- Stacks (`docs/features/stacks.md`): the feed and the repository screen
+  deliver a stack as one item — header, then its visible members bottom
+  first — sorting as one unit, as on the desktop. Making, arranging,
+  extending, merging and unstacking run on the paired desktop as jobs the
+  phone starts and polls; eligibility and plan checks answer locally from
+  the cached feed.
 - Issues (`docs/features/issues.md`): the Issues tab's rows, the issue
   screen (header plus timeline, markdown flattened), comment, close as
   completed or not planned, reopen, labels, assignees, and creating an
   issue. Issues are cached like pull requests.
+- Editing an issue's title and description, with the desktop's conflict
+  check (`IssueEditor`) and an explicit overwrite; "load earlier" on issue
+  and pull request conversations, the merged pages cached with their
+  cursors.
 - A repository's own screen (`docs/features/repo_view.md`): its pull
   requests (stacks grouped) and issues unfiltered in the item sort, its
   facts, its branch tree with ahead/behind, and its trunk setting.
@@ -70,11 +77,6 @@ each.
   `ring` not `aws-lc-rs`, no subprocesses.
 - Resolving threads, editing or deleting comments, pagination past 100 —
   the same gaps as the desktop (see `docs/OVERVIEW.md`).
-- Phase 2, with seams left for them: editing an issue's title and body and
-  paging its timeline back ("load earlier") — `feat/issue-edit-paging`,
-  landing as methods beside the ones in `src/issues/mod.rs` and fields on
-  `IssueDetail`; stack actions from the phone through the paired desktop —
-  `feat/remote-stacks`, hanging off `PullItem.Stack` and `src/stacks.rs`.
 - Issues in background notifications.
 
 ## API
@@ -90,9 +92,10 @@ Kotlin names are camelCase; every call that touches state or I/O is
 | settings | `settings()`, `addRepo(input) → "owner/name"`, `removeRepo(repo) → Boolean`, `setRefreshInterval(s)`, `setPrsPerRepo(n)`, `setNotifications(newPullRequests, reviewRequests)`, `setAutostash(b)` — setters return `Settings` |
 | feed | `cachedFeed()`, `refreshFeed()`, `refreshRepo(repo)`, `setQuery(q)`, `setFilter(FeedPreferences)`, `toggleAuthor(login)`, `clearFilter()` (keeps the sort), `toggleCollapsed(repo)`, `setFeedTab(FeedTab)` — all return `FeedSnapshot`; `authorRoster(limit?) → AuthorRoster` (the active tab's authors), `setFeedObserver(FeedObserver?)` |
 | sort | `sortSettings() → SortSettings`; `setRepoSort(RepoSortKey, SortDirection?)`, `setItemSort(ItemSortKey, SortDirection?)` → `FeedSnapshot` (no direction: a new key starts at its default, the same key keeps its direction) |
-| issues | `issueDetail(repo, n) → IssueDetail`, `cachedIssueDetail(repo, n) → IssueDetail?`, `commentOnIssue(repo, n, body)`, `closeIssue(repo, n, CloseIssueAs)`, `reopenIssue(repo, n)`, `addIssueLabel(repo, n, label)`, `removeIssueLabel(repo, n, label)`, `assignableUsers(repo) → List<UserRef>`, `addIssueAssignee(repo, n, login)`, `removeIssueAssignee(repo, n, login)`, `createIssue(repo, title, body, labels, assignees) → UInt` (the new number); labels to offer come from `repositoryLabels(repo)` |
+| issues | `issueDetail(repo, n) → IssueDetail`, `cachedIssueDetail(repo, n) → IssueDetail?`, `loadEarlierIssue(repo, n) → IssueDetail`, `editIssue(repo, n, title, body, baseUpdatedAt, overwrite) → IssueDetail` (throws `EditConflict(title, body, updatedAt)`), `commentOnIssue(repo, n, body)`, `closeIssue(repo, n, CloseIssueAs)`, `reopenIssue(repo, n)`, `addIssueLabel(repo, n, label)`, `removeIssueLabel(repo, n, label)`, `assignableUsers(repo) → List<UserRef>`, `addIssueAssignee(repo, n, login)`, `removeIssueAssignee(repo, n, login)`, `createIssue(repo, title, body, labels, assignees) → UInt` (the new number); labels to offer come from `repositoryLabels(repo)` |
+| stack actions | `planStackRewrite(StackPlanRequest) → StackRewritePlan` (desktop dry run), `checkStackPlan(StackPlanRequest) → StackPlanCheck` and `stackCandidates(repo, stack) → List<StackCandidate>` (local, no network); `makeStack(repo, prs, trunk)`, `arrangeStack(repo, prs, trunk, confirmRewrite)`, `extendStack(repo, stack, prs, confirmRewrite)`, `mergeStack(repo, stack, StackMergeMethod)`, `unstack(repo, stack)`, `stackJob(id: ULong)` → `StackJob` |
 | repository | `repoOverview(repo) → RepoOverview` (no network), `branchTree(repo) → BranchTree`, `trunks(repo) → TrunkSettings`, `setTrunks(repo, names?) → TrunkSettings` |
-| detail | `pullDetail(repo, n)`, `cachedPullDetail(repo, n)`, `pullHeader(repo, n)`, `repositoryLabels(repo)`, `addLabel`, `removeLabel`, `addComment`, `replyToThread(repo, n, threadId, body)`, `merge(repo, n, method, title?, message?, expectedHeadSha)`, `closePullRequest`, `reopenPullRequest`, `setDraft(repo, n, draft)`, `updateBranch(repo, n, method, expectedHeadOid)` |
+| detail | `pullDetail(repo, n)`, `cachedPullDetail(repo, n)`, `loadEarlierPull(repo, n) → PullDetail`, `pullHeader(repo, n)`, `repositoryLabels(repo)`, `addLabel`, `removeLabel`, `addComment`, `replyToThread(repo, n, threadId, body)`, `merge(repo, n, method, title?, message?, expectedHeadSha)`, `closePullRequest`, `reopenPullRequest`, `setDraft(repo, n, draft)`, `updateBranch(repo, n, method, expectedHeadOid)` |
 | files | `filesOverview(repo, n) → FilesOverview`, `fileDiff(repo, n, fileIndex) → FileDiff` |
 | review | `pendingReview`, `addDraft(repo, n, anchor, rangeStart?, body)`, `editDraft(…, draftId, body)`, `removeDraft(…, draftId)`, `discardDrafts` — all return `PendingReview`; `submitReview(repo, n, event, body, includeDrafts)` |
 | remote | `parsePairingLink(uri)` (not suspend), `pairWithLink(uri, deviceName)`, `probeDesktop(host, port)`, `pairManual(host, port, fingerprint, code, deviceName)`, `setRemote(endpoint, deviceToken)`, `clearRemote()`, `remoteStatus()`, `machineInfo()`, `localStatus(repo, n)`, `runLocalJob(repo, n, op, autostash)`, `abortLocal(repo, n)`, `startSyncAll(op, autostash)`, `syncAllStatus()`, `handoffs()`, `refreshGithubTokenFromDesktop()`, `unpair()`, `desktopConfig() → DesktopConfigPreview`, `copyDesktopConfig() → Settings` |
@@ -129,13 +132,24 @@ Key records and enums, by screen:
   absent, rollup: StackRollup? }`, `StackKind` = `GitHub(number) | Chain`,
   title `Stack 7 · 3 PRs` or `Stackable chain · 3 PRs`, `StackRollup {
   mergeable, total, worst: MergeStatus, label, role }`.
+- **Stack actions**: `StackPlanRequest` = `Arrange(repo, prs, trunk) |
+  Extend(repo, stack, prs)`; `StackRewritePlan { rewrites: [StackRewrite {
+  number, branch }], needsRewrite }`; `StackPlanCheck` = `Valid(rewrites) |
+  Invalid(reason)`; `StackCandidate { number, title, eligibility }` with
+  `StackEligibility` = `Eligible(chained) | Ineligible(reason)`; `StackJob {
+  id, repo, kind: StackJobKind, startedAt, finishedAt?, finished, state }`,
+  `StackJobState` = `Running(progress?) | Done(result, detail) |
+  Conflicted(number, detail) | HandedOff(number, session, worktree, detail)
+  | Failed(pushed, detail)`, `StackJobResult` = `Stacked(rewritten,
+  tracked) | Extended(stack, rewritten) | Merged(stack) |
+  Unstacked(stack)`, `StackMergeMethod` = `MERGE | SQUASH | REBASE`.
 - **Issues**: `IssueSummary { repo, number, title, url, status: IssueStatus,
   statusChip, author?, createdAt, updatedAt, labels, assignees,
   commentCount, milestone?, isYours, assignedToYou }`, `IssueStatus` =
   `Open | Closed(reason: IssueCloseReason?)`, `IssueCloseReason` =
   `COMPLETED | NOT_PLANNED | DUPLICATE`, `CloseIssueAs` = `COMPLETED |
-  NOT_PLANNED`. `IssueDetail { issue, timeline: [TimelineEntry] }`, the
-  same entries as a pull request's.
+  NOT_PLANNED`. `IssueDetail { issue, timeline: [TimelineEntry], hasEarlier,
+  earlierCount? }`, the same entries as a pull request's.
 - **Repository**: `RepoOverview { repo, url, stars?, defaultBranch?, pulls:
   [PullItem], issues: [IssueSummary], pullsLoad, issuesLoad }`. `BranchTree
   { repo, url, stars, defaultBranch?, trunks: TrunkSettings, rows:
@@ -146,7 +160,9 @@ Key records and enums, by screen:
   { ahead, behind }`, `BranchNote` = `BREAKS_CYCLE | AMBIGUOUS_BASE`,
   `TrunkSettings { detected, configured, existing }`.
 - **Detail**: `PullDetail { header, timeline, threads, checks,
-  unresolvedThreads, pendingReview }`. `PullHeader` adds state
+  unresolvedThreads, pendingReview, hasEarlier, earlierCount? }` — the last
+  two default (`false`, `null`) on both detail records, so earlier Kotlin
+  constructors still compile. `PullHeader` adds state
   (open/closed/merged), `headSha` (pass back as the expected head), reviewers,
   `MergeVerdict { status, sentence, blocksMerge, role, chip }`, divergence,
   and `DraftAction { toDraft, label }`. `TimelineEntry.kind` is
@@ -187,9 +203,9 @@ Key records and enums, by screen:
 Errors are one sealed class, `RostrumException`: `NotSignedIn`,
 `GitHubAuthFailed`, `GitHubRateLimited(resetsAt)`, `MergeBlocked(reason)`,
 `GitHubApi(status?, reason)`, `Network`, `UnknownPullRequest`,
-`DraftsStale(draftedAgainst, head)`, `NotPaired`, `DeviceRevoked`,
+`DraftsStale(draftedAgainst, head)`, `EditConflict(title, body, updatedAt)`, `NotPaired`, `DeviceRevoked`,
 `DesktopUnreachable`, `CertificateMismatch(host)`, `DesktopTimeout`,
-`IncompatibleDesktop`, `RemoteApi(code, reason)`, `RemoteProtocol`,
+`IncompatibleDesktop`, `RemoteApi(code, reason)`, `RewriteNotConfirmed(branches, reason)`, `RemoteProtocol`,
 `InvalidRepo`, `DuplicateRepo`, `InvalidInput(reason)`, `Storage`, `Internal`.
 `describe()` gives a sentence. No variant has a field named `message`: it
 would collide with `Throwable.message` in the generated class.
@@ -304,6 +320,51 @@ pull requests on the next launch.
   (`InvalidInput`), repeats in the label and assignee lists collapse, a
   blank body is omitted.
 - `assignableUsers` is fetched once per repository per session.
+
+### Editing and paging
+
+- Conversations are read newest page first (`rostrum_core::paging`). A
+  detail's `hasEarlier`/`earlierCount` come from `Conversation::has_earlier`
+  and `earlier_remaining`.
+- `loadEarlierIssue`/`loadEarlierPull` take the held conversation (memory,
+  then SQLite; `InvalidInput` if the screen was never opened), fetch only
+  the connections with a cursor (`issue_earlier`, `conversation_earlier`),
+  `merge_earlier` (no duplicates, chronological), and keep and cache the
+  result. With nothing earlier they return the held detail without a
+  request.
+- `issueDetail`/`pullDetail` reload the newest page and keep the earlier
+  pages already loaded (`Conversation::refreshed_by`), so a reload never
+  loses what "load earlier" brought in; the caches hold the merged set and
+  its cursors.
+- `editIssue` builds the baseline from the held detail whose `updatedAt`
+  equals `baseUpdatedAt` (`IssueEditor`); with no such copy, any change
+  after `baseUpdatedAt` counts as a conflict. A blank title is
+  `InvalidInput`; an unchanged edit sends nothing. Without `overwrite` the
+  issue is re-read, and a title/description change since is
+  `EditConflict` (the fresh copy is kept, nothing sent); otherwise one
+  `PATCH`, then the issue and the repository's issues are re-read.
+
+### Stack actions
+
+- Every action is a `rostrum-remote` stack route on the paired desktop
+  (`NotPaired` without one), which re-validates against GitHub and runs
+  `rostrum-stack` on its clone. Starting answers at once with a `StackJob`;
+  `stackJob(id)` polls it.
+- Cheap checks run first and never reach the desktop: numbers listed once,
+  at least two for make/arrange and one for extend, a valid trunk and branch
+  names (`RefName`), a non-zero stack number.
+- `checkStackPlan` and `stackCandidates` answer from the cached feed with
+  `rostrum_core::plan_stack` / `plan_extend` — the desktop's own rules — so
+  the phone can show what is eligible and what would be rewritten before
+  asking. The desktop's answer is authoritative.
+- A `rewrite_not_confirmed` refusal becomes `RewriteNotConfirmed(branches,
+  reason)`: the core re-asks the desktop's dry run for the same request so
+  `branches` are what it would rewrite now. A clone busy with another job is
+  `RemoteApi(BUSY)`, as for local jobs; an unknown job id is
+  `RemoteApi(NOT_FOUND)`.
+- The first time a job is seen finished (from a start or a poll), the
+  repository's feed is refreshed once (`CoreState::settled_stack_jobs`), so
+  the observer shows the new stack, merge or rewrite.
 
 ### Repository screen
 
@@ -509,7 +570,12 @@ the data directory for every secret that passed through.
 | `src/stacks.rs` | Stack header records and the row folder | `PullItem`, `StackSummary`, `StackKind`, `StackRollup`, `PullItems` |
 | `src/issues/types.rs` | Issue records | `IssueSummary`, `IssueDetail`, `IssueStatus`, `IssueCloseReason`, `CloseIssueAs` |
 | `src/issues/summary.rs` | Issue row and status chip | `summarize_issue`, `status_chip` |
-| `src/issues/mod.rs` | Issue screen, actions, creation | — |
+| `src/issues/mod.rs` | Issue screen, actions, creation; held and merged detail | `held_issue`, `keep_issue`, `fetch_issue` |
+| `src/issues/edit.rs` | Title/description edit with conflict check | `Baseline` |
+| `src/issues/paging.rs` | Load earlier on the issue screen | — |
+| `src/stack_actions/types.rs` | Stack action records and wire conversions | `StackJob`, `StackJobState`, `StackJobResult`, `StackPlanRequest`, `StackRewritePlan`, `StackPlanCheck`, `StackCandidate`, `StackMergeMethod` |
+| `src/stack_actions/check.rs` | Input parsing and local plan/eligibility checks | `PlanInput`, `check`, `candidates` |
+| `src/stack_actions/mod.rs` | Stack actions through the desktop, typed refusals, refresh after a job | — |
 | `src/repo_view/types.rs` | Repository screen records | `RepoOverview`, `BranchTree`, `BranchRow`, `TrunkDrift`, `BranchDrift`, `TrunkSettings` |
 | `src/repo_view/tree.rs` | Core branch tree → rows | `rows` |
 | `src/repo_view/mod.rs` | Overview, branch-tree fetch, trunks | `parse_trunks`, `trunk_settings` |
@@ -538,6 +604,8 @@ the data directory for every secret that passed through.
 | `tests/profiles.rs` | Registry persistence, ordering, switching, isolation, removal, and pairing into profiles against a TLS stand-in | — |
 | `tests/remote_pairing.rs` | Pairing, every desktop call, and copying the desktop's config against a TLS stand-in | — |
 | `tests/github_flows.rs` | Refresh, probes, notifications, mutations against a GitHub stand-in | — |
+| `tests/stack_actions.rs` | Local checks, every stack action, `RewriteNotConfirmed`, busy, polling and the refresh after a job against the TLS and GitHub stand-ins | — |
+| `tests/edit_paging.rs` | Issue edits (clear, activity-only, conflict, overwrite, invalid, unchanged) and paged issue and pull request conversations against the GitHub stand-in | — |
 | `tests/issues_stacks.rs` | Tabs, sorts, stacks, the issue screen and actions, creation, the repository screen, branch tree and trunks against the GitHub stand-in | — |
 | `tests/core_offline.rs` | Cache-only flows and restarts | — |
 | `tests/bindings.rs` | Kotlin generation from the library this test run built (the newest `librostrum_ffi` under the profile directory, since `cargo test` does not copy it up) | — |
@@ -607,6 +675,9 @@ against the library `cargo test` builds and checks the surface.
 - **A stack is one item.** Its members travel inside `PullItem.Stack`, so
   no sort, filter or Kotlin code can separate them from their header; a
   filter narrows the members, never the grouping.
+- **History is never rewritten without the user's confirmation.** Arrange
+  and extend send exactly the branches the user was shown; the desktop
+  refuses any mismatch.
 - **The phone orders nothing.** Repository, item and stack order are
   `rostrum_core::sort`'s, shared with the desktop; the sort survives
   `clearFilter`.

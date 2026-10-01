@@ -10,6 +10,8 @@ use std::time::{Duration, SystemTime};
 use rostrum_github::GitHubError;
 use rostrum_remote::{ApiErrorCode, client::ClientError};
 
+use crate::stack_actions::StackRewrite;
+
 /// Everything that can go wrong in the core, by what the UI should do about it.
 #[derive(Debug, Clone, PartialEq, thiserror::Error, uniffi::Error)]
 pub enum RostrumError {
@@ -58,6 +60,17 @@ pub enum RostrumError {
         head: String,
     },
 
+    /// `edit_issue`: someone changed the issue's title or description after
+    /// `base_updated_at`, and saving would discard it. Their version is here:
+    /// show it, then reload it into the editor or call again with
+    /// `overwrite = true`.
+    #[error("the issue was edited elsewhere since it was opened")]
+    EditConflict {
+        title: String,
+        body: String,
+        updated_at: SystemTime,
+    },
+
     /// No desktop is paired, or `set_remote` has not been called this session.
     #[error("not paired with a desktop")]
     NotPaired,
@@ -88,6 +101,16 @@ pub enum RostrumError {
     #[error("the desktop refused the request ({code:?}): {reason}")]
     RemoteApi {
         code: RemoteErrorCode,
+        reason: String,
+    },
+
+    /// A stack request would rewrite branches it did not confirm (or
+    /// confirms branches it would not rewrite). `branches` are what the
+    /// desktop would rewrite now: show them, then send exactly their names as
+    /// `confirm_rewrite`. Empty if the desktop could not be asked again.
+    #[error("the desktop would rewrite other branches than the ones confirmed: {reason}")]
+    RewriteNotConfirmed {
+        branches: Vec<StackRewrite>,
         reason: String,
     },
 
@@ -135,6 +158,9 @@ pub enum RemoteErrorCode {
     PairingCodeExpired,
     RateLimited,
     Busy,
+    /// A stack request's `confirm_rewrite` did not match; stack calls report
+    /// [`RostrumError::RewriteNotConfirmed`] instead.
+    RewriteNotConfirmed,
     Internal,
 }
 
@@ -224,6 +250,9 @@ impl From<ApiErrorCode> for RemoteErrorCode {
             ApiErrorCode::PairingCodeExpired => Self::PairingCodeExpired,
             ApiErrorCode::RateLimited => Self::RateLimited,
             ApiErrorCode::Busy => Self::Busy,
+            // Stack calls turn this into `RostrumError::RewriteNotConfirmed`
+            // with the branches; anything else reports the code.
+            ApiErrorCode::RewriteNotConfirmed => Self::RewriteNotConfirmed,
             ApiErrorCode::Internal => Self::Internal,
         }
     }

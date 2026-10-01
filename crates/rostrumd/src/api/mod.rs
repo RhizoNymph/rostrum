@@ -10,6 +10,7 @@ pub mod auth;
 mod local;
 mod machine;
 mod pairing;
+mod stacks;
 mod sync;
 
 use axum::{
@@ -36,6 +37,13 @@ pub fn router(daemon: Daemon) -> Router {
         .route(routes::SYNC_ALL, post(sync::start).get(sync::latest))
         .route(routes::HANDOFFS, get(machine::handoffs))
         .route(routes::DEVICE, delete(machine::forget))
+        .route(routes::STACK_PLAN, post(stacks::plan))
+        .route(routes::STACK_MAKE, post(stacks::make))
+        .route(routes::STACK_ARRANGE, post(stacks::arrange))
+        .route(routes::STACK_EXTEND, post(stacks::extend))
+        .route(routes::STACK_MERGE, post(stacks::merge))
+        .route(routes::STACK_UNSTACK, post(stacks::unstack))
+        .route(routes::STACK_JOB, get(stacks::job))
         .fallback(not_found)
         .layer(middleware::from_fn(log_request))
         .with_state(daemon)
@@ -45,5 +53,7 @@ async fn not_found() -> ApiFailure {
     ApiFailure::new(ApiErrorCode::NotFound, "no such route")
 }
 
+#[cfg(test)]
+mod stack_tests;
 #[cfg(test)]
 mod tests;

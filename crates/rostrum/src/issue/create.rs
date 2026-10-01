@@ -13,12 +13,12 @@ use rostrum_core::{Label, RepoId, Selection, User};
 use rostrum_github::{GitHubClient, GitHubError, IssueDraft};
 use rostrum_ui::{
     ActiveTheme, InputEvent, TextInput,
-    components::{Button, ButtonStyle, Tab, h_flex, tab_bar, v_flex},
-    markdown,
+    components::{Button, ButtonStyle, h_flex, v_flex},
 };
 
 use crate::{
     loadable::Loadable,
+    markdown_editor::MarkdownEditor,
     pickers::{self, OpenPicker, Toggle},
     sync::Store,
 };
@@ -29,20 +29,11 @@ pub enum NewIssueEvent {
     Cancelled,
 }
 
-/// Whether the body is being edited or previewed as rendered markdown.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum BodyMode {
-    #[default]
-    Write,
-    Preview,
-}
-
 pub struct NewIssueForm {
     store: Entity<Store>,
     draft: IssueDraft,
     title: Entity<TextInput>,
-    body: Entity<TextInput>,
-    mode: BodyMode,
+    body: Entity<MarkdownEditor>,
     picker: Option<OpenPicker>,
     /// Both palettes belong to `draft.repo()`, and are reset when it changes.
     repo_labels: Loadable<Vec<Label>>,
@@ -69,7 +60,15 @@ impl NewIssueForm {
                 .map(|repo| repo.id.clone())
         });
         let title = cx.new(|cx| TextInput::new("Title", cx).lines(1, 1));
-        let body = cx.new(|cx| TextInput::new("Describe the issue (markdown)…", cx).lines(6, 16));
+        let body = cx.new(|cx| {
+            MarkdownEditor::new(
+                "new-issue-preview",
+                "Describe the issue (markdown)…",
+                repo.clone(),
+                cx,
+            )
+        });
+        let body_input = body.read(cx).input().clone();
         let subscriptions = vec![
             cx.observe(&store, |_, _, cx| cx.notify()),
             // Re-render as the title is typed, so the Create button's
@@ -79,7 +78,7 @@ impl NewIssueForm {
                     cx.notify();
                 }
             }),
-            cx.subscribe(&body, |this, _, event, cx| {
+            cx.subscribe(&body_input, |this, _, event, cx| {
                 if matches!(event, InputEvent::Submit) {
                     this.create(cx);
                 }
@@ -90,7 +89,6 @@ impl NewIssueForm {
             draft: IssueDraft::new(repo),
             title,
             body,
-            mode: BodyMode::default(),
             picker: None,
             repo_labels: Loadable::Idle,
             assignable: Loadable::Idle,
@@ -109,7 +107,9 @@ impl NewIssueForm {
         if self.draft.repo() == Some(&repo) {
             return;
         }
-        self.draft.set_repo(repo);
+        self.draft.set_repo(repo.clone());
+        self.body
+            .update(cx, |body, cx| body.set_repo(Some(repo), cx));
         // The palettes were the old repository's.
         self.repo_labels = Loadable::Idle;
         self.assignable = Loadable::Idle;
@@ -188,7 +188,7 @@ impl NewIssueForm {
             return;
         }
         let title = self.title.read(cx).text().to_string();
-        let body = self.body.read(cx).text().to_string();
+        let body = self.body.read(cx).text(cx);
         let (repo, request) = match self.draft.request(&title, &body) {
             Ok(ready) => ready,
             Err(error) => {
@@ -317,7 +317,6 @@ impl Render for NewIssueForm {
         let sending = self.sending;
         let labels = self.chosen_labels();
         let assignees = self.chosen_assignees();
-        let entity = cx.entity();
         let section = |text: &'static str| {
             div()
                 .text_size(rems(0.74))
@@ -331,34 +330,6 @@ impl Render for NewIssueForm {
                 .on_click(Self::on_click(cx, move |this, cx| {
                     this.toggle_picker(which, cx)
                 }))
-        };
-
-        let body = match self.mode {
-            BodyMode::Write => self.body.clone().into_any_element(),
-            BodyMode::Preview => {
-                let text = self.body.read(cx).text().to_string();
-                let rendered = match (&chosen, text.trim().is_empty()) {
-                    (_, true) => div()
-                        .text_size(rems(0.78))
-                        .text_color(theme.text_subtle)
-                        .child("Nothing to preview")
-                        .into_any_element(),
-                    (Some(repo), false) => {
-                        markdown::render_github(&text, repo.owner(), repo.name(), 0, &theme, cx)
-                    }
-                    (None, false) => markdown::render_source(&text, 0, &theme, cx),
-                };
-                div()
-                    .id("new-issue-preview")
-                    .min_h(rems(8.))
-                    .max_h(rems(24.))
-                    .overflow_y_scroll()
-                    .p_2()
-                    .border_1()
-                    .border_color(theme.border)
-                    .child(rendered)
-                    .into_any_element()
-            }
         };
 
         v_flex()
@@ -393,25 +364,7 @@ impl Render for NewIssueForm {
             )
             .child(section("Title"))
             .child(self.title.clone())
-            .child(div().flex_none().child(tab_bar(
-                vec![Tab::new("Write"), Tab::new("Preview")],
-                match self.mode {
-                    BodyMode::Write => 0,
-                    BodyMode::Preview => 1,
-                },
-                cx,
-                move |ix, _window, cx| {
-                    entity.update(cx, |this, cx| {
-                        this.mode = if ix == 1 {
-                            BodyMode::Preview
-                        } else {
-                            BodyMode::Write
-                        };
-                        cx.notify();
-                    });
-                },
-            )))
-            .child(body)
+            .child(self.body.clone())
             .child(
                 h_flex()
                     .gap_2()
