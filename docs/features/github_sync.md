@@ -325,13 +325,26 @@ naming the resource that was addressed. The feed query, the conversation query,
 and both draft mutations go through it, so none of them can drift on how a
 partial failure is interpreted.
 
+## Stacks — `GET /repos/{owner}/{repo}/stacks`
+
+After each successful refresh the store reads the repository's stacks from
+GitHub's Stacks REST API (`GitHubClient::stacks`, following pagination), the
+source of truth for which pull requests form a stack. A 404 means stacked pull
+requests are not enabled there and is `RepoStacks::Unavailable`, not an error;
+the store then waits an hour before asking that repository again. A repository
+with no open pull requests is not asked. A failed read keeps the last answer.
+The list is cached in `cache_stack` (one row per repository) so a cold start
+paints stacks grouped. Cache schema version 3 added the table and the pull
+requests' `is_cross_repository` flag (fetched as `isCrossRepository`), which
+stack detection uses to ignore forks. See `stacks.md`.
+
 ## Cache — `rostrum-db`
 
 SQLite via `sqlx`, at `~/.local/share/rostrum/cache.db`. The crate draws a hard
 line between two kinds of data, and the distinction is load-bearing:
 
 - **Cache** (`cache_pull_request`, `cache_repo_meta`, `cache_conversation`,
-  `cache_http`) — copies
+  `cache_http`, `cache_stack`) — copies
   of things GitHub already knows. Disposable. A schema-version mismatch drops
   and recreates these tables; corrupt JSON in a row is logged, deleted, and
   treated as a miss.
@@ -435,6 +448,9 @@ Two rules that matter in practice:
 | `crates/rostrum-db/src/files.rs` | Changed files cached per head sha |
 | `crates/rostrum-db/src/baseline.rs` | The notification seen set |
 | `crates/rostrum-db/src/repo_meta.rs` | Repository metadata cached for the feed's sorts |
+| `crates/rostrum-github/src/stacks.rs`, `client/stacks.rs` | Stacks API decoding and the GET |
+| `crates/rostrum-db/src/stacks.rs` | `cache_stack` |
+| `crates/rostrum/src/sync/stacks.rs` | Reading stacks after each refresh, the 404 backoff |
 | `crates/rostrum-github/src/graphql/sort_fields.rs` | Wire types for the sort fields, `head_pushed_at`, live-capture tests |
 
 ## Testing

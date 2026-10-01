@@ -18,8 +18,9 @@ direction, chosen from a **Sort** popover in the feed header and remembered in
 
 ## Non-scope
 
-- Grouping pull requests into stacks. `sort_key_for_group` is the hook stacks
-  will sort through; nothing groups yet.
+- Grouping pull requests into stacks — see `stacks.md`. `flatten`'s
+  `push_units` sorts each stack as one unit through `compare_groups`, with the
+  stack's visible members bottom first.
 - Sorting on Android. The Android core lays the feed out with
   `FeedOrder::AsListed` — the user arranges its repositories in settings — and
   ignores the persisted sort until it has a control of its own. It does

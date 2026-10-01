@@ -21,10 +21,25 @@ command running in a tmux session, with the context it needs already gathered.
 - **Watching the handler.** Rostrum does not poll the session, read its
   output, or know when it finishes. The next look at the worktree reads git's
   state, which is the only thing that matters.
-- **Pushing.** The handler's instructions say not to; rostrum never does.
+- **Pushing.** The handler's instructions say not to. The only push in
+  rostrum is a stack arrangement's leased push, which happens only after every
+  rebase finished cleanly — never from a handed-off session.
 - Any handler-specific integration. `claude` is the example in the docs
   because it is installed here; the template is a shell command and anything
   that reads a file works.
+
+## Stack arrangements
+
+Arranging pull requests into a stack (`stacks.md`) rebases each branch in a
+detached scratch worktree. When one stops on a conflict and a handler is
+configured, that scratch worktree is kept and handed off exactly like a local
+job's: the bundle's git message adds that this is a stack arrangement, that
+nothing has been pushed, and that the user should finish with `git rebase
+--continue` and run Arrange again. The rebase ran with `rerere` on, so the
+resolution is recorded, and the rerun replays it and continues on its own. The
+session name is the pull request's, as for any handoff, and a session already
+running for any member refuses the arrangement up front. Stale scratch
+worktrees with nothing in progress are removed at the start of the next run.
 
 ## Turning it on
 
