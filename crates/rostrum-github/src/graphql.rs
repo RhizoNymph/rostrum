@@ -522,7 +522,12 @@ impl<T> Paged<T> {
             ),
             None => rostrum_core::PageState::Complete,
         };
-        let nodes = self.nodes.unwrap_or_default().into_iter().flatten().collect();
+        let nodes = self
+            .nodes
+            .unwrap_or_default()
+            .into_iter()
+            .flatten()
+            .collect();
         (nodes, state)
     }
 }

@@ -91,7 +91,11 @@ impl GitHubClient {
     ) -> Result<(Conversation, PageUpdate), GitHubError> {
         let resource = format!("{} (earlier)", issue_resource(repo, number));
         let data: IssueDetailData = self
-            .graphql(ISSUE_DETAIL, issue_variables(repo, number, Some(earlier)), &resource)
+            .graphql(
+                ISSUE_DETAIL,
+                issue_variables(repo, number, Some(earlier)),
+                &resource,
+            )
             .await?;
         data.repository
             .and_then(|repository| repository.issue)

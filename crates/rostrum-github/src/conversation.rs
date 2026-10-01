@@ -5,7 +5,6 @@
 //! separately would cost six requests per pull request and still race, since the
 //! pieces reference each other by id.
 
-
 use chrono::{DateTime, Utc};
 use rostrum_core::{
     CheckRun, CheckState, CloseReason, CommentId, Conversation, EventKind, PullState, ReviewId,

@@ -132,8 +132,10 @@ query($owner: String!, $name: String!, $number: Int!, $pageSize: Int!,
 "#;
 
 /// The paged connections of [`ISSUE_DETAIL`] and their variable stems.
-pub const ISSUE_PAGES: [(Connection, &str); 2] =
-    [(Connection::Comments, "comments"), (Connection::Events, "events")];
+pub const ISSUE_PAGES: [(Connection, &str); 2] = [
+    (Connection::Comments, "comments"),
+    (Connection::Events, "events"),
+];
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -294,7 +296,11 @@ impl IssueNode {
             body: comment.body,
             created_at: comment.created_at,
         }));
-        items.extend(events.into_iter().filter_map(TimelineEventNode::into_domain));
+        items.extend(
+            events
+                .into_iter()
+                .filter_map(TimelineEventNode::into_domain),
+        );
 
         let mut conversation = Conversation {
             items,

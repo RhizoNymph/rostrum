@@ -13,8 +13,8 @@
 use std::collections::HashSet;
 
 use rostrum_core::{
-    Connection, Conversation, EarlierRequest, IssueNumber, PageCursor, PageState, PrNumber,
-    RepoId, ThreadId, TimelineItem,
+    Connection, Conversation, EarlierRequest, IssueNumber, PageCursor, PageState, PrNumber, RepoId,
+    ThreadId, TimelineItem,
 };
 use serde_json::{Value, json};
 
@@ -139,9 +139,16 @@ fn an_earlier_page_includes_only_connections_with_a_cursor() {
     );
     request = conversation.earlier_request();
 
-    let variables = issue_variables(&RepoId::new("rust-lang", "rust"), IssueNumber(126600), Some(&request));
+    let variables = issue_variables(
+        &RepoId::new("rust-lang", "rust"),
+        IssueNumber(126600),
+        Some(&request),
+    );
     assert_eq!(variables["withComments"], json!(true));
-    assert_eq!(variables["commentsBefore"], json!("Y3Vyc29yOnYyOpHOnFSHBg=="));
+    assert_eq!(
+        variables["commentsBefore"],
+        json!("Y3Vyc29yOnYyOpHOnFSHBg==")
+    );
     assert_eq!(variables["withEvents"], json!(false));
     assert_eq!(variables["eventsBefore"], Value::Null);
 }
@@ -171,7 +178,10 @@ fn every_paged_connection_reads_backwards_and_reports_its_page() {
                 ("timelineItems", "events"),
             ][..],
         ),
-        (ISSUE_DETAIL, &[("comments", "comments"), ("timelineItems", "events")][..]),
+        (
+            ISSUE_DETAIL,
+            &[("comments", "comments"), ("timelineItems", "events")][..],
+        ),
     ] {
         for (field, stem) in connections {
             let start = document
@@ -216,7 +226,10 @@ fn a_captured_newest_issue_page_records_its_cursors_and_totals() {
             total: 156
         }
     );
-    assert!(matches!(conversation.paging.events, PageState::Earlier { total: 28, .. }));
+    assert!(matches!(
+        conversation.paging.events,
+        PageState::Earlier { total: 28, .. }
+    ));
     assert_eq!(comment_ids(&conversation).len(), 3);
     assert_eq!(conversation.earlier_remaining(), (156 - 3) + (28 - 3));
 }
@@ -225,7 +238,10 @@ fn a_captured_newest_issue_page_records_its_cursors_and_totals() {
 fn a_captured_earlier_issue_page_carries_only_what_was_asked_for() {
     let (page, update) = issue_page(ISSUE_EARLIER);
     assert!(update.get(Connection::Comments).is_some());
-    assert!(update.get(Connection::Events).is_none(), "events were left out");
+    assert!(
+        update.get(Connection::Events).is_none(),
+        "events were left out"
+    );
     assert_eq!(comment_ids(&page).len(), 3);
 }
 
@@ -246,7 +262,11 @@ fn captured_issue_pages_merge_in_order_without_duplicates() {
 
     let ids = comment_ids(&conversation);
     assert_eq!(ids.len(), 6);
-    assert_eq!(&ids[3..], newest_ids.as_slice(), "the newest page stays last");
+    assert_eq!(
+        &ids[3..],
+        newest_ids.as_slice(),
+        "the newest page stays last"
+    );
     let unique: HashSet<_> = ids.iter().collect();
     assert_eq!(unique.len(), ids.len());
     let stamps: Vec<_> = conversation.items[1..]
@@ -255,7 +275,10 @@ fn captured_issue_pages_merge_in_order_without_duplicates() {
         .collect();
     assert!(stamps.windows(2).all(|w| w[0] <= w[1]), "not chronological");
 
-    assert_eq!(cursor(&conversation.paging.comments), "Y3Vyc29yOnYyOpHOkQDonw==");
+    assert_eq!(
+        cursor(&conversation.paging.comments),
+        "Y3Vyc29yOnYyOpHOkQDonw=="
+    );
     assert_eq!(conversation.paging.events, events_before);
     assert_eq!(conversation.earlier_remaining(), (156 - 6) + (28 - 3));
 }
@@ -269,7 +292,10 @@ fn captured_pr_pages_link_threads_to_reviews_from_the_earlier_page() {
     let mut conversation = newest(pr_page(PR_NEWEST));
     for connection in Connection::ALL {
         assert!(
-            matches!(conversation.paging.get(connection), PageState::Earlier { .. }),
+            matches!(
+                conversation.paging.get(connection),
+                PageState::Earlier { .. }
+            ),
             "{connection:?}"
         );
     }
@@ -298,7 +324,11 @@ fn captured_pr_pages_link_threads_to_reviews_from_the_earlier_page() {
     let links = linked(&conversation);
     let unique: HashSet<_> = links.iter().collect();
     assert_eq!(unique.len(), links.len(), "a thread listed by two reviews");
-    for newest_thread in ["PRRT_kwDOAAsO6M6kLyAn", "PRRT_kwDOAAsO6M6kSyWc", "PRRT_kwDOAAsO6M6oAsPw"] {
+    for newest_thread in [
+        "PRRT_kwDOAAsO6M6kLyAn",
+        "PRRT_kwDOAAsO6M6kSyWc",
+        "PRRT_kwDOAAsO6M6oAsPw",
+    ] {
         assert!(
             links.contains(&ThreadId(newest_thread.into())),
             "{newest_thread} was not linked to its opener"

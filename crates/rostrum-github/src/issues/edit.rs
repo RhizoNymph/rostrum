@@ -80,6 +80,19 @@ impl IssueEditor {
         })
     }
 
+    /// The request that saves `title` and `body` over someone else's change,
+    /// once the user has seen the conflict and chosen to overwrite.
+    ///
+    /// Only the title is checked. Text identical to the editor's baseline is
+    /// still sent: putting the original back over the other edit is exactly
+    /// what overwriting can mean.
+    pub fn overwrite(&self, title: &str, body: &str) -> Result<IssueEdit, EditError> {
+        Ok(IssueEdit {
+            title: IssueTitle::new(title)?,
+            body: body.to_string(),
+        })
+    }
+
     /// Compare a fresh read of the issue against the baseline.
     ///
     /// A conflict needs both signs: GitHub saw the issue change after the
@@ -103,9 +116,7 @@ impl IssueEditor {
 
 #[cfg(test)]
 mod tests {
-    use rostrum_core::{
-        Conversation, IssueNumber, IssueState, NodeId, TimelineItem,
-    };
+    use rostrum_core::{Conversation, IssueNumber, IssueState, NodeId, TimelineItem};
     use serde_json::json;
 
     use super::*;
@@ -188,14 +199,20 @@ mod tests {
 
     #[test]
     fn an_untouched_issue_is_clear_to_save() {
-        assert_eq!(editor().check(&detail("Crash", "It crashes.", 100)), EditCheck::Clear);
+        assert_eq!(
+            editor().check(&detail("Crash", "It crashes.", 100)),
+            EditCheck::Clear
+        );
     }
 
     /// Comments, labels and assignments move `updatedAt` without touching
     /// what the editor would overwrite; they must not raise a conflict.
     #[test]
     fn activity_that_does_not_touch_the_text_is_not_a_conflict() {
-        assert_eq!(editor().check(&detail("Crash", "It crashes.", 500)), EditCheck::Clear);
+        assert_eq!(
+            editor().check(&detail("Crash", "It crashes.", 500)),
+            EditCheck::Clear
+        );
     }
 
     #[test]
@@ -214,12 +231,31 @@ mod tests {
         ));
     }
 
+    /// Overwriting after a conflict sends the editor's text even when it is
+    /// the baseline unchanged, but still never a blank title.
+    #[test]
+    fn overwriting_sends_the_editors_text_and_still_needs_a_title() {
+        let editor = editor();
+        let edit = editor.overwrite("Crash", "It crashes.").expect("valid");
+        assert_eq!(
+            serde_json::to_value(&edit).expect("serialises"),
+            json!({ "title": "Crash", "body": "It crashes." })
+        );
+        assert_eq!(
+            editor.overwrite(" ", "x"),
+            Err(EditError::EmptyTitle(EmptyTitle))
+        );
+    }
+
     /// Reloading resets the baseline to the other person's version, after
     /// which saving over it is no longer a conflict.
     #[test]
     fn reloading_after_a_conflict_clears_it() {
         let theirs = detail("Crash (renamed)", "Theirs", 500);
-        assert!(matches!(editor().check(&theirs), EditCheck::Conflict { .. }));
+        assert!(matches!(
+            editor().check(&theirs),
+            EditCheck::Conflict { .. }
+        ));
         let reloaded = IssueEditor::from_detail(&theirs);
         assert_eq!(reloaded.check(&theirs), EditCheck::Clear);
         assert_eq!(reloaded.title(), "Crash (renamed)");

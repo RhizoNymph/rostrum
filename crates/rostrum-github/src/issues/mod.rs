@@ -8,10 +8,10 @@ pub mod rest;
 pub mod wire;
 
 pub use client::{RepoIssues, issue_variables};
-pub use edit::{EditCheck, EditError, IssueEditor};
 pub use draft::{DraftError, IssueDraft};
+pub use edit::{EditCheck, EditError, IssueEditor};
 pub use rest::{
-    AssignableUser, Assignees, CloseAs, IssueEdit, CommentBody, CreateIssue, CreatedIssue, EmptyComment,
-    IssueMutation, IssueStateChange, RestCall,
+    AssignableUser, Assignees, CloseAs, CommentBody, CreateIssue, CreatedIssue, EmptyComment,
+    IssueEdit, IssueMutation, IssueStateChange, RestCall,
 };
 pub use wire::{ISSUE_DETAIL, OPEN_ISSUES};

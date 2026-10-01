@@ -63,13 +63,20 @@ pub enum PageState {
     /// existed decodes to.
     #[default]
     Complete,
-    Earlier { before: PageCursor, total: u32 },
+    Earlier {
+        before: PageCursor,
+        total: u32,
+    },
 }
 
 impl PageState {
     /// The state a fetched page describes: earlier entries exist when GitHub
     /// says so and gave a cursor to reach them.
-    pub fn from_page_info(start_cursor: Option<String>, has_previous_page: bool, total: u32) -> Self {
+    pub fn from_page_info(
+        start_cursor: Option<String>,
+        has_previous_page: bool,
+        total: u32,
+    ) -> Self {
         match (has_previous_page, start_cursor) {
             (true, Some(cursor)) => Self::Earlier {
                 before: PageCursor(cursor),
@@ -265,7 +272,11 @@ impl Conversation {
     /// every page, and shows until the pane is reopened.
     pub fn refreshed_by(&self, mut fresh: Conversation) -> Conversation {
         let mut carried = HashSet::new();
-        for connection in [Connection::Comments, Connection::Reviews, Connection::Events] {
+        for connection in [
+            Connection::Comments,
+            Connection::Reviews,
+            Connection::Events,
+        ] {
             if !matches!(fresh.paging.get(connection), PageState::Earlier { .. }) {
                 continue;
             }
@@ -281,7 +292,9 @@ impl Conversation {
             let older: Vec<TimelineItem> = self
                 .items
                 .iter()
-                .filter(|item| connection_of(item) == Some(connection) && item.created_at() < oldest)
+                .filter(|item| {
+                    connection_of(item) == Some(connection) && item.created_at() < oldest
+                })
                 .cloned()
                 .collect();
             if !older.is_empty() {
@@ -470,7 +483,8 @@ mod tests {
             items: vec![body(), comment("c4", 40), comment("c5", 50)],
             ..Default::default()
         };
-        conversation.apply_page(&PageUpdate::default().with(Connection::Comments, earlier("k4", 5)));
+        conversation
+            .apply_page(&PageUpdate::default().with(Connection::Comments, earlier("k4", 5)));
         conversation.sort();
         conversation
     }
@@ -481,10 +495,16 @@ mod tests {
             PageState::from_page_info(Some("k".into()), true, 9),
             earlier("k", 9)
         );
-        assert_eq!(PageState::from_page_info(Some("k".into()), false, 9), PageState::Complete);
+        assert_eq!(
+            PageState::from_page_info(Some("k".into()), false, 9),
+            PageState::Complete
+        );
         // A previous page with no cursor cannot be reached; treat as complete
         // rather than loop on a request that cannot advance.
-        assert_eq!(PageState::from_page_info(None, true, 9), PageState::Complete);
+        assert_eq!(
+            PageState::from_page_info(None, true, 9),
+            PageState::Complete
+        );
     }
 
     #[test]
@@ -498,8 +518,14 @@ mod tests {
         assert_eq!(conversation.earlier_remaining(), 3 + 3);
 
         let request = conversation.earlier_request();
-        assert_eq!(request.before(Connection::Comments), Some(&PageCursor("k4".into())));
-        assert_eq!(request.before(Connection::Events), Some(&PageCursor("e".into())));
+        assert_eq!(
+            request.before(Connection::Comments),
+            Some(&PageCursor("k4".into()))
+        );
+        assert_eq!(
+            request.before(Connection::Events),
+            Some(&PageCursor("e".into()))
+        );
         assert_eq!(request.before(Connection::Reviews), None);
         assert!(!request.is_empty());
     }
@@ -522,7 +548,10 @@ mod tests {
             items: vec![body(), comment("c2", 20), comment("c3", 30)],
             ..Default::default()
         };
-        conversation.merge_earlier(page, &PageUpdate::default().with(Connection::Comments, earlier("k2", 5)));
+        conversation.merge_earlier(
+            page,
+            &PageUpdate::default().with(Connection::Comments, earlier("k2", 5)),
+        );
 
         assert_eq!(ids(&conversation), ["body", "c2", "c3", "c4", "c5"]);
         assert_eq!(conversation.earlier_remaining(), 1);
@@ -531,7 +560,10 @@ mod tests {
             items: vec![comment("c1", 10)],
             ..Default::default()
         };
-        conversation.merge_earlier(last, &PageUpdate::default().with(Connection::Comments, PageState::Complete));
+        conversation.merge_earlier(
+            last,
+            &PageUpdate::default().with(Connection::Comments, PageState::Complete),
+        );
         assert_eq!(ids(&conversation), ["body", "c1", "c2", "c3", "c4", "c5"]);
         assert!(!conversation.has_earlier());
     }
@@ -544,11 +576,19 @@ mod tests {
         let mut conversation = newest();
         conversation.items.push(event("bug", 45));
         let page = Conversation {
-            items: vec![body(), comment("c3", 30), comment("c4", 40), event("bug", 45)],
+            items: vec![
+                body(),
+                comment("c3", 30),
+                comment("c4", 40),
+                event("bug", 45),
+            ],
             ..Default::default()
         };
         conversation.merge_earlier(page, &PageUpdate::default());
-        assert_eq!(ids(&conversation), ["body", "c3", "c4", "added the bug label", "c5"]);
+        assert_eq!(
+            ids(&conversation),
+            ["body", "c3", "c4", "added the bug label", "c5"]
+        );
     }
 
     /// A page that left a connection out must not reset its paging.
@@ -582,7 +622,11 @@ mod tests {
         };
         conversation.merge_earlier(page, &PageUpdate::default());
 
-        let thread_ids: Vec<&str> = conversation.threads.iter().map(|t| t.id.0.as_str()).collect();
+        let thread_ids: Vec<&str> = conversation
+            .threads
+            .iter()
+            .map(|t| t.id.0.as_str())
+            .collect();
         assert_eq!(thread_ids, ["t1", "t5", "t6"], "stored once, oldest first");
 
         let links: Vec<(String, Vec<String>)> = conversation
