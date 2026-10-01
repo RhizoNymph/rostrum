@@ -3,7 +3,12 @@
 //! Each area of the API adds its own `impl CoreState` block in its module;
 //! this file holds the fields and the helpers every area shares.
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::Arc,
+    time::Instant,
+};
 
 use rostrum_config::Config;
 use rostrum_core::{
@@ -104,6 +109,8 @@ pub(crate) struct CoreState {
     pub assignable: HashMap<RepoId, Arc<Vec<User>>>,
     /// Each repository's branch facts from its last branch-tree fetch.
     pub branch_meta: HashMap<RepoId, BranchMeta>,
+    /// Stack jobs already seen finished, so each refreshes the feed once.
+    pub settled_stack_jobs: HashSet<u64>,
     /// The notification seen set, once loaded from SQLite.
     pub baseline: Option<Baseline>,
     pub writer: Writer,
@@ -153,6 +160,7 @@ impl CoreState {
             issue_details: Recent::new(RECENT_CONVERSATIONS),
             assignable: HashMap::new(),
             branch_meta: HashMap::new(),
+            settled_stack_jobs: HashSet::new(),
             baseline: None,
             writer: startup.writer,
             notifier: startup.notifier,

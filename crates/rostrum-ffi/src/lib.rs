@@ -16,6 +16,7 @@
 //! | [`notifications`] | the background notification check |
 //! | [`issues`] | the Issues tab's rows, the issue screen, issue actions, new issues |
 //! | [`sort`] | the feed's repository and item sorts |
+//! | [`stack_actions`] | making, arranging, extending, merging and unstacking stacks through the paired desktop |
 //! | [`stacks`] | stacks of pull requests, grouped in the feed and on a repository |
 //! | [`repo_view`] | one repository's screen and its branch tree |
 //! | [`profiles`] | one profile per paired desktop or token, each its own core |
@@ -44,6 +45,7 @@ pub mod review;
 pub mod session;
 pub mod settings;
 pub mod sort;
+pub mod stack_actions;
 pub mod stacks;
 pub mod types;
 

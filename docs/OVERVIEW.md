@@ -334,12 +334,13 @@ Features Index:
       The Android app's Rust core behind UniFFI — a ProfileRegistry with one
       profile per paired desktop or GitHub token, each a RostrumCore serving
       the feed (pull request and issue tabs, the saved sorts, stacks as
-      read-only units), pull request and issue detail with every issue
-      action and issue creation, a repository's own screen with its branch
+      units), stack actions through the paired desktop, pull request and
+      issue detail with every issue action, issue creation and editing, and
+      "load earlier" paging, a repository's own screen with its branch
       tree and trunks, diff rows, pending review, desktop pairing and jobs,
       copying the desktop's config, and background notifications, all
       render-ready for Compose.
-    entry_points: [crates/rostrum-ffi/src/lib.rs, crates/rostrum-ffi/src/profiles/mod.rs, crates/rostrum-ffi/src/engine/mod.rs, crates/rostrum-ffi/src/issues/mod.rs, crates/rostrum-ffi/src/repo_view/mod.rs]
+    entry_points: [crates/rostrum-ffi/src/lib.rs, crates/rostrum-ffi/src/profiles/mod.rs, crates/rostrum-ffi/src/engine/mod.rs, crates/rostrum-ffi/src/issues/mod.rs, crates/rostrum-ffi/src/repo_view/mod.rs, crates/rostrum-ffi/src/stack_actions/mod.rs]
     depends_on: [repo_feed, pr_detail, diff_review, diff_overview, author_filter, github_sync, remote_protocol, feed_sort, issues, stacks, repo_view]
     doc: docs/features/android_core.md
   android_build:
