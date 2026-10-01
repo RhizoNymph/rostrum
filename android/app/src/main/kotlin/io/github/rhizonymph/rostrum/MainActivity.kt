@@ -16,7 +16,8 @@ import io.github.rhizonymph.rostrum.ui.theme.RostrumTheme
  * The single activity, and the target of `rostrum://pair` deep links and
  * notification taps. Being `singleTop`, a link opened while running arrives
  * through [onNewIntent]; either way it is handed to the container's link
- * inbox, which the navigation host drains once it is ready.
+ * inbox. The root switches to a notification's profile first, then that
+ * profile's navigation host opens the pull request.
  */
 class MainActivity : ComponentActivity() {
     private val container get() = (application as RostrumApplication).container
@@ -46,8 +47,13 @@ class MainActivity : ComponentActivity() {
     private fun handle(intent: Intent?) {
         if (intent == null) return
         val number = intent.getIntExtra(AppLinks.EXTRA_NUMBER, -1).takeIf { it > 0 }
-        val link = AppLinks.parse(intent.action, intent.dataString, intent.getStringExtra(AppLinks.EXTRA_REPO), number)
-            ?: return
+        val link = AppLinks.parse(
+            intent.action,
+            intent.dataString,
+            intent.getStringExtra(AppLinks.EXTRA_REPO),
+            number,
+            intent.getStringExtra(AppLinks.EXTRA_PROFILE),
+        ) ?: return
         RostrumLog.i("RostrumLinks", "link_received", "kind" to link::class.simpleName)
         container.links.offer(link)
     }

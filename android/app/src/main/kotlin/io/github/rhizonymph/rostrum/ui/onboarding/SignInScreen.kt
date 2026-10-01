@@ -45,10 +45,12 @@ import io.github.rhizonymph.rostrum.ui.components.TonalButton
 import io.github.rhizonymph.rostrum.ui.theme.RostrumFonts
 import io.github.rhizonymph.rostrum.ui.theme.RostrumText
 import io.github.rhizonymph.rostrum.ui.theme.RostrumTheme
+import io.github.rhizonymph.rostrum.ui.components.pairingPageSentence
 
 /**
- * First run: pairing with the desktop is the main path (it hands over the
- * desktop's GitHub sign-in); a personal access token is the fallback.
+ * First run (or a profile that lost its token): pairing with a desktop is
+ * the main path (it hands over the desktop's GitHub sign-in); a personal
+ * access token is the fallback.
  */
 @Composable
 fun SignInScreen(
@@ -56,6 +58,7 @@ fun SignInScreen(
     actions: SignInActions,
     onPairDesktop: () -> Unit,
     modifier: Modifier = Modifier,
+    onOpenProfiles: (() -> Unit)? = null,
 ) {
     val colors = RostrumTheme.colors
     Column(
@@ -75,7 +78,16 @@ fun SignInScreen(
                 color = colors.textSecondary,
             )
         }
+        state.profileLabel?.let { label ->
+            Text(
+                "Sign in to use $label again.",
+                style = RostrumText.body,
+                color = colors.textSecondary,
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
+        }
         state.notice?.let { NoticeBanner(it) }
+        onOpenProfiles?.let { TonalButton("Switch profile", it, modifier = Modifier.fillMaxWidth()) }
         PairCard(onPairDesktop)
         TokenSection(state, actions)
         Text(

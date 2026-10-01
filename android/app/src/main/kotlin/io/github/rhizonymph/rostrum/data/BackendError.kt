@@ -66,6 +66,9 @@ sealed interface BackendError {
     /** An argument was malformed or out of range. */
     data class InvalidInput(val reason: String) : BackendError
 
+    /** No profile has this id (it was removed meanwhile). */
+    data class ProfileNotFound(val id: String) : BackendError
+
     /** The local database, config file or secret store failed. */
     data class Storage(val reason: String) : BackendError
 
@@ -115,6 +118,7 @@ fun BackendError.describe(): String = when (this) {
     is BackendError.InvalidRepo -> "$input isn't a repository: $reason"
     is BackendError.DuplicateRepo -> "$repo is already in your feed"
     is BackendError.InvalidInput -> reason
+    is BackendError.ProfileNotFound -> "That profile no longer exists on this phone."
     is BackendError.Storage -> "Local storage failed: $reason"
     is BackendError.Internal -> "Something went wrong: $reason"
 }

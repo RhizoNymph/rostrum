@@ -11,7 +11,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.rhizonymph.rostrum.data.model.PrRef
 import io.github.rhizonymph.rostrum.ui.common.CollectMessages
 import io.github.rhizonymph.rostrum.ui.common.LocalAppContainer
-import io.github.rhizonymph.rostrum.ui.common.rostrumViewModel
+import io.github.rhizonymph.rostrum.ui.common.profileViewModel
 import io.github.rhizonymph.rostrum.ui.review.ComposerActions
 import io.github.rhizonymph.rostrum.ui.review.LineCommentSheet
 import io.github.rhizonymph.rostrum.ui.review.SubmitReviewSheet
@@ -28,7 +28,7 @@ fun FileDiffRoute(
     modifier: Modifier = Modifier,
 ) {
     val clock = LocalAppContainer.current.clock
-    val viewModel = rostrumViewModel(key = "file-diff-$pr-$fileIndex") { FileDiffViewModel(it.backend, pr, fileIndex) }
+    val viewModel = profileViewModel(key = "file-diff-$pr-$fileIndex") { _, profile -> FileDiffViewModel(profile.backend, pr, fileIndex) }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val composer by viewModel.composer.state.collectAsStateWithLifecycle()
     var finishing by rememberSaveable { mutableStateOf(false) }

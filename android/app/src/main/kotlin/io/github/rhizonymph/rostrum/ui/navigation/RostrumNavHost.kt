@@ -13,55 +13,75 @@ import io.github.rhizonymph.rostrum.ui.feed.FeedRoute
 import io.github.rhizonymph.rostrum.ui.onboarding.PairRoute
 import io.github.rhizonymph.rostrum.ui.onboarding.SignInRoute
 import io.github.rhizonymph.rostrum.ui.pr.PullRequestRoute
+import io.github.rhizonymph.rostrum.ui.profiles.AddTokenProfileRoute
+import io.github.rhizonymph.rostrum.ui.profiles.ProfilesSettingsSection
 import io.github.rhizonymph.rostrum.ui.pr.files.FileDiffRoute
 import io.github.rhizonymph.rostrum.ui.pr.files.FilesOverviewTab
 import io.github.rhizonymph.rostrum.ui.review.SubmitReviewSheet
 import io.github.rhizonymph.rostrum.ui.settings.SettingsRoute
 
 /**
- * The navigation graph. Features never reference each other: each exposes one
- * `…Route` entry composable taking navigation callbacks, and this file wires
- * them together (including the Files tab and the review sheet into the pull
- * request shell).
+ * The navigation graph of one profile (or of first run, [profileLabel]
+ * `null`). Features never reference each other: each exposes one `…Route`
+ * entry composable taking navigation callbacks, and this file wires them
+ * together (including the Files tab and the review sheet into the pull
+ * request shell, and the profiles section into Settings). [onOpenProfiles]
+ * opens the profile switcher; `null` before any profile exists.
  */
 @Composable
 fun RostrumNavHost(
     navController: NavHostController,
     signedIn: Boolean,
+    profileLabel: String?,
+    onOpenProfiles: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
+    val openProfiles = onOpenProfiles ?: {}
+    val label = profileLabel.orEmpty()
     NavHost(
         navController = navController,
         startDestination = if (signedIn) Destination.Feed else Destination.SignIn,
         modifier = modifier,
     ) {
         composable<Destination.SignIn> {
-            SignInRoute(onPairDesktop = { navController.navigate(Destination.Pair()) })
+            SignInRoute(onPairDesktop = { navController.navigate(Destination.Pair()) }, onOpenProfiles = onOpenProfiles)
+        }
+        composable<Destination.AddTokenProfile> {
+            AddTokenProfileRoute(onBack = { navController.popBackStack() })
         }
         composable<Destination.Pair> { entry ->
             val route = entry.toRoute<Destination.Pair>()
             PairRoute(
                 link = route.link,
                 onBack = { navController.popBackStack() },
-                onPaired = { if (!navController.popBackStack()) navController.navigateTopLevel(TopLevel.Feed) },
+                onPaired = { if (!navController.popBackStack() && signedIn) navController.navigateTopLevel(TopLevel.Feed) },
             )
         }
         composable<Destination.Feed> {
             FeedRoute(
+                profileLabel = label,
                 onOpenPullRequest = { pr -> navController.openPullRequest(pr) },
-                onOpenDesktop = { navController.navigateTopLevel(TopLevel.Desktop) },
+                onOpenProfiles = openProfiles,
             )
         }
         composable<Destination.Desktop> {
             DesktopRoute(
+                profileLabel = label,
                 onOpenPullRequest = { pr, tab -> navController.openPullRequest(pr, tab) },
                 onPairDesktop = { navController.navigate(Destination.Pair()) },
+                onOpenProfiles = openProfiles,
             )
         }
         composable<Destination.Settings> {
             SettingsRoute(
                 onPairDesktop = { navController.navigate(Destination.Pair()) },
                 onOpenDesktop = { navController.navigateTopLevel(TopLevel.Desktop) },
+                profilesSection = {
+                    ProfilesSettingsSection(
+                        onPairDesktop = { navController.navigate(Destination.Pair()) },
+                        onAddTokenProfile = { navController.navigate(Destination.AddTokenProfile) },
+                    )
+                },
             )
         }
         composable<Destination.PullRequest> { entry ->

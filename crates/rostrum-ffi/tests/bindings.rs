@@ -82,6 +82,26 @@ fn kotlin_bindings_generate_from_the_built_library() {
         "suspend fun `copyDesktopConfig`(): Settings",
         "data class DesktopConfigPreview",
         "val `changesAnything`: kotlin.Boolean",
+        // Profiles: one registry, a core per profile.
+        "open class ProfileRegistry",
+        "fun `open`(`rootDir`: kotlin.String): ProfileRegistry",
+        "fun `profiles`(): List<ProfileInfo>",
+        "fun `activeProfile`(): kotlin.String?",
+        "fun `setActiveProfile`(`id`: kotlin.String): ProfileInfo",
+        "suspend fun `core`(`id`: kotlin.String): RostrumCore",
+        "suspend fun `createTokenProfile`(`label`: kotlin.String): ProfileInfo",
+        "suspend fun `pairDesktopWithLink`(`uri`: kotlin.String, `deviceName`: kotlin.String): ProfilePairing",
+        "suspend fun `pairDesktopManual`(`host`: kotlin.String, `port`: kotlin.UShort, `fingerprint`: kotlin.String, `code`: kotlin.String, `deviceName`: kotlin.String): ProfilePairing",
+        "fun `renameProfile`(`id`: kotlin.String, `label`: kotlin.String): ProfileInfo",
+        "fun `setProfileLogin`(`id`: kotlin.String, `login`: kotlin.String?): ProfileInfo",
+        "suspend fun `removeProfile`(`id`: kotlin.String)",
+        "data class ProfileInfo",
+        "data class ProfilePairing",
+        "sealed class ProfileKind",
+        "val `fingerprintShort`: kotlin.String",
+        "val `githubLogin`: kotlin.String?",
+        "val `lastUsedMs`: kotlin.Long",
+        "class ProfileNotFound(",
         // Errors are one sealed class with a readable description.
         "sealed class RostrumException",
         "fun `describe`(): kotlin.String",
@@ -95,6 +115,23 @@ fn kotlin_bindings_generate_from_the_built_library() {
         assert!(
             kotlin.contains(expected),
             "generated Kotlin lacks {expected:?}"
+        );
+    }
+    // The Pair screen reads links and probes through the registry before any
+    // profile (and so any core) exists: both must be on the registry itself,
+    // not only on the core.
+    let registry = kotlin
+        .split("public interface ProfileRegistryInterface")
+        .nth(1)
+        .and_then(|rest| rest.split("\n}\n").next())
+        .expect("the registry's interface");
+    for expected in [
+        "fun `parsePairingLink`(`uri`: kotlin.String): PairingPreview",
+        "suspend fun `probeDesktop`(`host`: kotlin.String, `port`: kotlin.UShort): DesktopProbe",
+    ] {
+        assert!(
+            registry.contains(expected),
+            "ProfileRegistry lacks {expected:?}"
         );
     }
     // `close` is reserved for releasing the object; no method may shadow it.

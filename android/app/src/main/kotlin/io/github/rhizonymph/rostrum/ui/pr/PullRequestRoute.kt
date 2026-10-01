@@ -16,7 +16,7 @@ import io.github.rhizonymph.rostrum.data.model.PrRef
 import io.github.rhizonymph.rostrum.ui.common.CollectMessages
 import io.github.rhizonymph.rostrum.ui.common.LocalAppContainer
 import io.github.rhizonymph.rostrum.ui.common.dataOrNull
-import io.github.rhizonymph.rostrum.ui.common.rostrumViewModel
+import io.github.rhizonymph.rostrum.ui.common.profileViewModel
 import io.github.rhizonymph.rostrum.ui.components.ConfirmDialog
 import io.github.rhizonymph.rostrum.ui.navigation.PrTab
 import io.github.rhizonymph.rostrum.ui.pr.branch.BranchViewModel
@@ -45,8 +45,8 @@ fun PullRequestRoute(
     modifier: Modifier = Modifier,
 ) {
     val clock = LocalAppContainer.current.clock
-    val detailVm = rostrumViewModel(key = "pr-detail:$pr") { PrDetailViewModel(pr, it.backend, it.clock) }
-    val branchVm = rostrumViewModel(key = "pr-branch:$pr") { BranchViewModel(pr, it.backend) }
+    val detailVm = profileViewModel(key = "pr-detail:$pr") { container, profile -> PrDetailViewModel(pr, profile.backend, container.clock) }
+    val branchVm = profileViewModel(key = "pr-branch:$pr") { _, profile -> BranchViewModel(pr, profile.backend) }
     val state by detailVm.state.collectAsStateWithLifecycle()
     val branch by branchVm.state.collectAsStateWithLifecycle()
     CollectMessages(detailVm.messages.flow)

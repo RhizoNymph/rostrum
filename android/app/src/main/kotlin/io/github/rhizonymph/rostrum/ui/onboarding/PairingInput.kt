@@ -3,9 +3,6 @@ package io.github.rhizonymph.rostrum.ui.onboarding
 /** The port rostrumd's pairing API listens on by default. */
 const val DEFAULT_PAIRING_PORT = 8485
 
-/** The port of the desktop's pairing web page. */
-const val PAIRING_PAGE_PORT = 8484
-
 /** A pairing code as typed: letters and digits only, uppercased, at most 8, grouped `XXXX-XXXX`. */
 fun formatPairingCode(input: String): String {
     val raw = input.filter { it.isLetterOrDigit() }.uppercase().take(8)

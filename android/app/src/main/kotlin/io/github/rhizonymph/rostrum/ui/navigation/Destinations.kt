@@ -6,13 +6,17 @@ import kotlinx.serialization.Serializable
 /** Every screen the app navigates to, as a typed Navigation Compose route. */
 @Serializable
 sealed interface Destination {
-    /** First run: pair with the desktop, or paste a token. */
+    /** First run, or the active profile lost its token: pair with a desktop, or paste a token. */
     @Serializable
     data object SignIn : Destination
 
     /** Pairing. [link] is a `rostrum://pair?…` deep link to preview; `null` starts on the instructions. */
     @Serializable
     data class Pair(val link: String? = null) : Destination
+
+    /** A new profile for a pasted GitHub token (from the profile switcher or Settings). */
+    @Serializable
+    data object AddTokenProfile : Destination
 
     @Serializable
     data object Feed : Destination

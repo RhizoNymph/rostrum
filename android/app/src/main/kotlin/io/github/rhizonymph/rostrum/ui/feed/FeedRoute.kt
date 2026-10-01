@@ -13,7 +13,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import io.github.rhizonymph.rostrum.data.model.PrRef
 import io.github.rhizonymph.rostrum.ui.common.CollectMessages
 import io.github.rhizonymph.rostrum.ui.common.dataOrNull
-import io.github.rhizonymph.rostrum.ui.common.rostrumViewModel
+import io.github.rhizonymph.rostrum.ui.common.profileViewModel
 
 /**
  * The feed destination: binds [FeedViewModel] to [FeedScreen] and the filter
@@ -22,16 +22,17 @@ import io.github.rhizonymph.rostrum.ui.common.rostrumViewModel
  */
 @Composable
 fun FeedRoute(
+    profileLabel: String,
     onOpenPullRequest: (PrRef) -> Unit,
-    onOpenDesktop: () -> Unit,
+    onOpenProfiles: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val vm = rostrumViewModel { container ->
+    val vm = profileViewModel { container, profile ->
         FeedViewModel(
-            backend = container.backend,
-            session = container.session.state,
+            backend = profile.backend,
+            session = profile.session.state,
             clock = container.clock,
-            signOutAction = { container.session.signOut() },
+            signOutAction = { profile.session.signOut() },
         )
     }
     val state by vm.state.collectAsStateWithLifecycle()
@@ -43,10 +44,10 @@ fun FeedRoute(
     }
     BackHandler(enabled = state.search is SearchState.Open) { vm.closeSearch() }
 
-    val actions = remember(vm, onOpenPullRequest, onOpenDesktop) {
+    val actions = remember(vm, onOpenPullRequest, onOpenProfiles) {
         FeedActions(
             openPullRequest = onOpenPullRequest,
-            openDesktop = onOpenDesktop,
+            openProfiles = onOpenProfiles,
             refresh = vm::refresh,
             retry = vm::retry,
             toggleCollapsed = vm::toggleCollapsed,
@@ -73,7 +74,7 @@ fun FeedRoute(
         )
     }
 
-    FeedScreen(state, actions, modifier)
+    FeedScreen(state, actions, modifier, profileLabel)
 
     val filters = state.filters
     val preferences = state.feed.dataOrNull()?.preferences

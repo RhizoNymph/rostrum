@@ -27,6 +27,7 @@ import io.github.rhizonymph.rostrum.ui.common.UiState
 import io.github.rhizonymph.rostrum.ui.components.ConfirmDialog
 import io.github.rhizonymph.rostrum.ui.components.EmptyView
 import io.github.rhizonymph.rostrum.ui.components.ErrorView
+import io.github.rhizonymph.rostrum.ui.components.HeaderPill
 import io.github.rhizonymph.rostrum.ui.components.LoadingView
 import io.github.rhizonymph.rostrum.ui.components.PrimaryButton
 import io.github.rhizonymph.rostrum.ui.components.RostrumIconButton
@@ -38,7 +39,10 @@ import io.github.rhizonymph.rostrum.ui.theme.RostrumText
 import io.github.rhizonymph.rostrum.ui.theme.RostrumTheme
 import java.time.Instant
 
-/** The Desktop tab, stateless. [now] anchors the relative times. */
+/**
+ * The Desktop tab, stateless. [now] anchors the relative times; the header
+ * pill names the active profile ([profileLabel]) and opens the switcher.
+ */
 @Composable
 fun DesktopScreen(
     state: DesktopState,
@@ -47,6 +51,8 @@ fun DesktopScreen(
     onOpenPullRequest: (PrRef, PrTab) -> Unit,
     onPairDesktop: () -> Unit,
     modifier: Modifier = Modifier,
+    profileLabel: String? = null,
+    onOpenProfiles: () -> Unit = {},
 ) {
     val colors = RostrumTheme.colors
     var confirmUnpair by rememberSaveable { mutableStateOf(false) }
@@ -54,6 +60,14 @@ fun DesktopScreen(
     val machineName = (page as? DesktopPage.Loaded)?.content?.machine?.name ?: "the desktop"
     Column(modifier.fillMaxSize().background(colors.bg)) {
         ScreenHeader("Desktop") {
+            if (profileLabel != null) {
+                HeaderPill(
+                    label = profileLabel,
+                    description = "Profile $profileLabel. Switch profiles",
+                    onClick = onOpenProfiles,
+                    modifier = Modifier.padding(end = 2.dp),
+                )
+            }
             if (page is DesktopPage.Loaded || page is DesktopPage.Unreachable) {
                 DesktopMenu(
                     onRefresh = actions::refresh,

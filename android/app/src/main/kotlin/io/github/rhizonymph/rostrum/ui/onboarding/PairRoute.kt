@@ -11,8 +11,9 @@ import io.github.rhizonymph.rostrum.ui.common.rostrumViewModel
 
 /**
  * Pairing. [link] is a `rostrum://pair?…` deep link to preview, or `null`
- * for the instructions and manual entry. [onPaired] runs once pairing
- * succeeds (when it also signed the app in, the root has already moved on).
+ * for the instructions and manual entry. [onPaired] runs once pairing and
+ * its questions are done (when that switched profiles, the root has already
+ * moved on to the new profile's graph).
  */
 @Composable
 fun PairRoute(
@@ -22,14 +23,15 @@ fun PairRoute(
     modifier: Modifier = Modifier,
 ) {
     val viewModel = rostrumViewModel(key = "pair:${link.orEmpty()}") { container ->
-        PairViewModel(container.backend, container.session, link, container.onboardingHold, container.appMessages)
+        PairViewModel(container.profiles, link, container.appMessages)
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val paired by rememberUpdatedState(onPaired)
     LaunchedEffect(state.paired) {
         if (state.paired) paired()
     }
-    // Back on the copy question means "keep this phone's settings".
+    // Back on a question means its "no": stay on the current profile, keep the profile's settings.
+    BackHandler(enabled = state.switchOffer != null) { viewModel.stayOnCurrent() }
     BackHandler(enabled = state.copy != null) { viewModel.keepPhoneSettings() }
     PairScreen(state = state, actions = viewModel, onBack = onBack, modifier = modifier)
 }

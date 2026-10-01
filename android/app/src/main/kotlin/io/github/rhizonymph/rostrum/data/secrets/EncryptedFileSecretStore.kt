@@ -1,5 +1,6 @@
 package io.github.rhizonymph.rostrum.data.secrets
 
+import io.github.rhizonymph.rostrum.data.model.ProfileId
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -12,9 +13,10 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
 /**
- * One sealed file per secret under [directory] (app-private storage). Writes
- * go to a temp file and are renamed into place, so a crash never leaves half
- * a secret behind.
+ * One sealed file per secret, in one directory per profile under
+ * [directory] (app-private storage): `<directory>/<profile id>/<name>.sealed`.
+ * Writes go to a temp file and are renamed into place, so a crash never
+ * leaves half a secret behind.
  */
 class EncryptedFileSecretStore(
     private val directory: File,
@@ -23,11 +25,13 @@ class EncryptedFileSecretStore(
 ) : SecretStore {
     private val mutex = Mutex()
 
-    private fun fileOf(key: SecretKey) = File(directory, "${key.fileName}.sealed")
+    private fun dirOf(profile: ProfileId) = File(directory, profile.value)
 
-    override suspend fun read(key: SecretKey): SecretRead = withContext(io) {
+    private fun fileOf(profile: ProfileId, key: SecretKey) = File(dirOf(profile), "${key.fileName}.sealed")
+
+    override suspend fun read(profile: ProfileId, key: SecretKey): SecretRead = withContext(io) {
         mutex.withLock {
-            val file = fileOf(key)
+            val file = fileOf(profile, key)
             if (!file.exists()) return@withLock SecretRead.Absent
             val bytes = try {
                 file.readBytes()
@@ -49,18 +53,18 @@ class EncryptedFileSecretStore(
         }
     }
 
-    override suspend fun write(key: SecretKey, value: String): SecretWrite = withContext(io) {
+    override suspend fun write(profile: ProfileId, key: SecretKey, value: String): SecretWrite = withContext(io) {
         mutex.withLock {
             when (val sealed = cipher.seal(value.toByteArray(Charsets.UTF_8))) {
                 is CipherOutcome.Failed -> SecretWrite.Failed(SecretStoreError.KeystoreUnavailable(sealed.reason))
-                is CipherOutcome.Ok -> replace(key, SecretEnvelope.encode(sealed.value))
+                is CipherOutcome.Ok -> replace(profile, key, SecretEnvelope.encode(sealed.value))
             }
         }
     }
 
-    override suspend fun delete(key: SecretKey): SecretWrite = withContext(io) {
+    override suspend fun delete(profile: ProfileId, key: SecretKey): SecretWrite = withContext(io) {
         mutex.withLock {
-            val file = fileOf(key)
+            val file = fileOf(profile, key)
             if (!file.exists() || file.delete()) {
                 SecretWrite.Done
             } else {
@@ -69,12 +73,24 @@ class EncryptedFileSecretStore(
         }
     }
 
-    private fun replace(key: SecretKey, bytes: ByteArray): SecretWrite {
-        val target = fileOf(key)
-        val temp = File(directory, "${key.fileName}.tmp")
+    override suspend fun deleteProfile(profile: ProfileId): SecretWrite = withContext(io) {
+        mutex.withLock {
+            val dir = dirOf(profile)
+            if (!dir.exists() || dir.deleteRecursively()) {
+                SecretWrite.Done
+            } else {
+                SecretWrite.Failed(SecretStoreError.Io(null, "could not delete the secrets of profile $profile"))
+            }
+        }
+    }
+
+    private fun replace(profile: ProfileId, key: SecretKey, bytes: ByteArray): SecretWrite {
+        val dir = dirOf(profile)
+        val target = fileOf(profile, key)
+        val temp = File(dir, "${key.fileName}.tmp")
         return try {
-            if (!directory.exists() && !directory.mkdirs()) {
-                return SecretWrite.Failed(SecretStoreError.Io(key, "could not create ${directory.name}"))
+            if (!dir.exists() && !dir.mkdirs()) {
+                return SecretWrite.Failed(SecretStoreError.Io(key, "could not create ${dir.name}"))
             }
             temp.writeBytes(bytes)
             try {

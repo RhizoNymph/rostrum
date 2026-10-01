@@ -34,7 +34,7 @@ sealed interface CopySheetState {
         val changes: List<String> = emptyList(),
         val copy: ActionState = ActionState.Idle,
     ) : CopySheetState {
-        /** "2 repositories will be removed from this phone.", when any are. */
+        /** "2 repositories will be removed from this profile.", when any are. */
         val removalWarning: String? get() = DesktopConfigText.removalWarning(preview.removed.size)
     }
 }

@@ -15,7 +15,7 @@ import io.github.rhizonymph.rostrum.R
 import io.github.rhizonymph.rostrum.data.RostrumLog
 import io.github.rhizonymph.rostrum.ui.navigation.AppLinks
 
-/** Creates the channels and posts notifications that open the pull request. */
+/** Creates the channels and posts notifications that open the pull request in its profile. */
 class NotificationPoster(private val context: Context) {
     fun ensureChannels() {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
@@ -43,10 +43,12 @@ class NotificationPoster(private val context: Context) {
             RostrumLog.i(TAG, "notification_suppressed", "pr" to spec.pr, "reason" to "not permitted")
             return
         }
+        val tap = NotificationContent.tapExtras(spec)
         val open = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            putExtra(AppLinks.EXTRA_REPO, spec.pr.repo)
-            putExtra(AppLinks.EXTRA_NUMBER, spec.pr.number)
+            putExtra(AppLinks.EXTRA_REPO, tap.repo)
+            putExtra(AppLinks.EXTRA_NUMBER, tap.number)
+            putExtra(AppLinks.EXTRA_PROFILE, tap.profile)
         }
         val pending = open?.let {
             PendingIntent.getActivity(context, spec.id, it, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
@@ -62,7 +64,7 @@ class NotificationPoster(private val context: Context) {
             .build()
         try {
             NotificationManagerCompat.from(context).notify(spec.id, notification)
-            RostrumLog.i(TAG, "notification_posted", "pr" to spec.pr, "channel" to spec.channel.id)
+            RostrumLog.i(TAG, "notification_posted", "pr" to spec.pr, "profile" to spec.profile, "channel" to spec.channel.id)
         } catch (e: SecurityException) {
             RostrumLog.w(TAG, "notification_denied", "pr" to spec.pr, "reason" to e.message)
         }

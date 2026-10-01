@@ -18,17 +18,23 @@ import io.github.rhizonymph.rostrum.ui.components.ErrorView
 import io.github.rhizonymph.rostrum.ui.components.LoadingView
 
 /**
- * The feed, stateless: header, optional search field, filter chips, and the
- * repository cards under pull-to-refresh.
+ * The feed, stateless: header (with [profileLabel], the active profile, in
+ * its pill), optional search field, filter chips, and the repository cards
+ * under pull-to-refresh.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FeedScreen(state: FeedUiState, actions: FeedActions, modifier: Modifier = Modifier) {
+fun FeedScreen(
+    state: FeedUiState,
+    actions: FeedActions,
+    modifier: Modifier = Modifier,
+    profileLabel: String = "nymph-desk",
+) {
     val snapshot = state.feed.dataOrNull()
     Column(modifier.fillMaxSize()) {
         FeedHeader(
             openCount = snapshot?.visibleOpen,
-            desktop = state.desktop.view(),
+            desktop = state.desktop.view(profileLabel),
             filterActive = snapshot?.filterActive == true,
             filterCount = snapshot?.let { activeFilterCount(it.preferences) } ?: 0,
             searchOpen = state.search is SearchState.Open,

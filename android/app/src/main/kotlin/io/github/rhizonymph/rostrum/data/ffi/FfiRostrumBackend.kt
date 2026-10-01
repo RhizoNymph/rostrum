@@ -51,10 +51,16 @@ import uniffi.rostrum_ffi.FeedSnapshot as FfiFeedSnapshot
 /**
  * [RostrumBackend] over the generated `uniffi.rostrum_ffi` bindings. Each
  * method is one core call, its records mapped to the app's model and its
- * errors to [BackendError]. The core opens on the first call (see
- * [CoreHandle]); one instance per process.
+ * errors to [BackendError]. The core opens on the first call through
+ * [openCore] (see [CoreHandle]); the app has one instance per profile, over
+ * that profile's core from the registry.
+ *
+ * @param name says which core in logs.
  */
-class FfiRostrumBackend(dataDir: File) : RostrumBackend {
+class FfiRostrumBackend(name: String, openCore: CoreOpener) : RostrumBackend {
+    /** A standalone core in [dataDir], outside any registry (the host tests). */
+    constructor(dataDir: File) : this(dataDir.name, CoreHandle.inDirectory(dataDir))
+
     private val updates = MutableSharedFlow<FeedSnapshot>(
         replay = 1,
         extraBufferCapacity = 16,
@@ -69,7 +75,7 @@ class FfiRostrumBackend(dataDir: File) : RostrumBackend {
         }
     }
 
-    private val handle = CoreHandle(dataDir, onOpened = { core ->
+    private val handle = CoreHandle(name, openCore, onOpened = { core ->
         ffiCall("setFeedObserver") { core.setFeedObserver(observer) }
             .onFailure { RostrumLog.w(CORE_LOG_TAG, "feed_observer_failed", "error" to it::class.simpleName) }
     })

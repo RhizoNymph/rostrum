@@ -48,6 +48,7 @@ fun SettingsScreen(
     onPairDesktop: () -> Unit,
     modifier: Modifier = Modifier,
     onCopySettings: () -> Unit = {},
+    profilesSection: @Composable () -> Unit = {},
 ) {
     val colors = RostrumTheme.colors
     var confirmSignOut by rememberSaveable { mutableStateOf(false) }
@@ -56,12 +57,14 @@ fun SettingsScreen(
         ScreenHeader("Settings")
         when (val content = state.content) {
             UiState.Loading -> LoadingView(label = "Loading settings")
-            is UiState.Error -> ErrorView(
-                content.error,
-                modifier = Modifier.padding(horizontal = 12.dp),
-                title = "Couldn't load settings",
-                onRetry = actions::retry,
-            )
+            is UiState.Error -> Column(
+                Modifier.padding(horizontal = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                // A profile whose settings can't be read can still be switched away from or removed.
+                profilesSection()
+                ErrorView(content.error, title = "Couldn't load settings", onRetry = actions::retry)
+            }
             is UiState.Loaded -> {
                 val data = content.data
                 Column(
@@ -71,6 +74,7 @@ fun SettingsScreen(
                         .padding(horizontal = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                 ) {
+                    profilesSection()
                     AccountCard(
                         account = data.account,
                         desktopName = (data.desktop as? DesktopSummary.Connected)?.machine?.name,
@@ -112,7 +116,7 @@ fun SettingsScreen(
     if (confirmSignOut) {
         ConfirmDialog(
             title = "Sign out of GitHub?",
-            body = "Rostrum forgets the token on this phone. Your repositories and the desktop pairing are kept.",
+            body = "Rostrum forgets this profile's token on this phone. Its repositories and desktop pairing are kept.",
             confirmLabel = "Sign out",
             destructive = true,
             onConfirm = {

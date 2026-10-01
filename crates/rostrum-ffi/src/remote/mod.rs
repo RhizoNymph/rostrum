@@ -85,6 +85,53 @@ impl CoreState {
     }
 }
 
+/// What a pairing link says. Shared by `RostrumCore` and `ProfileRegistry`,
+/// which reads links before any profile (and so any core) exists.
+pub(crate) fn pairing_preview(uri: &str) -> Result<PairingPreview, RostrumError> {
+    let offer = PairingOffer::from_uri(uri).map_err(invalid)?;
+    Ok(convert::preview(&offer))
+}
+
+/// Ask a desktop by address who it is and which certificate it presents,
+/// trusting nothing. Shared by `RostrumCore` and `ProfileRegistry`.
+pub(crate) async fn probe_desktop_at(host: &str, port: u16) -> Result<DesktopProbe, RostrumError> {
+    let host: Host = host.trim().parse().map_err(invalid)?;
+    if port == 0 {
+        return Err(RostrumError::invalid("port 0 is not a port"));
+    }
+    let found = probe(&[host], port).await?;
+    Ok(DesktopProbe {
+        machine: found.hello.machine,
+        api_version: found.hello.api_version,
+        compatible: found.hello.api_version == API_VERSION,
+        host: found.host.to_string(),
+        port,
+        fingerprint: found.fingerprint.to_base64url(),
+        fingerprint_short: found.fingerprint.short(),
+    })
+}
+
+/// The endpoint and code a `rostrum://pair` link carries.
+pub(crate) fn link_offer(uri: &str) -> Result<(Endpoint, PairingCode), RostrumError> {
+    let offer = PairingOffer::from_uri(uri).map_err(invalid)?;
+    Ok((offer.endpoint, offer.code))
+}
+
+/// The endpoint and code of a desktop typed in by address, pinned to the
+/// fingerprint `probe_desktop` reported.
+pub(crate) fn manual_offer(
+    host: &str,
+    port: u16,
+    fingerprint: &str,
+    code: &str,
+) -> Result<(Endpoint, PairingCode), RostrumError> {
+    let host: Host = host.trim().parse().map_err(invalid)?;
+    let fingerprint = CertFingerprint::from_base64url(fingerprint.trim()).map_err(invalid)?;
+    let endpoint = Endpoint::new(vec![host], port, fingerprint).map_err(invalid)?;
+    let code = PairingCode::parse(code).map_err(invalid)?;
+    Ok((endpoint, code))
+}
+
 fn invalid(error: impl std::fmt::Display) -> RostrumError {
     RostrumError::invalid(error.to_string())
 }
@@ -100,7 +147,7 @@ fn github_token(handover: &GitHubHandover) -> DesktopGitHubToken {
 impl RostrumCore {
     /// Check the desktop speaks this protocol, exchange the code for a device
     /// token, and make the desktop this session's remote.
-    async fn pair(
+    pub(crate) async fn pair(
         &self,
         endpoint: Endpoint,
         code: PairingCode,
@@ -196,8 +243,7 @@ impl RostrumCore {
     /// Read a `rostrum://pair?…` link (from a QR code) without contacting
     /// anything.
     pub fn parse_pairing_link(&self, uri: String) -> Result<PairingPreview, RostrumError> {
-        let offer = PairingOffer::from_uri(&uri).map_err(invalid)?;
-        Ok(convert::preview(&offer))
+        pairing_preview(&uri)
     }
 
     /// Pair using a link: checks the desktop's protocol version, exchanges
@@ -220,20 +266,7 @@ impl RostrumCore {
         host: String,
         port: u16,
     ) -> Result<DesktopProbe, RostrumError> {
-        let host: Host = host.trim().parse().map_err(invalid)?;
-        if port == 0 {
-            return Err(RostrumError::invalid("port 0 is not a port"));
-        }
-        let found = probe(&[host], port).await?;
-        Ok(DesktopProbe {
-            machine: found.hello.machine,
-            api_version: found.hello.api_version,
-            compatible: found.hello.api_version == API_VERSION,
-            host: found.host.to_string(),
-            port,
-            fingerprint: found.fingerprint.to_base64url(),
-            fingerprint_short: found.fingerprint.short(),
-        })
+        probe_desktop_at(&host, port).await
     }
 
     /// Pair by address and typed code, pinned to the `fingerprint` from
@@ -247,10 +280,7 @@ impl RostrumCore {
         code: String,
         device_name: String,
     ) -> Result<PairingResult, RostrumError> {
-        let host: Host = host.trim().parse().map_err(invalid)?;
-        let fingerprint = CertFingerprint::from_base64url(fingerprint.trim()).map_err(invalid)?;
-        let endpoint = Endpoint::new(vec![host], port, fingerprint).map_err(invalid)?;
-        let code = PairingCode::parse(&code).map_err(invalid)?;
+        let (endpoint, code) = manual_offer(&host, port, &fingerprint, &code)?;
         self.pair(endpoint, code, device_name).await
     }
 

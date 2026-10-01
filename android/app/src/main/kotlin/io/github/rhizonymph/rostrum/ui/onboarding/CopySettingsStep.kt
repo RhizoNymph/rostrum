@@ -19,6 +19,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import io.github.rhizonymph.rostrum.data.describe
 import io.github.rhizonymph.rostrum.data.model.DesktopConfigPreview
+import io.github.rhizonymph.rostrum.data.model.ProfileId
 import io.github.rhizonymph.rostrum.ui.common.ActionState
 import io.github.rhizonymph.rostrum.ui.common.running
 import io.github.rhizonymph.rostrum.ui.components.FieldError
@@ -30,9 +31,9 @@ import io.github.rhizonymph.rostrum.ui.theme.RostrumText
 import io.github.rhizonymph.rostrum.ui.theme.RostrumTheme
 
 /**
- * The question after pairing: take the desktop's repositories and feed
- * settings, or keep this phone's. Shown only when copying would change
- * something.
+ * The question after pairing a desktop into a new profile: take the
+ * desktop's repositories and feed settings, or keep the profile's. Shown
+ * only when copying would change something.
  */
 @Composable
 fun CopySettingsStep(offer: CopyOffer, actions: PairActions, modifier: Modifier = Modifier) {
@@ -53,7 +54,7 @@ fun CopySettingsStep(offer: CopyOffer, actions: PairActions, modifier: Modifier 
                 modifier = Modifier.semantics { heading() },
             )
             Text(
-                "Paired with $machine. Use its repositories and feed settings on this phone too? " +
+                "Paired with $machine. Use its repositories and feed settings in this profile too? " +
                     "You can do this later from Settings.",
                 style = RostrumText.body,
                 color = colors.textSecondary,
@@ -73,7 +74,7 @@ fun CopySettingsStep(offer: CopyOffer, actions: PairActions, modifier: Modifier 
                 busy = offer.action.running,
                 height = 48.dp,
             )
-            TextPillButton("Keep this phone's", actions::keepPhoneSettings, enabled = !offer.action.running)
+            TextPillButton("Not now", actions::keepPhoneSettings, enabled = !offer.action.running)
         }
     }
 }
@@ -84,6 +85,7 @@ private fun CopySettingsStepPreview() {
     RostrumTheme {
         CopySettingsStep(
             CopyOffer(
+                ProfileId.of("preview")!!,
                 DesktopConfigPreview(
                     machine = "framework",
                     repos = listOf("RhizoNymph/rostrum", "zed-industries/zed", "serde-rs/serde"),
