@@ -74,6 +74,8 @@ detail header, avoiding a fan-out of per-PR requests:
 ```graphql
 viewer { login avatarUrl }
 repository(owner: $owner, name: $name) {
+  pushedAt createdAt updatedAt stargazerCount
+  owner { __typename login }
   pullRequests(states: OPEN, first: 50,
                orderBy: {field: UPDATED_AT, direction: DESC}) {
     nodes {
@@ -91,8 +93,11 @@ repository(owner: $owner, name: $name) {
       labels(first: 10) { nodes { name color } }
       comments { totalCount }
       commits(last: 1) { nodes { commit {
-        statusCheckRollup { state }
+        committedDate statusCheckRollup { state }
       } } }
+      timelineItems(last: 1, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
+        nodes { ... on HeadRefForcePushedEvent { createdAt } }
+      }
     }
   }
 }
@@ -116,6 +121,14 @@ Open issues are a second document per repository in the same cycle,
 `OPEN_ISSUES`, with its own overlap guard (`pending_issues`) and its own
 `LoadState`; a selected issue's detail is `ISSUE_DETAIL`. Both are described
 in `docs/features/issues.md`.
+
+The repository's `pushedAt`/`createdAt`/`updatedAt`/`stargazerCount`/`owner`,
+each pull request's head `committedDate`, and its newest force push exist for
+the feed's sorts: they decode into `RepoPullRequests::meta` and
+`PullRequest::pushed_at` (the later of the commit date and the force push —
+see `docs/features/feed_sort.md` for why both). All are optional on the wire,
+so an older response still decodes. Verified live at cost 1 with 25 pull
+requests.
 
 The conversation timeline for a selected PR is a second, deeper query issued
 lazily on selection (comments, reviews with bodies, review threads with their
@@ -325,8 +338,8 @@ partial failure is interpreted.
 SQLite via `sqlx`, at `~/.local/share/rostrum/cache.db`. The crate draws a hard
 line between two kinds of data, and the distinction is load-bearing:
 
-- **Cache** (`cache_pull_request`, `cache_conversation`, `cache_http`,
-  `cache_issue`, `cache_issue_detail`) — copies
+- **Cache** (`cache_pull_request`, `cache_repo_meta`, `cache_conversation`,
+  `cache_http`, `cache_issue`, `cache_issue_detail`) — copies
   of things GitHub already knows. Disposable. A schema-version mismatch drops
   and recreates these tables; corrupt JSON in a row is logged, deleted, and
   treated as a miss.
@@ -432,6 +445,8 @@ Two rules that matter in practice:
 | `crates/rostrum-core/src/probe.rs` | `MergeProbeBudget`, `needs_merge_probe` |
 | `crates/rostrum-db/src/files.rs` | Changed files cached per head sha |
 | `crates/rostrum-db/src/baseline.rs` | The notification seen set |
+| `crates/rostrum-db/src/repo_meta.rs` | Repository metadata cached for the feed's sorts |
+| `crates/rostrum-github/src/graphql/sort_fields.rs` | Wire types for the sort fields, `head_pushed_at`, live-capture tests |
 
 ## Testing
 

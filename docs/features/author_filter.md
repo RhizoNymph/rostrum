@@ -21,8 +21,9 @@ restarts.
   [What "involved" means](#what-involved-means).
 - Filtering by anything other than a person — labels and repositories are
   reached through the search box and the repo panel respectively.
-- Sorting the feed. The roster is ordered by recency; the feed itself is not
-  touched by this feature.
+- Sorting the feed. The roster is ordered by recency; the feed's own order is
+  `feed_sort`, which persists through the same `feed_filter`/`absorb_filter`
+  pair described below.
 
 ## Data model
 
@@ -185,6 +186,8 @@ is unbounded and would cost a cap and a round trip per busy pull request.
 | `authors` | yes | Same, and expensive to re-pick by hand. |
 | `include_involved` | yes | Same. |
 | `autostash` | yes | A working habit, not a per-pull-request choice. |
+| `repo_sort`, `item_sort` | yes | How the feed is ordered; a preference, not a filter — it survives "clear". See `feed_sort.md`. |
+| `feed_tab` | yes | Which list the feed shows. It lives on `AppState.tab`, not `FeedFilter`, so `Store::set_tab` writes it rather than `absorb_filter` — into the same file; saving one never resets the other. See `issues.md`. |
 | `query` | **no** | A search is something you are part-way through, not a preference. Restoring one would open the app onto a narrowed feed for a reason the user no longer remembers. |
 
 `Config::feed_filter()` builds the startup filter and `Config::absorb_filter()`

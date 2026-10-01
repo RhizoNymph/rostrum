@@ -136,6 +136,7 @@ mod tests {
             comment_count: 0,
             checks: None,
             base_divergence: None,
+            pushed_at: None,
         }
     }
 

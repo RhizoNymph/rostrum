@@ -9,8 +9,8 @@ use std::collections::HashMap;
 
 use chrono::Utc;
 use rostrum_core::{
-    FeedFilter, FeedRow, LoadState, PullRequest, RepoId, RepoState, User, carry_forward_divergence,
-    flatten,
+    FeedFilter, FeedOrder, FeedRow, LoadState, PullRequest, RepoId, RepoMeta, RepoState, User,
+    carry_forward_divergence, flatten_in,
 };
 use rostrum_github::GitHubError;
 
@@ -24,6 +24,8 @@ use crate::{
 pub(crate) struct Fetched {
     pub prs: Vec<PullRequest>,
     pub viewer: Option<User>,
+    /// The repository's own facts, which `flatten` sorts repositories by.
+    pub meta: Option<RepoMeta>,
 }
 
 /// What applying a fetch did.
@@ -113,6 +115,10 @@ impl FeedState {
                     );
                 }
                 state.prs = fetched.prs;
+                // Keep the last known metadata through an answer without it.
+                if fetched.meta.is_some() {
+                    state.meta = fetched.meta;
+                }
                 state.load = LoadState::Loaded { at: Utc::now() };
                 Applied::Loaded
             }
@@ -222,7 +228,10 @@ impl FeedState {
 
     /// The feed as Kotlin renders it.
     pub(crate) fn snapshot(&self, viewer: Option<&User>, settling: bool) -> FeedSnapshot {
-        let feed = flatten(&self.repos, &self.filter);
+        // The phone keeps the user's own repository order (they arrange it
+        // in settings) and the fetched item order until it has a sort
+        // control; the desktop's `flatten` applies the persisted sort.
+        let feed = flatten_in(&self.repos, &self.filter, FeedOrder::AsListed);
         let viewer_key = viewer.map(User::key);
 
         let mut sections: Vec<RepoSection> = Vec::new();
@@ -371,7 +380,15 @@ mod tests {
         let id = repo_id(name);
         let seq = state.begin_fetch(&id).expect("watched");
         assert_eq!(
-            state.apply_fetch(&id, seq, Ok(Fetched { prs, viewer: None })),
+            state.apply_fetch(
+                &id,
+                seq,
+                Ok(Fetched {
+                    prs,
+                    viewer: None,
+                    meta: None,
+                })
+            ),
             Applied::Loaded
         );
     }
@@ -463,6 +480,7 @@ mod tests {
         let fetched = |numbers: &[u32]| Fetched {
             prs: numbers.iter().copied().map(pull).collect(),
             viewer: None,
+            meta: None,
         };
         assert_eq!(
             state.apply_fetch(&id, newer, Ok(fetched(&[2]))),

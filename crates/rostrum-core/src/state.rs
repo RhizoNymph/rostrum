@@ -6,6 +6,7 @@ use crate::{
     feed::FeedFilter,
     issue::{Issue, IssueNumber},
     model::{Divergence, PrNumber, PullRequest, RepoId},
+    repo_meta::RepoMeta,
     tabs::FeedTab,
 };
 
@@ -57,6 +58,10 @@ pub struct RepoState {
     /// Collapsing is per repository, not per tab: it hides the repository's
     /// body on both.
     pub collapsed: bool,
+    /// The repository's own facts — owner, push and creation times, stars —
+    /// for sorting repositories. `None` until the first refresh or cache
+    /// read supplies them; the sort places unknown values last.
+    pub meta: Option<RepoMeta>,
 }
 
 impl RepoState {
@@ -68,6 +73,7 @@ impl RepoState {
             issues: Vec::new(),
             issues_load: LoadState::Idle,
             collapsed: false,
+            meta: None,
         }
     }
 }
@@ -244,6 +250,7 @@ mod tests {
                 comment_count: 0,
                 checks: None,
                 base_divergence: None,
+                pushed_at: None,
             })
             .collect();
         state.load = LoadState::Loaded { at: Utc::now() };

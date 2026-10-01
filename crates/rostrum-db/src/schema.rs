@@ -30,6 +30,7 @@ pub(crate) const CACHE_TABLES: &[&str] = &[
     "cache_http",
     "cache_issue",
     "cache_issue_detail",
+    "cache_repo_meta",
 ];
 
 const CREATE_META: &str = "\
@@ -112,6 +113,15 @@ CREATE TABLE IF NOT EXISTS cache_issue_detail (
     PRIMARY KEY (repo, number)
 )",
     "CREATE INDEX IF NOT EXISTS cache_issue_detail_age ON cache_issue_detail (updated_at)",
+    // Added without a version bump: `IF NOT EXISTS` creates it on the next
+    // open of an existing database, and nothing already cached is invalid.
+    "\
+CREATE TABLE IF NOT EXISTS cache_repo_meta (
+    repo       TEXT PRIMARY KEY,
+    payload    TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)",
+    "CREATE INDEX IF NOT EXISTS cache_repo_meta_age ON cache_repo_meta (updated_at)",
 ];
 
 /// Bring an open database up to the current schema.

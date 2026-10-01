@@ -133,6 +133,12 @@ contributes header and spacer — and differ only in which list and which load
 state they read. `Feed` remembers its tab and compares by it, so switching
 between two streams of identical notice rows still rebuilds.
 
+The feed's sort applies on this tab too (see `docs/features/feed_sort.md`):
+repositories in the repository sort, issues within each in the **item** sort
+the pull requests use (`order_issues`). Issues have no branch, so the
+**pushed** key orders them by `updatedAt`. Repository "updated" counts open
+issues as well as pull requests.
+
 `FeedFilter::accepts_issue` applies the search (title, number, author, labels,
 milestone) and the author selection; `hide_drafts` does not apply and the
 drafts button is hidden on the Issues tab. The filter bar's "N of M shown",
@@ -266,7 +272,9 @@ stays, with GitHub's reason, and nothing typed is lost.
 - **No blank titles or comments reach GitHub** — `IssueTitle` and
   `CommentBody` cannot be built blank.
 - **`feed_tab` round-trips through the config** and an unknown value never
-  costs the rest of the file.
+  costs the rest of the file. It is saved alongside `repo_sort`/`item_sort`,
+  and the tab and the sort both survive a restart together.
+- **Issues follow the item sort**; "pushed" on an issue is its "updated".
 - **Cache tables are additive.** `cache_issue` and `cache_issue_detail` are
   created `IF NOT EXISTS` on every open, so they appeared without a schema
   bump and the cached pull requests survived. Both are pruned like the rest of
@@ -316,7 +324,11 @@ stays, with GitHub's reason, and nothing typed is lost.
   created-issue and assignee responses.
 - **Draft rules**: repository and title required, the request body, and
   switching repository.
-- **Config** round trip of `feed_tab`, an older file, and an unknown value.
+- **Config** round trip of `feed_tab`, an older file, and an unknown value;
+  the tab and the sort round-tripping together.
+- **Sorting** (`sort/tests/issues.rs`): every item key over issues, "pushed"
+  falling back to "updated", unknown authors last, ties by number, repository
+  "updated" counting issues, and the Issues tab under both sorts.
 - **Cache** round trips of issue lists and details, replacement, scoping,
   corruption-as-miss, and pruning.
 - **Navigation** on the Issues tab and across tabs, and identity selection

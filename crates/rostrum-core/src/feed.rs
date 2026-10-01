@@ -12,6 +12,7 @@ use std::collections::BTreeSet;
 use crate::{
     issue::Issue,
     model::{LoginKey, PullRequest},
+    sort::{FeedOrder, FeedSort, order_issues, order_items, order_repos},
     state::{LoadState, RepoState},
     tabs::FeedTab,
 };
@@ -121,6 +122,13 @@ pub struct FeedFilter {
     /// `authors` is empty, which is what lets it be a plain checkbox rather
     /// than a third selection mode.
     pub include_involved: bool,
+    /// How repositories, and the items within each, are ordered.
+    ///
+    /// Not a filter — it never hides anything, and [`FeedFilter::is_active`]
+    /// ignores it — but it lives here because it is the same kind of
+    /// standing feed preference and persists through the same
+    /// `feed_filter`/`absorb_filter` pair. A "clear filter" must keep it.
+    pub sort: FeedSort,
 }
 
 impl Default for FeedFilter {
@@ -131,6 +139,7 @@ impl Default for FeedFilter {
             hide_empty_repos: true,
             authors: BTreeSet::new(),
             include_involved: false,
+            sort: FeedSort::default(),
         }
     }
 }
@@ -177,6 +186,15 @@ impl FeedFilter {
 
     pub fn is_active(&self) -> bool {
         !self.query.is_empty() || self.hide_drafts || !self.authors.is_empty()
+    }
+
+    /// Every filter reset to its default, keeping the sort: clearing what is
+    /// hidden says nothing about the order of what is shown.
+    pub fn cleared(&self) -> Self {
+        Self {
+            sort: self.sort,
+            ..Self::default()
+        }
     }
 
     /// Add or remove a login from the selection, reporting the state it landed
@@ -253,55 +271,104 @@ impl Feed {
     }
 }
 
-/// Build the pull request feed's row stream.
+/// Build the pull request feed's row stream, in the order `filter.sort` asks
+/// for.
 ///
 /// Pure: the only inputs are state and filter, which makes every invariant
 /// below directly testable without a window.
+///
+/// Repositories appear in `filter.sort.repos` order and items within each in
+/// `filter.sort.items` order. Indices stay positional — a `RepoIx` still
+/// indexes `repos` — so sorting changes which order rows come in, never what
+/// a row points at.
 pub fn flatten(repos: &[RepoState], filter: &FeedFilter) -> Feed {
     flatten_tab(repos, filter, FeedTab::PullRequests)
 }
 
-/// Build the row stream for one tab.
+/// [`flatten`] in an explicit order.
+///
+/// [`FeedOrder::AsListed`] is for a client that orders the feed itself — the
+/// Android core keeps the user's own repository order and the fetched item
+/// order until it grows a sort control of its own.
+pub fn flatten_in(repos: &[RepoState], filter: &FeedFilter, order: FeedOrder) -> Feed {
+    flatten_tab_in(repos, filter, FeedTab::PullRequests, order)
+}
+
+/// Build the row stream for one tab, in the order `filter.sort` asks for.
 ///
 /// Both tabs share every rule — container runs, hiding empty repositories,
-/// collapse, the loading/error/empty notices — and differ only in which list
-/// of a repository they read and which [`LoadState`] governs it. Issues have
-/// their own load state, so a repository whose issues failed while its pull
-/// requests loaded shows the error on the Issues tab alone.
+/// collapse, the loading/error/empty notices, the sort — and differ only in
+/// which list of a repository they read and which [`LoadState`] governs it.
+/// Issues have their own load state, so a repository whose issues failed
+/// while its pull requests loaded shows the error on the Issues tab alone.
+/// Issues are ordered by the same item sort as pull requests; see
+/// [`crate::sort::issue_sort_value`] for the one key that differs.
 pub fn flatten_tab(repos: &[RepoState], filter: &FeedFilter, tab: FeedTab) -> Feed {
+    flatten_tab_in(repos, filter, tab, FeedOrder::Sorted(filter.sort))
+}
+
+/// [`flatten_tab`] in an explicit order.
+pub fn flatten_tab_in(
+    repos: &[RepoState],
+    filter: &FeedFilter,
+    tab: FeedTab,
+    order: FeedOrder,
+) -> Feed {
     let mut rows = Vec::new();
     let mut hidden_repos = 0;
 
-    for (ix, repo) in repos.iter().enumerate() {
-        let repo_ix = RepoIx(ix);
+    let repo_order = match order {
+        FeedOrder::AsListed => (0..repos.len()).map(RepoIx).collect(),
+        FeedOrder::Sorted(sort) => order_repos(repos, sort.repos),
+    };
+
+    for repo_ix in repo_order {
+        let repo = &repos[repo_ix.0];
 
         let (visible, load, holds_any): (Vec<FeedRow>, &LoadState, bool) = match tab {
-            FeedTab::PullRequests => (
-                repo.prs
+            FeedTab::PullRequests => {
+                let mut visible: Vec<PrIx> = repo
+                    .prs
                     .iter()
                     .enumerate()
                     .filter(|(_, pr)| filter.accepts(pr))
-                    .map(|(pr_ix, _)| FeedRow::PrRow {
-                        repo: repo_ix,
-                        pr: PrIx(pr_ix),
-                    })
-                    .collect(),
-                &repo.load,
-                !repo.prs.is_empty(),
-            ),
-            FeedTab::Issues => (
-                repo.issues
+                    .map(|(pr_ix, _)| PrIx(pr_ix))
+                    .collect();
+                if let FeedOrder::Sorted(sort) = order {
+                    order_items(&repo.prs, &mut visible, sort.items);
+                }
+                (
+                    visible
+                        .into_iter()
+                        .map(|pr| FeedRow::PrRow { repo: repo_ix, pr })
+                        .collect(),
+                    &repo.load,
+                    !repo.prs.is_empty(),
+                )
+            }
+            FeedTab::Issues => {
+                let mut visible: Vec<IssueIx> = repo
+                    .issues
                     .iter()
                     .enumerate()
                     .filter(|(_, issue)| filter.accepts_issue(issue))
-                    .map(|(issue_ix, _)| FeedRow::IssueRow {
-                        repo: repo_ix,
-                        issue: IssueIx(issue_ix),
-                    })
-                    .collect(),
-                &repo.issues_load,
-                !repo.issues.is_empty(),
-            ),
+                    .map(|(issue_ix, _)| IssueIx(issue_ix))
+                    .collect();
+                if let FeedOrder::Sorted(sort) = order {
+                    order_issues(&repo.issues, &mut visible, sort.items);
+                }
+                (
+                    visible
+                        .into_iter()
+                        .map(|issue| FeedRow::IssueRow {
+                            repo: repo_ix,
+                            issue,
+                        })
+                        .collect(),
+                    &repo.issues_load,
+                    !repo.issues.is_empty(),
+                )
+            }
         };
 
         // A repository is only hidden once it has actually loaded. One that is
@@ -347,6 +414,13 @@ mod tests {
     };
     use chrono::Utc;
 
+    /// One fixed instant for every fixture pull request: the feed sorts by
+    /// creation time, and `Utc::now()` per call would make the order of
+    /// otherwise-identical fixtures depend on the clock.
+    fn fixed_time() -> chrono::DateTime<Utc> {
+        chrono::DateTime::from_timestamp(1_700_000_000, 0).expect("valid timestamp")
+    }
+
     fn pr(number: u32, draft: bool) -> PullRequest {
         PullRequest {
             number: PrNumber(number),
@@ -354,8 +428,8 @@ mod tests {
             title: format!("PR {number}"),
             url: String::new(),
             is_draft: draft,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            created_at: fixed_time(),
+            updated_at: fixed_time(),
             author: None,
             head_ref: "feature".into(),
             head_sha: "abc123".into(),
@@ -372,6 +446,7 @@ mod tests {
             comment_count: 0,
             checks: None,
             base_divergence: None,
+            pushed_at: None,
         }
     }
 
