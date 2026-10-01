@@ -15,9 +15,9 @@ use chrono::Utc;
 use gpui::{Context, Task};
 use gpui_tokio::Tokio;
 use rostrum_core::{
-    AppState, AuthorEntry, Divergence, FeedFilter, LoadState, LoginKey, MergeProbeBudget,
-    PrNumber, PullRequest, RepoId, RepoState, User, apply_divergences, carry_forward_divergence,
-    divergence_query, needs_merge_probe, roster,
+    AppState, AuthorEntry, Divergence, FeedFilter, ItemSortKey, LoadState, LoginKey,
+    MergeProbeBudget, PrNumber, PullRequest, RepoId, RepoMeta, RepoSortKey, RepoState, User,
+    apply_divergences, carry_forward_divergence, divergence_query, needs_merge_probe, roster,
 };
 use rostrum_db::Db;
 use rostrum_git::{Autostash, BranchName};
@@ -140,6 +140,13 @@ fn summarise<'a>(results: impl Iterator<Item = &'a LocalResult>) -> SyncSummary 
     summary
 }
 
+/// One repository's worth of the local cache, read at startup.
+struct CachedRepo {
+    id: RepoId,
+    prs: Vec<PullRequest>,
+    meta: Option<RepoMeta>,
+}
+
 pub struct Store {
     pub config: Config,
     pub state: AppState,
@@ -234,10 +241,11 @@ impl Store {
             let opened = Tokio::spawn(&*cx, async move {
                 let db = Db::open(&path).await?;
                 let mut cached = Vec::new();
-                for repo in repos {
-                    let prs = db.load_pull_requests(&repo).await?;
-                    if !prs.is_empty() {
-                        cached.push((repo, prs));
+                for id in repos {
+                    let prs = db.load_pull_requests(&id).await?;
+                    let meta = db.load_repo_meta(&id).await?;
+                    if !prs.is_empty() || meta.is_some() {
+                        cached.push(CachedRepo { id, prs, meta });
                     }
                 }
                 Ok::<_, rostrum_db::DbError>((db, cached))
@@ -257,22 +265,22 @@ impl Store {
         }));
     }
 
-    fn hydrate(
-        &mut self,
-        db: Arc<Db>,
-        cached: Vec<(RepoId, Vec<PullRequest>)>,
-        cx: &mut Context<Self>,
-    ) {
+    fn hydrate(&mut self, db: Arc<Db>, cached: Vec<CachedRepo>, cx: &mut Context<Self>) {
         self.db = Some(db);
 
-        for (id, prs) in cached {
+        for CachedRepo { id, prs, meta } in cached {
+            let Some(repo) = self.state.repo_mut(&id) else {
+                continue;
+            };
             // Never clobber data that already arrived from the network: the
             // cache is only ever used to fill a gap.
-            if let Some(repo) = self.state.repo_mut(&id)
-                && repo.prs.is_empty()
-            {
+            if repo.prs.is_empty() && !prs.is_empty() {
                 tracing::debug!(repo = %id, count = prs.len(), "restored from cache");
                 repo.prs = prs;
+            }
+            if repo.meta.is_none() && meta.is_some() {
+                tracing::debug!(repo = %id, "restored repository metadata from cache");
+                repo.meta = meta;
             }
         }
         cx.notify();
@@ -354,9 +362,33 @@ impl Store {
     ///
     /// A "clear" that left the selection behind would be the worst of both: a
     /// feed still narrowed, by the control the user just told to stop narrowing
-    /// it.
+    /// it. The sort is kept: it hides nothing, so it is not what "clear" is
+    /// for.
     pub fn clear_filter(&mut self, cx: &mut Context<Self>) {
-        self.edit_filter(|filter| *filter = FeedFilter::default(), cx);
+        self.edit_filter(|filter| *filter = filter.cleared(), cx);
+    }
+
+    /// Order repositories by `key`. A different key arrives in its default
+    /// direction; see [`rostrum_core::Sort::choose`].
+    pub fn choose_repo_sort(&mut self, key: RepoSortKey, cx: &mut Context<Self>) {
+        self.edit_filter(|filter| filter.sort.repos.choose(key), cx);
+        tracing::debug!(sort = %self.state.filter.sort.repos.summary(), "repository sort changed");
+    }
+
+    pub fn reverse_repo_sort(&mut self, cx: &mut Context<Self>) {
+        self.edit_filter(|filter| filter.sort.repos.reverse(), cx);
+        tracing::debug!(sort = %self.state.filter.sort.repos.summary(), "repository sort changed");
+    }
+
+    /// Order the items within each repository by `key`.
+    pub fn choose_item_sort(&mut self, key: ItemSortKey, cx: &mut Context<Self>) {
+        self.edit_filter(|filter| filter.sort.items.choose(key), cx);
+        tracing::debug!(sort = %self.state.filter.sort.items.summary(), "item sort changed");
+    }
+
+    pub fn reverse_item_sort(&mut self, cx: &mut Context<Self>) {
+        self.edit_filter(|filter| filter.sort.items.reverse(), cx);
+        tracing::debug!(sort = %self.state.filter.sort.items.summary(), "item sort changed");
     }
 
     /// Edit the filter and write the parts of it that outlive the session.
@@ -697,14 +729,20 @@ impl Store {
                     // last batch found until the next one answers.
                     carry_forward_divergence(&repo.prs, &mut fetched.pull_requests);
                     repo.prs = fetched.pull_requests;
+                    // An answer without metadata keeps the last known
+                    // metadata rather than dropping the repository to the
+                    // bottom of a sort for one poll.
+                    if fetched.meta.is_some() {
+                        repo.meta = fetched.meta;
+                    }
                     repo.load = LoadState::Loaded { at: now };
                 }
                 if let Some(db) = self.db.clone() {
                     let repo = id.clone();
-                    let prs = self
+                    let (prs, meta) = self
                         .state
                         .repo(&repo)
-                        .map(|repo| repo.prs.clone())
+                        .map(|repo| (repo.prs.clone(), repo.meta.clone()))
                         .unwrap_or_default();
                     // Fire and forget: a cache write failing must not disturb
                     // the refresh that produced it. sqlx needs the Tokio
@@ -713,6 +751,11 @@ impl Store {
                     Tokio::spawn(&*cx, async move {
                         if let Err(error) = db.save_pull_requests(&repo, &prs).await {
                             tracing::warn!(%repo, %error, "could not cache pull requests");
+                        }
+                        if let Some(meta) = meta
+                            && let Err(error) = db.save_repo_meta(&repo, &meta).await
+                        {
+                            tracing::warn!(%repo, %error, "could not cache repository metadata");
                         }
                     })
                     .detach();
