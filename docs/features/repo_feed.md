@@ -12,6 +12,10 @@ vertical stack of per-repo containers in one continuous scroll.
 - Collapse/expand of a repo section.
 - Selection state and keyboard navigation within the feed.
 - Sort and filter of PRs within a repo.
+- The **Pull requests | Issues** tab bar: which list the stream is built from,
+  per-tab counts, and `[`/`]`. What lies behind the Issues tab — fetching,
+  the issue pane, creation — belongs to `issues`; see
+  `docs/features/issues.md`.
 
 ## Non-scope
 
@@ -65,6 +69,25 @@ pub fn flatten(repos: &[RepoState], filter: &FeedFilter) -> Vec<FeedRow>;
 decides row order and composition, and it is unit-tested directly without a
 window: empty repos, collapsed repos, error states, filtered-to-zero repos, and
 the ordering guarantees below.
+
+## Tabs
+
+`flatten_tab(repos, filter, tab)` builds the stream for one tab; `flatten` is
+`flatten_tab(.., FeedTab::PullRequests)`. Both tabs share every rule below —
+runs, chrome, hide-empty, collapse, the loading/error/empty notices — and
+differ only in which list (`prs` or `issues`) and which load state (`load` or
+`issues_load`) they read. A stream holds `PrRow`s or `IssueRow`s, never both,
+and `Feed` remembers its tab so a tab switch always counts as a change.
+
+The tab bar above the filter bar shows each tab's count of open items the
+filter accepts (`tab_counts`, collapse ignored). The active tab is
+`AppState.tab`, persisted as `feed_tab` by `Store::set_tab`. `]` and `[` switch
+tabs (no wrap) in the `Feed` key context, so they are inert while typing in
+the filter. The selection is kept across a switch; navigation in the new tab
+starts from its end because the old selection has no row there. On the Issues
+tab the drafts button is hidden (it has nothing to act on), the authors
+popover lists issue authors, and every repository header offers
+`+ New issue`.
 
 ## Control flow
 
@@ -235,8 +258,11 @@ detail pane's composers.
 - **A collapsed repo contributes exactly two rows** (`RepoHeader`, `Spacer`).
 - **Indices are positional, not identity.** `RepoIx`/`PrIx` index into
   `AppState` as of the frame they were built. They must never be stored across a
-  refresh; persistent selection is stored as `(RepoId, PrNumber)` and resolved to
-  indices at render time.
+  refresh; persistent selection is stored as a `Selection` — `(RepoId,
+  PrNumber)` or `(RepoId, IssueNumber)` — and resolved to indices at render
+  time.
+- **One kind of item per stream.** A feed built for a tab holds only that
+  tab's item rows.
 - **Sticky headers are not available for free.** Zed's `sticky_items` decoration
   is implemented against `uniform_list` only. If sticky repo headers are wanted
   later, an equivalent must be written for `List`.
@@ -252,11 +278,12 @@ repositories, and is what everything below assumes.
 
 | File | Role |
 |---|---|
-| `crates/rostrum-core/src/feed.rs` | `FeedRow`, `flatten`, run-boundary computation, filter/sort |
-| `crates/rostrum-core/src/state.rs` | `AppState`, `RepoState`, `PrSummary` |
-| `crates/rostrum/src/feed/mod.rs` | Feed view entity, `ListState` ownership, splice logic |
-| `crates/rostrum/src/feed/rows.rs` | Per-variant row renderers |
-| `crates/rostrum/src/feed/nav.rs` | Keyboard navigation, selection actions |
-| `crates/rostrum/src/sync.rs` | `fetch_divergences` (the batched compare), `sync_all` |
+| `crates/rostrum-core/src/feed.rs` | `FeedRow`, `flatten`, `flatten_tab`, run-boundary computation, filter/sort |
+| `crates/rostrum-core/src/tabs.rs` | `FeedTab`, `TabCounts`, `tab_counts` |
+| `crates/rostrum-core/src/state.rs` | `AppState`, `RepoState`, `Selection` |
+| `crates/rostrum/src/feed/mod.rs` | Feed view entity, tab bar, `ListState` ownership, splice logic, identity selection (`selection_for`) |
+| `crates/rostrum/src/feed/rows.rs` | Per-variant row renderers, including the issue row |
+| `crates/rostrum/src/nav.rs` | Keyboard navigation over either kind of item row |
+| `crates/rostrum/src/sync/mod.rs` | `fetch_divergences` (the batched compare), `sync_all` |
 | `crates/rostrum-core/src/state.rs` | `divergence_query`, `apply_divergences` (by number), `carry_forward_divergence` — shared with the Android core |
 | `crates/rostrum-local/src/jobs.rs` | `run_local_job`, one job of a sync |

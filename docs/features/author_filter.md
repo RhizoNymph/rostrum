@@ -155,6 +155,15 @@ toggle and search box still apply on top. Because `flatten` already hides a
 repository whose visible list came out empty, filtering by author composes with
 `hide_empty_repos` for free.
 
+### Issues
+
+The same selection filters the Issues tab through
+`FeedFilter::accepts_issue`. For an issue "involved" means opened by or
+assigned to — issues have no review requests, and mentions are not available
+from the feed query without reading every comment. On the Issues tab the
+popover's roster comes from `issue_roster`, the issue authors with the same
+ordering rules.
+
 ### What "involved" means
 
 `include involved in` widens a selection from *opened by* to *opened by,
