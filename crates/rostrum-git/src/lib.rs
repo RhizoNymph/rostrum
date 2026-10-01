@@ -52,6 +52,7 @@ pub mod error;
 pub mod fetch;
 pub mod outcome;
 pub mod preflight;
+pub mod push;
 pub mod refs;
 pub mod repo;
 pub mod status;
@@ -68,8 +69,9 @@ pub use error::GitError;
 pub use fetch::{FetchFlag, FetchLine, FetchOutcome, classify_fetch, parse_fetch_porcelain};
 pub use outcome::{AbortTarget, Conflict, Outcome, RunReport, classify_run};
 pub use preflight::{Autostash, Blocker, Operation, Preflight, blockers};
+pub use push::{PushOutcome, PushRejection, classify_push, push_args};
 pub use refs::{BranchName, NameRejection, Oid, Remote, RemoteRef, Rev};
-pub use repo::{ConflictPolicy, Repo};
+pub use repo::{ConflictPolicy, RefExpectation, Repo};
 pub use status::{
     Head, InProgress, RepoStatus, StateFiles, Upstream, Worktree, in_progress, parse_ab,
     parse_left_right_count, parse_status_v2,

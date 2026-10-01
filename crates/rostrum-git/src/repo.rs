@@ -27,6 +27,9 @@ use crate::{
 };
 
 mod describe;
+mod rewrite;
+
+pub use rewrite::RefExpectation;
 
 /// What to do when a rebase or merge stops on a conflict.
 ///
