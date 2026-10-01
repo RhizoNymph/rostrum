@@ -23,8 +23,8 @@ Reading and acting on a local clone of a watched repository, by driving the
 
 - **Pushing, with one exception.** A local merge or rebase leaves the clone
   ahead of `origin`, and the ahead count is what tells the user to push. The
-  only write to a remote is `Repo::push_with_lease`, used solely by stack
-  arrangement (below): always `--force-with-lease=<ref>:<expected-oid>`, never
+  only write to a remote is `Repo::push_with_lease`, used solely by the stack
+  rewrite pipeline (Arrange and Add to stack, below): always `--force-with-lease=<ref>:<expected-oid>`, never
   a bare force.
 - **Continuing a conflicted operation by hand.** The only `--continue` in this
   crate is the stack rebase's, and only for a stop `rerere` resolved entirely
@@ -283,7 +283,8 @@ Live verification is `cargo run -p rostrum-git --example inspect -- <path>
 ## Invariants
 
 - No remote is written to except by `Repo::push_with_lease`, which always
-  carries an explicit lease and is called only by stack arrangement.
+  carries an explicit lease and is called only by the stack pipeline
+  (Arrange, and Add to stack when a rewrite is needed).
 - No branch a worktree has checked out is moved by `set_branch`, and every
   move it makes is a compare-and-swap.
 - A branch name from the GitHub API is validated before it reaches an argument
