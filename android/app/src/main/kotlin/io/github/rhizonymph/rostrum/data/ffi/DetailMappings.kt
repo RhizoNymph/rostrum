@@ -113,6 +113,8 @@ internal fun FfiPullDetail.toModel() = PullDetail(
     checks = checks.map { it.toModel() },
     unresolvedThreads = unresolvedThreads.toInt(),
     pendingReview = pendingReview.toModel(),
+    hasEarlier = hasEarlier,
+    earlierCount = earlierCount?.toInt(),
 )
 
 internal fun MergeMethod.toFfi(): FfiMergeMethod = when (this) {

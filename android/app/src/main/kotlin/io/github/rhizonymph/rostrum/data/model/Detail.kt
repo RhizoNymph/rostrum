@@ -13,6 +13,9 @@ data class PullDetail(
     val unresolvedThreads: Int,
     /** Your unsent inline comments on this pull request. */
     val pendingReview: PendingReview,
+    /** Older conversation entries "load earlier" can bring ([earlierCount], when known). */
+    val hasEarlier: Boolean = false,
+    val earlierCount: Int? = null,
 )
 
 /** The header, and the facts the Branch tab and the action bar decide on. */

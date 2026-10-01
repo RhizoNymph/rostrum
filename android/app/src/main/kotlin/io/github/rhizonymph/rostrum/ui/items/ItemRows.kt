@@ -107,8 +107,9 @@ sealed interface ItemRow {
         override val key: String get() = "pr:${pr.repo}#${pr.number}"
     }
 
-    data class StackHeader(val repo: String, val stack: StackSummary, val firstMember: Int?) : ItemRow {
-        override val key: String get() = "stack:$repo#${firstMember ?: stack.title}"
+    /** A stack's header; [members] are its visible pull requests, bottom first. */
+    data class StackHeader(val repo: String, val stack: StackSummary, val members: List<PrSummary>) : ItemRow {
+        override val key: String get() = "stack:$repo#${members.firstOrNull()?.number ?: stack.title}"
     }
 
     data class Issue(val issue: IssueSummary) : ItemRow {
@@ -121,7 +122,7 @@ fun rowsOf(repo: String, items: List<PullItem>): List<ItemRow> = items.flatMap {
     when (item) {
         is PullItem.Single -> listOf(ItemRow.Pull(item.pull))
         is PullItem.Stack -> buildList<ItemRow> {
-            add(ItemRow.StackHeader(repo, item.stack, item.members.firstOrNull()?.number))
+            add(ItemRow.StackHeader(repo, item.stack, item.members))
             item.members.forEachIndexed { index, pr -> add(ItemRow.Pull(pr, StackPlace.of(index, item.members.size))) }
         }
     }

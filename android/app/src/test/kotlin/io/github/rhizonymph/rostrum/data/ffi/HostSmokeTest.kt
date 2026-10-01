@@ -3,6 +3,9 @@ package io.github.rhizonymph.rostrum.data.ffi
 import io.github.rhizonymph.rostrum.data.BackendError
 import io.github.rhizonymph.rostrum.data.Outcome
 import io.github.rhizonymph.rostrum.data.model.GitHubStatus
+import io.github.rhizonymph.rostrum.data.model.StackPlanRequest
+import io.github.rhizonymph.rostrum.data.model.StackPlanCheck
+import io.github.rhizonymph.rostrum.data.model.StackMergeMethod
 import io.github.rhizonymph.rostrum.data.model.SortDirection
 import io.github.rhizonymph.rostrum.data.model.RepoSortKey
 import io.github.rhizonymph.rostrum.data.model.ItemSortKey
@@ -32,6 +35,7 @@ import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.TestMethodOrder
 import uniffi.rostrum_ffi.ProfileRegistry
 import java.io.File
+import java.time.Instant
 import java.nio.file.Files
 import java.util.Base64
 
@@ -230,4 +234,29 @@ class HostSmokeTest {
         assertInstanceOf(BackendError.InvalidInput::class.java, backend.createIssue(repo, "  ", "", emptyList(), emptyList()).error())
         assertEquals(BackendError.NotSignedIn, backend.issueDetail(IssueRef(repo, 1)).error())
     }
+
+    @Test
+    @Order(12)
+    fun `stack actions need a desktop, and edits and paging check their input`(): Unit = runBlocking {
+        val repo = backend.settings().orFail().repos.first()
+        // Input checks answer before the desktop is asked.
+        assertInstanceOf(BackendError.InvalidInput::class.java, backend.makeStack(repo, listOf(1), "main").error())
+        assertInstanceOf(BackendError.InvalidInput::class.java, backend.arrangeStack(repo, listOf(1, 1), "main", emptyList()).error())
+        assertInstanceOf(BackendError.InvalidInput::class.java, backend.mergeStack(repo, 0, StackMergeMethod.Merge).error())
+        // Valid requests reach for the desktop, and there is none.
+        assertEquals(BackendError.NotPaired, backend.makeStack(repo, listOf(1, 2), "main").error())
+        assertEquals(BackendError.NotPaired, backend.mergeStack(repo, 3, StackMergeMethod.Squash).error())
+        assertEquals(BackendError.NotPaired, backend.unstack(repo, 3).error())
+        assertEquals(BackendError.NotPaired, backend.extendStack(repo, 3, listOf(4), emptyList()).error())
+        assertEquals(BackendError.NotPaired, backend.planStackRewrite(StackPlanRequest.Arrange(repo, listOf(1, 2), "main")).error())
+        assertEquals(BackendError.NotPaired, backend.stackJob(1).error())
+        // The local checks answer from the (empty) cached feed.
+        assertInstanceOf(StackPlanCheck.Invalid::class.java, backend.checkStackPlan(StackPlanRequest.Arrange(repo, listOf(1, 2), "main")).orFail())
+
+        val issue = IssueRef(repo, 1)
+        assertInstanceOf(BackendError.InvalidInput::class.java, backend.editIssue(issue, "  ", "", Instant.EPOCH, false).error())
+        assertInstanceOf(BackendError::class.java, backend.loadEarlierIssue(issue).error())
+        assertInstanceOf(BackendError::class.java, backend.loadEarlierPull(PrRef(repo, 1)).error())
+    }
 }
+

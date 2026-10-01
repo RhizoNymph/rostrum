@@ -33,6 +33,9 @@ internal class FakeIssues(
     private val timelines = mutableMapOf<IssueRef, MutableList<TimelineEntry>>()
     private var nextId = 1L
 
+    /** Older entries "load earlier" brings in, per issue, until it has. */
+    private val earlier: MutableMap<IssueRef, List<TimelineEntry>> = SampleIssues.earlier(started).toMutableMap()
+
     /** Open issues per repository, among [repos]. */
     fun open(repos: List<String>): Map<String, List<FakeIssue>> =
         issues.values.filter { it.isOpen && it.repo in repos }.groupBy { it.repo }
@@ -51,8 +54,56 @@ internal class FakeIssues(
         }.toMutableList()
     }
 
-    private fun detailOf(issue: FakeIssue, viewer: String?) =
-        IssueDetail(issue.summary(viewer, labelsOf(issue.repo)), timeline(issue).toList())
+    /** The newest page; entries still in [earlier] are what "load earlier" brings. */
+    private fun detailOf(issue: FakeIssue, viewer: String?): IssueDetail {
+        val older = earlier[issue.ref]
+        return IssueDetail(
+            issue = issue.summary(viewer, labelsOf(issue.repo)),
+            timeline = timeline(issue).toList(),
+            hasEarlier = older != null,
+            earlierCount = older?.size,
+        )
+    }
+
+    /** Bring in the earlier entries; an issue never opened has nothing to page. */
+    fun loadEarlier(ref: IssueRef, viewer: String?): Outcome<IssueDetail> {
+        val issue = issues[ref] ?: return notFound(ref)
+        if (ref !in timelines) return Outcome.Err(BackendError.InvalidInput("Open the issue before loading earlier entries"))
+        earlier.remove(ref)?.let { older -> timelines.getValue(ref).addAll(1, older) }
+        return Outcome.Ok(detailOf(issue, viewer))
+    }
+
+    /**
+     * Save a title and description. Unchanged sends nothing; a blank title is
+     * refused; a text change on GitHub after [base] is a conflict unless
+     * [overwrite].
+     */
+    fun edit(ref: IssueRef, title: String, body: String, base: Instant, overwrite: Boolean, viewer: String?): Outcome<IssueDetail> {
+        val issue = issues[ref] ?: return notFound(ref)
+        val cleanTitle = title.trim()
+        if (cleanTitle.isEmpty()) return Outcome.Err(BackendError.InvalidInput("Give the issue a title"))
+        if (cleanTitle == issue.title && body == issue.body) return Outcome.Ok(detailOf(issue, viewer))
+        if (!overwrite && issue.textChangedAt.isAfter(base)) {
+            return Outcome.Err(BackendError.EditConflict(issue.title, issue.body, issue.updatedAt))
+        }
+        if (cleanTitle != issue.title) event(issue, TimelineEvent.Renamed(issue.title, cleanTitle), "changed the title")
+        val now = clock.instant()
+        val next = issue.copy(title = cleanTitle, body = body, updatedAt = now, textChangedAt = now)
+        issues[ref] = next
+        timelines[ref]?.let { list ->
+            val index = list.indexOfFirst { it.kind is TimelineKind.Description }
+            if (index >= 0) list[index] = list[index].copy(kind = TimelineKind.Description(FakeMarkdown.parse(body), body))
+        }
+        onChanged()
+        return Outcome.Ok(detailOf(next, viewer))
+    }
+
+    /** Someone else edits the issue on GitHub (for tests of the conflict). */
+    fun editElsewhere(ref: IssueRef, title: String, body: String) {
+        val issue = issues.getValue(ref)
+        val now = clock.instant().plusSeconds(1)
+        issues[ref] = issue.copy(title = title, body = body, updatedAt = now, textChangedAt = now)
+    }
 
     fun detail(ref: IssueRef, viewer: String?): Outcome<IssueDetail> =
         issues[ref]?.let { Outcome.Ok(detailOf(it, viewer)) } ?: notFound(ref)

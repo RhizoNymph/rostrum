@@ -15,6 +15,8 @@ import io.github.rhizonymph.rostrum.data.model.PrRef
 import io.github.rhizonymph.rostrum.ui.common.CollectMessages
 import io.github.rhizonymph.rostrum.ui.common.dataOrNull
 import io.github.rhizonymph.rostrum.ui.common.profileViewModel
+import io.github.rhizonymph.rostrum.ui.stacks.StackActionsHost
+import io.github.rhizonymph.rostrum.ui.stacks.StackActionsViewModel
 
 /**
  * The feed destination: binds [FeedViewModel] to [FeedScreen], the Sort
@@ -30,6 +32,7 @@ fun FeedRoute(
     onOpenIssue: (IssueRef) -> Unit = {},
     onOpenRepo: (String) -> Unit = {},
     onNewIssue: () -> Unit = {},
+    onPairDesktop: () -> Unit = {},
 ) {
     val vm = profileViewModel { container, profile ->
         FeedViewModel(
@@ -41,6 +44,9 @@ fun FeedRoute(
     }
     val state by vm.state.collectAsStateWithLifecycle()
     CollectMessages(vm.messages)
+    val stacks = profileViewModel(key = "feed-stacks") { _, profile -> StackActionsViewModel(profile.backend, profile.session.state) }
+    val stackFlow by stacks.flow.collectAsStateWithLifecycle()
+    CollectMessages(stacks.messages.flow)
 
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(vm, lifecycleOwner) {
@@ -55,6 +61,7 @@ fun FeedRoute(
             openRepo = onOpenRepo,
             newIssue = onNewIssue,
             selectTab = vm::selectTab,
+            stackAction = { header, entry -> stacks.request(entry, header.repo, header.stack, header.members) },
             openSort = vm::openSort,
             openProfiles = onOpenProfiles,
             refresh = vm::refresh,
@@ -94,6 +101,8 @@ fun FeedRoute(
     }
 
     FeedScreen(state, actions, modifier, profileLabel)
+
+    StackActionsHost(stackFlow, stacks, onPairDesktop)
 
     val sort = state.feed.dataOrNull()?.sort
     if (state.sortOpen && sort != null) FeedSortSheet(sort, sortActions)

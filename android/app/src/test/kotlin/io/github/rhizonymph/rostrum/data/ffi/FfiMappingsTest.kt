@@ -1,5 +1,26 @@
 package io.github.rhizonymph.rostrum.data.ffi
 
+import io.github.rhizonymph.rostrum.data.model.StackCandidate
+import io.github.rhizonymph.rostrum.data.model.StackEligibility
+import io.github.rhizonymph.rostrum.data.model.StackJobKind
+import io.github.rhizonymph.rostrum.data.model.StackJobResult
+import io.github.rhizonymph.rostrum.data.model.StackJobState
+import io.github.rhizonymph.rostrum.data.model.StackMergeMethod
+import io.github.rhizonymph.rostrum.data.model.StackPlanCheck
+import io.github.rhizonymph.rostrum.data.model.StackPlanRequest
+import io.github.rhizonymph.rostrum.data.model.StackRewrite
+import io.github.rhizonymph.rostrum.data.model.StackRewritePlan
+import uniffi.rostrum_ffi.StackCandidate as FStackCandidate
+import uniffi.rostrum_ffi.StackEligibility as FStackEligibility
+import uniffi.rostrum_ffi.StackJob as FStackJob
+import uniffi.rostrum_ffi.StackJobKind as FStackJobKind
+import uniffi.rostrum_ffi.StackJobResult as FStackJobResult
+import uniffi.rostrum_ffi.StackJobState as FStackJobState
+import uniffi.rostrum_ffi.StackPlanCheck as FStackPlanCheck
+import uniffi.rostrum_ffi.StackPlanRequest as FStackPlanRequest
+import uniffi.rostrum_ffi.StackRewrite as FStackRewrite
+import uniffi.rostrum_ffi.StackRewritePlan as FStackRewritePlan
+import uniffi.rostrum_ffi.IssueDetail as FIssueDetail
 import io.github.rhizonymph.rostrum.data.model.BranchDrift
 import io.github.rhizonymph.rostrum.data.model.BranchNote
 import io.github.rhizonymph.rostrum.data.model.BranchRow
@@ -70,6 +91,7 @@ import io.github.rhizonymph.rostrum.data.model.SyncEntryState
 import io.github.rhizonymph.rostrum.data.model.TimelineEvent
 import io.github.rhizonymph.rostrum.data.model.TimelineKind
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
@@ -180,6 +202,9 @@ class FfiMappingsTest {
                 RostrumException.InvalidRepo("x", "not owner/name") to BackendError.InvalidRepo("x", "not owner/name"),
                 RostrumException.DuplicateRepo("a/b") to BackendError.DuplicateRepo("a/b"),
                 RostrumException.InvalidInput("why") to BackendError.InvalidInput("why"),
+                RostrumException.EditConflict("t", "b", at) to BackendError.EditConflict("t", "b", at),
+                RostrumException.RewriteNotConfirmed(listOf(FStackRewrite(10u, "feat/x")), "changed") to
+                    BackendError.RewriteNotConfirmed(listOf(StackRewrite(10, "feat/x")), "changed"),
                 RostrumException.ProfileNotFound("0123456789abcdef") to BackendError.ProfileNotFound("0123456789abcdef"),
                 RostrumException.Storage("disk") to BackendError.Storage("disk"),
                 RostrumException.Internal("bug") to BackendError.Internal("bug"),
@@ -192,7 +217,7 @@ class FfiMappingsTest {
             val expected = listOf(
                 RemoteErrorCode.Unauthorized, RemoteErrorCode.Forbidden, RemoteErrorCode.BadRequest,
                 RemoteErrorCode.NotFound, RemoteErrorCode.PairingCodeInvalid, RemoteErrorCode.PairingCodeExpired,
-                RemoteErrorCode.RateLimited, RemoteErrorCode.Busy, RemoteErrorCode.Internal,
+                RemoteErrorCode.RateLimited, RemoteErrorCode.Busy, RemoteErrorCode.RewriteNotConfirmed, RemoteErrorCode.Internal,
             )
             assertEquals(expected, FRemoteErrorCode.entries.map { it.toModel() })
         }
@@ -592,6 +617,30 @@ class FfiMappingsTest {
             assertEquals(MergeStatus.Conflicts, stack.stack.rollup!!.worst)
             assertEquals(listOf(9, 11), stack.members.map { it.number })
             assertEquals(StackKind.Chain, FStackKind.Chain.toModel())
+        }
+
+        @Test
+        fun `stack action records map both ways`() {
+            assertEquals(FStackPlanRequest.Arrange("a/b", listOf(9u, 11u), "main"), StackPlanRequest.Arrange("a/b", listOf(9, 11), "main").toFfi())
+            assertEquals(FStackPlanRequest.Extend("a/b", 7u, listOf(10u)), StackPlanRequest.Extend("a/b", 7, listOf(10)).toFfi())
+            assertEquals(StackRewritePlan(listOf(StackRewrite(10, "x")), true), FStackRewritePlan(listOf(FStackRewrite(10u, "x")), true).toModel())
+            assertEquals(StackPlanCheck.Invalid("no"), FStackPlanCheck.Invalid("no").toModel())
+            assertEquals(StackCandidate(10, "t", StackEligibility.Eligible(true)), FStackCandidate(10u, "t", FStackEligibility.Eligible(true)).toModel())
+            StackMergeMethod.entries.forEach { assertEquals(it.name.uppercase(), it.toFfi().name) }
+            val job = FStackJob(5uL, "a/b", FStackJobKind.EXTEND, at, null, false, FStackJobState.HandedOff(11u, "rostrum-11", "/w", "d")).toModel()
+            assertEquals(5L, job.id)
+            assertEquals(StackJobKind.Extend, job.kind)
+            assertEquals(StackJobState.HandedOff(11, "rostrum-11", "/w", "d"), job.state)
+            assertEquals(StackJobState.Done(StackJobResult.Extended(7, listOf(10)), "ok"),
+                FStackJobState.Done(FStackJobResult.Extended(7u, listOf(10u)), "ok").toModel())
+            assertEquals(StackJobState.Failed(listOf(9), "x"), FStackJobState.Failed(listOf(9u), "x").toModel())
+        }
+
+        @Test
+        fun `details carry their earlier pages`() {
+            val detail = FIssueDetail(issue, emptyList(), true, 4u).toModel()
+            assertTrue(detail.hasEarlier)
+            assertEquals(4, detail.earlierCount)
         }
 
         @Test

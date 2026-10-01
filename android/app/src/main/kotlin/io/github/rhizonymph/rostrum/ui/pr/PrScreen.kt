@@ -44,6 +44,7 @@ data class PrScreenActions(
     val onMerge: () -> Unit,
     val onUpdateBranch: (BranchUpdateMethod) -> Unit,
     val local: LocalActions,
+    val onLoadEarlier: () -> Unit = {},
 )
 
 /**
@@ -132,6 +133,8 @@ private fun TabBody(
             onAddLabel = actions.onAddLabel,
             onMerge = actions.onMerge,
             modifier = Modifier.fillMaxSize(),
+            loadingEarlier = state.loadingEarlier,
+            onLoadEarlier = actions.onLoadEarlier,
         )
         PrTab.Checks -> ChecksTab(detail, state.loadedAt, now, Modifier.fillMaxSize())
         PrTab.Branch -> BranchTab(

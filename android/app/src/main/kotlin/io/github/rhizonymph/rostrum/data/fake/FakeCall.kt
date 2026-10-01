@@ -19,6 +19,7 @@ enum class FakeCall {
     CheckNotifications, MarkNotificationsSeen,
     SetFeedTab, SortSettings, SetRepoSort, SetItemSort,
     IssueDetail, CachedIssueDetail, CommentOnIssue, CloseIssue, ReopenIssue, AddIssueLabel, RemoveIssueLabel,
-    AssignableUsers, AddIssueAssignee, RemoveIssueAssignee, CreateIssue,
+    AssignableUsers, AddIssueAssignee, RemoveIssueAssignee, CreateIssue, LoadEarlierIssue, EditIssue, LoadEarlierPull,
+    PlanStackRewrite, CheckStackPlan, StackCandidates, MakeStack, ArrangeStack, ExtendStack, MergeStack, Unstack, StackJob,
     RepoOverview, BranchTree, Trunks, SetTrunks,
 }

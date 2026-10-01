@@ -18,6 +18,7 @@ fun IssueRoute(issue: IssueRef, onBack: () -> Unit, modifier: Modifier = Modifie
     val state by viewModel.state.collectAsStateWithLifecycle()
     CollectMessages(viewModel.messages.flow)
     IssueScreen(issue, state, viewModel, onBack, modifier)
+    state.editor?.let { IssueEditSheet(it, viewModel) }
     state.picker?.let { picker ->
         PickerSheet(
             state = picker,

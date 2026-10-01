@@ -18,6 +18,8 @@ internal fun RostrumException.toBackendError(): BackendError = when (this) {
     is RostrumException.Network -> BackendError.Network(reason)
     is RostrumException.UnknownPullRequest -> BackendError.UnknownPullRequest(repo, number.toInt())
     is RostrumException.DraftsStale -> BackendError.DraftsStale(draftedAgainst, head)
+    is RostrumException.EditConflict -> BackendError.EditConflict(title, body, updatedAt)
+    is RostrumException.RewriteNotConfirmed -> BackendError.RewriteNotConfirmed(branches.map { it.toModel() }, reason)
     is RostrumException.NotPaired -> BackendError.NotPaired
     is RostrumException.DeviceRevoked -> BackendError.DeviceRevoked
     is RostrumException.DesktopUnreachable -> BackendError.DesktopUnreachable(reason)
@@ -43,6 +45,7 @@ internal fun FfiRemoteErrorCode.toModel(): RemoteErrorCode = when (this) {
     FfiRemoteErrorCode.PAIRING_CODE_EXPIRED -> RemoteErrorCode.PairingCodeExpired
     FfiRemoteErrorCode.RATE_LIMITED -> RemoteErrorCode.RateLimited
     FfiRemoteErrorCode.BUSY -> RemoteErrorCode.Busy
+    FfiRemoteErrorCode.REWRITE_NOT_CONFIRMED -> RemoteErrorCode.RewriteNotConfirmed
     FfiRemoteErrorCode.INTERNAL -> RemoteErrorCode.Internal
 }
 

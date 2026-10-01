@@ -13,6 +13,8 @@ data class PrDetailUiState(
     val detail: UiState<PullDetail> = UiState.Loading,
     /** A reload is in flight while [detail] still shows the previous data. */
     val refreshing: Boolean = false,
+    /** "Load earlier" is fetching the conversation's previous page. */
+    val loadingEarlier: Boolean = false,
     /** When [detail] was last fetched; the Checks footnote says how long ago. */
     val loadedAt: Instant? = null,
     /** The composer's text. */

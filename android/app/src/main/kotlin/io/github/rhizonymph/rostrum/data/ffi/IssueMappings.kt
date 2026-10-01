@@ -55,7 +55,8 @@ internal fun FfiIssueSummary.toModel() = IssueSummary(
     assignedToYou = assignedToYou,
 )
 
-internal fun FfiIssueDetail.toModel() = IssueDetail(issue.toModel(), timeline.map { it.toModel() })
+internal fun FfiIssueDetail.toModel() =
+    IssueDetail(issue.toModel(), timeline.map { it.toModel() }, hasEarlier, earlierCount?.toInt())
 
 internal fun FfiStackKind.toModel(): StackKind = when (this) {
     is FfiStackKind.GitHub -> StackKind.GitHub(number.toInt())

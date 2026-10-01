@@ -7,6 +7,8 @@ import io.github.rhizonymph.rostrum.data.model.ItemSortKey
 import io.github.rhizonymph.rostrum.data.model.PrRef
 import io.github.rhizonymph.rostrum.data.model.RepoSortKey
 import io.github.rhizonymph.rostrum.data.model.SortDirection
+import io.github.rhizonymph.rostrum.ui.items.ItemRow
+import io.github.rhizonymph.rostrum.ui.items.StackMenuEntry
 
 /** Everything the feed screen can ask for; the route binds these to the ViewModel. */
 @Immutable
@@ -18,6 +20,8 @@ class FeedActions(
     val newIssue: () -> Unit = {},
     val selectTab: (FeedTab) -> Unit = {},
     val openSort: () -> Unit = {},
+    /** A stack header's menu entry (run on the paired desktop). */
+    val stackAction: (ItemRow.StackHeader, StackMenuEntry) -> Unit = { _, _ -> },
     val openProfiles: () -> Unit = {},
     val refresh: () -> Unit = {},
     val retry: () -> Unit = {},

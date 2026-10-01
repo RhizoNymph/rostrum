@@ -48,6 +48,7 @@ import io.github.rhizonymph.rostrum.ui.components.TitleStack
 import io.github.rhizonymph.rostrum.ui.components.cardSegment
 import io.github.rhizonymph.rostrum.ui.items.ItemRow
 import io.github.rhizonymph.rostrum.ui.items.ItemRowContent
+import io.github.rhizonymph.rostrum.ui.items.RowCallbacks
 import io.github.rhizonymph.rostrum.ui.items.rowsOf
 import io.github.rhizonymph.rostrum.ui.theme.RostrumText
 import io.github.rhizonymph.rostrum.ui.theme.RostrumTheme
@@ -75,11 +76,21 @@ fun RepoScreen(
     onOpenIssue: (IssueRef) -> Unit,
     onNewIssue: () -> Unit,
     modifier: Modifier = Modifier,
+    rows: RowCallbacks = RowCallbacks(onOpenPullRequest, onOpenIssue),
+    arrange: ArrangeControls? = null,
 ) {
     val colors = RostrumTheme.colors
     val overview = (state.overview as? UiState.Loaded)?.data
     Column(modifier.fillMaxSize().background(colors.bg)) {
-        BackTopBar(onBack = onBack, backDescription = "Back to the feed") {
+        BackTopBar(
+            onBack = onBack,
+            backDescription = "Back to the feed",
+            actions = {
+                if (arrange != null && state.tab == RepoTab.Pulls && arrange.picked == null) {
+                    TextPillButton("Arrange", arrange.start)
+                }
+            },
+        ) {
             TitleStack(listOfNotNull(repo.substringBefore('/'), overview?.stars?.let { "★ $it" }).joinToString(" · ")) {
                 Text(repo.substringAfter('/'), style = RostrumText.sheetTitle, color = colors.text, maxLines = 1)
             }
@@ -98,7 +109,7 @@ fun RepoScreen(
                     RepoTab.Pulls, RepoTab.Issues -> when (val loaded = state.overview) {
                         UiState.Loading -> LoadingView(label = "Loading $repo…")
                         is UiState.Error -> ErrorView(loaded.error, Modifier.padding(12.dp), title = "Couldn't load $repo")
-                        is UiState.Loaded -> ItemsList(repo, state.tab, loaded.data, state.now, onOpenPullRequest, onOpenIssue)
+                        is UiState.Loaded -> ItemsList(repo, state.tab, loaded.data, state.now, rows)
                     }
                     RepoTab.Branches -> when (val branches = state.branches) {
                         null, UiState.Loading -> LoadingView(label = "Comparing branches…")
@@ -109,6 +120,36 @@ fun RepoScreen(
             }
             if (state.tab == RepoTab.Issues) NewIssueFab(onNewIssue, Modifier.align(Alignment.BottomEnd).padding(16.dp))
         }
+        val picked = arrange?.picked
+        if (picked != null && state.tab == RepoTab.Pulls) ArrangeBar(picked.size, arrange)
+    }
+}
+
+/** Arrange mode's controls, from the stack actions: start, pick (in [picked]), cancel, next. */
+class ArrangeControls(
+    val picked: List<Int>?,
+    val start: () -> Unit,
+    val cancel: () -> Unit,
+    val next: () -> Unit,
+)
+
+/** "3 picked · Cancel · Next" while picking pull requests to arrange. */
+@Composable
+private fun ArrangeBar(count: Int, arrange: ArrangeControls) {
+    val colors = RostrumTheme.colors
+    Row(
+        Modifier.fillMaxWidth().background(colors.surface).padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            if (count == 0) "Pick pull requests, bottom first" else "$count picked",
+            style = RostrumText.label,
+            color = colors.text,
+            modifier = Modifier.weight(1f),
+        )
+        TextPillButton("Cancel", arrange.cancel)
+        PrimaryButton("Next", arrange.next, enabled = count >= 2)
     }
 }
 
@@ -118,8 +159,7 @@ private fun ItemsList(
     tab: RepoTab,
     overview: RepoOverview,
     now: Instant,
-    onOpenPullRequest: (PrRef) -> Unit,
-    onOpenIssue: (IssueRef) -> Unit,
+    callbacks: RowCallbacks,
 ) {
     val colors = RostrumTheme.colors
     val rows = if (tab == RepoTab.Pulls) rowsOf(repo, overview.pulls) else overview.issues.map { ItemRow.Issue(it) }
@@ -132,7 +172,7 @@ private fun ItemsList(
         rows.forEachIndexed { index, row ->
             item(key = row.key, contentType = row::class) {
                 Box(Modifier.fillMaxWidth().cardSegment(SegmentPosition.of(index, rows.size), colors.surface, colors.border)) {
-                    ItemRowContent(row, now, onOpenPullRequest, onOpenIssue)
+                    ItemRowContent(row, now, callbacks)
                 }
             }
         }

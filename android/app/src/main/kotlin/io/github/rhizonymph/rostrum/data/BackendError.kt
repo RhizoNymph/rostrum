@@ -1,5 +1,6 @@
 package io.github.rhizonymph.rostrum.data
 
+import io.github.rhizonymph.rostrum.data.model.StackRewrite
 import java.time.Instant
 
 /**
@@ -32,6 +33,21 @@ sealed interface BackendError {
 
     /** The pending review was written against an older head. Discard it. */
     data class DraftsStale(val draftedAgainst: String, val head: String) : BackendError
+
+    /**
+     * The issue's title or description changed on GitHub since the edit
+     * began; [title], [body] and [updatedAt] are GitHub's now. Reload to take
+     * them, or resend with overwrite.
+     */
+    data class EditConflict(val title: String, val body: String, val updatedAt: Instant) : BackendError {
+        override fun toString(): String = "EditConflict(updatedAt=$updatedAt)"
+    }
+
+    /**
+     * The desktop would rewrite other branches than the ones confirmed;
+     * [branches] are what it would rewrite now.
+     */
+    data class RewriteNotConfirmed(val branches: List<StackRewrite>, val reason: String) : BackendError
 
     /** No desktop is paired for this session. */
     data object NotPaired : BackendError
@@ -86,6 +102,7 @@ enum class RemoteErrorCode {
     PairingCodeExpired,
     RateLimited,
     Busy,
+    RewriteNotConfirmed,
     Internal,
 }
 
@@ -112,8 +129,11 @@ fun BackendError.describe(): String = when (this) {
         RemoteErrorCode.PairingCodeInvalid -> "That pairing code isn't right."
         RemoteErrorCode.PairingCodeExpired -> "That pairing code has expired. Show a new one on the desktop."
         RemoteErrorCode.Busy -> "The desktop is busy with another job."
+        RemoteErrorCode.RewriteNotConfirmed -> "The desktop needs you to confirm the branches it rewrites: $reason"
         else -> "The desktop refused: $reason"
     }
+    is BackendError.EditConflict -> "This issue was changed on GitHub while you edited it."
+    is BackendError.RewriteNotConfirmed -> "The desktop would rewrite other branches than you confirmed: $reason"
     is BackendError.RemoteProtocol -> "Unexpected answer from the desktop: $reason"
     is BackendError.InvalidRepo -> "$input isn't a repository: $reason"
     is BackendError.DuplicateRepo -> "$repo is already in your feed"

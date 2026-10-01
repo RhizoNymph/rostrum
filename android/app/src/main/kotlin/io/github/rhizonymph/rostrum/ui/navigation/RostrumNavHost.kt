@@ -68,6 +68,7 @@ fun RostrumNavHost(
                 onOpenIssue = { issue -> navController.navigate(Destination.Issue(issue.repo, issue.number)) },
                 onOpenRepo = { repo -> navController.navigate(Destination.Repo(repo)) },
                 onNewIssue = { navController.navigate(Destination.NewIssue()) },
+                onPairDesktop = { navController.navigate(Destination.Pair()) },
             )
         }
         composable<Destination.Desktop> {
@@ -131,6 +132,7 @@ fun RostrumNavHost(
                 onOpenPullRequest = { pr -> navController.openPullRequest(pr) },
                 onOpenIssue = { issue -> navController.navigate(Destination.Issue(issue.repo, issue.number)) },
                 onNewIssue = { repo -> navController.navigate(Destination.NewIssue(repo)) },
+                onPairDesktop = { navController.navigate(Destination.Pair()) },
             )
         }
         composable<Destination.FileDiff> { entry ->

@@ -3,10 +3,12 @@ package io.github.rhizonymph.rostrum.data.fake
 import io.github.rhizonymph.rostrum.data.model.Chip
 import io.github.rhizonymph.rostrum.data.model.ColorRole
 import io.github.rhizonymph.rostrum.data.model.IssueCloseReason
-import io.github.rhizonymph.rostrum.data.model.IssueRef
 import io.github.rhizonymph.rostrum.data.model.IssueStatus
+import io.github.rhizonymph.rostrum.data.model.IssueRef
 import io.github.rhizonymph.rostrum.data.model.IssueSummary
 import io.github.rhizonymph.rostrum.data.model.LabelView
+import io.github.rhizonymph.rostrum.data.model.TimelineEntry
+import io.github.rhizonymph.rostrum.data.model.TimelineKind
 import io.github.rhizonymph.rostrum.data.model.UserRef
 import java.time.Instant
 
@@ -24,6 +26,8 @@ internal data class FakeIssue(
     val assignees: List<String> = emptyList(),
     val comments: Int = 0,
     val milestone: String? = null,
+    /** When the title or description last changed (for the edit conflict check). */
+    val textChangedAt: Instant = createdAt,
 ) {
     val ref: IssueRef get() = IssueRef(repo, number)
 
@@ -81,7 +85,7 @@ internal object SampleIssues {
                 title = "Show issues on Android",
                 body = "The phone should list issues beside pull requests.",
                 author = SamplePulls.VIEWER, createdAt = ago(2 * day), updatedAt = ago(day),
-                labels = listOf("android", "enhancement"), milestone = "0.2",
+                labels = listOf("android", "enhancement"), milestone = "0.2", comments = 1,
             ),
             FakeIssue(
                 repo = SamplePulls.ZED, number = 20410,
@@ -96,6 +100,22 @@ internal object SampleIssues {
                 body = "Expected the last block selection.",
                 author = "wren", createdAt = ago(4 * day), updatedAt = ago(3 * day),
                 labels = listOf("vim"),
+            ),
+        )
+    }
+
+    /** Older comments "load earlier" brings in: two on #18, before its newest page. */
+    fun earlier(now: Instant): Map<IssueRef, List<TimelineEntry>> {
+        fun comment(id: String, author: String, minutesAgo: Long, text: String) = TimelineEntry(
+            id = id,
+            author = UserRef(author),
+            createdAt = now.minusSeconds(minutesAgo * 60),
+            kind = TimelineKind.Comment(FakeMarkdown.parse(text), text),
+        )
+        return mapOf(
+            IssueRef(SamplePulls.ROSTRUM, 18) to listOf(
+                comment("issue-18-old-1", "ada-lin", 47 * 60, "A tab beside pull requests, like the desktop?"),
+                comment("issue-18-old-2", SamplePulls.VIEWER, 46 * 60, "Yes, with the same filters."),
             ),
         )
     }

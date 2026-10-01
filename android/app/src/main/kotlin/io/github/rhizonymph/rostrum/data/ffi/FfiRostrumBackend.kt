@@ -6,6 +6,12 @@ import io.github.rhizonymph.rostrum.data.RostrumBackend
 import io.github.rhizonymph.rostrum.data.RostrumLog
 import io.github.rhizonymph.rostrum.data.describe
 import io.github.rhizonymph.rostrum.data.model.AuthorRoster
+import io.github.rhizonymph.rostrum.data.model.StackRewritePlan
+import io.github.rhizonymph.rostrum.data.model.StackPlanRequest
+import io.github.rhizonymph.rostrum.data.model.StackPlanCheck
+import io.github.rhizonymph.rostrum.data.model.StackMergeMethod
+import io.github.rhizonymph.rostrum.data.model.StackJob
+import io.github.rhizonymph.rostrum.data.model.StackCandidate
 import io.github.rhizonymph.rostrum.data.model.BranchTree
 import io.github.rhizonymph.rostrum.data.model.CloseIssueAs
 import io.github.rhizonymph.rostrum.data.model.FeedTab
@@ -57,6 +63,7 @@ import uniffi.rostrum_ffi.FeedObserver
 import uniffi.rostrum_ffi.RostrumCore
 import uniffi.rostrum_ffi.renderMarkdown as ffiRenderMarkdown
 import java.io.File
+import java.time.Instant
 import uniffi.rostrum_ffi.FeedSnapshot as FfiFeedSnapshot
 
 /**
@@ -189,6 +196,17 @@ class FfiRostrumBackend(name: String, openCore: CoreOpener) : RostrumBackend {
     override suspend fun cachedIssueDetail(issue: IssueRef): Outcome<IssueDetail?> =
         core("cachedIssueDetail") { it.cachedIssueDetail(issue.repo, issue.n)?.toModel() }
 
+    override suspend fun loadEarlierIssue(issue: IssueRef): Outcome<IssueDetail> =
+        core("loadEarlierIssue") { it.loadEarlierIssue(issue.repo, issue.n).toModel() }
+
+    override suspend fun editIssue(
+        issue: IssueRef,
+        title: String,
+        body: String,
+        baseUpdatedAt: Instant,
+        overwrite: Boolean,
+    ): Outcome<IssueDetail> = core("editIssue") { it.editIssue(issue.repo, issue.n, title, body, baseUpdatedAt, overwrite).toModel() }
+
     override suspend fun commentOnIssue(issue: IssueRef, body: String): Outcome<Unit> =
         core("commentOnIssue") { it.commentOnIssue(issue.repo, issue.n, body) }
 
@@ -221,6 +239,36 @@ class FfiRostrumBackend(name: String, openCore: CoreOpener) : RostrumBackend {
         assignees: List<String>,
     ): Outcome<Int> = core("createIssue") { it.createIssue(repo, title, body, labels, assignees).toInt() }
 
+    // --- stack actions (on the paired desktop) ---------------------------------
+
+    private fun List<Int>.u(): List<UInt> = map { it.toUInt() }
+
+    override suspend fun planStackRewrite(request: StackPlanRequest): Outcome<StackRewritePlan> =
+        core("planStackRewrite") { it.planStackRewrite(request.toFfi()).toModel() }
+
+    override suspend fun checkStackPlan(request: StackPlanRequest): Outcome<StackPlanCheck> =
+        core("checkStackPlan") { it.checkStackPlan(request.toFfi()).toModel() }
+
+    override suspend fun stackCandidates(repo: String, stack: Int): Outcome<List<StackCandidate>> =
+        core("stackCandidates") { core -> core.stackCandidates(repo, stack.toUInt()).map { it.toModel() } }
+
+    override suspend fun makeStack(repo: String, prs: List<Int>, trunk: String): Outcome<StackJob> =
+        core("makeStack") { it.makeStack(repo, prs.u(), trunk).toModel() }
+
+    override suspend fun arrangeStack(repo: String, prs: List<Int>, trunk: String, confirmRewrite: List<String>): Outcome<StackJob> =
+        core("arrangeStack") { it.arrangeStack(repo, prs.u(), trunk, confirmRewrite).toModel() }
+
+    override suspend fun extendStack(repo: String, stack: Int, prs: List<Int>, confirmRewrite: List<String>): Outcome<StackJob> =
+        core("extendStack") { it.extendStack(repo, stack.toUInt(), prs.u(), confirmRewrite).toModel() }
+
+    override suspend fun mergeStack(repo: String, stack: Int, method: StackMergeMethod): Outcome<StackJob> =
+        core("mergeStack") { it.mergeStack(repo, stack.toUInt(), method.toFfi()).toModel() }
+
+    override suspend fun unstack(repo: String, stack: Int): Outcome<StackJob> =
+        core("unstack") { it.unstack(repo, stack.toUInt()).toModel() }
+
+    override suspend fun stackJob(id: Long): Outcome<StackJob> = core("stackJob") { it.stackJob(id.toULong()).toModel() }
+
     // --- one repository --------------------------------------------------------
 
     override suspend fun repoOverview(repo: String): Outcome<RepoOverview> =
@@ -238,6 +286,9 @@ class FfiRostrumBackend(name: String, openCore: CoreOpener) : RostrumBackend {
 
     override suspend fun pullDetail(pr: PrRef): Outcome<PullDetail> =
         core("pullDetail") { it.pullDetail(pr.repo, pr.n).toModel() }
+
+    override suspend fun loadEarlierPull(pr: PrRef): Outcome<PullDetail> =
+        core("loadEarlierPull") { it.loadEarlierPull(pr.repo, pr.n).toModel() }
 
     override suspend fun cachedPullDetail(pr: PrRef): Outcome<PullDetail?> =
         core("cachedPullDetail") { it.cachedPullDetail(pr.repo, pr.n)?.toModel() }

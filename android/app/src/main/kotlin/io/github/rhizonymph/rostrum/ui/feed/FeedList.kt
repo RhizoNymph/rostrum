@@ -38,6 +38,7 @@ import io.github.rhizonymph.rostrum.ui.components.SegmentPosition
 import io.github.rhizonymph.rostrum.ui.components.cardSegment
 import io.github.rhizonymph.rostrum.ui.items.ItemRow
 import io.github.rhizonymph.rostrum.ui.items.ItemRowContent
+import io.github.rhizonymph.rostrum.ui.items.RowCallbacks
 import io.github.rhizonymph.rostrum.ui.items.repoInitial
 import io.github.rhizonymph.rostrum.ui.items.rowsOf
 import io.github.rhizonymph.rostrum.data.model.RepoBody
@@ -166,7 +167,7 @@ private fun SegmentContent(segment: Segment, tab: FeedTab, now: Instant, actions
             onToggle = { actions.toggleCollapsed(segment.section.repo) },
         )
         is Segment.StaleNotice -> StaleNotice(segment.reason, onRetry = { actions.retryRepo(segment.repo) })
-        is Segment.Item -> ItemRowContent(segment.row, now, actions.openPullRequest, actions.openIssue)
+        is Segment.Item -> ItemRowContent(segment.row, now, RowCallbacks(actions.openPullRequest, actions.openIssue, actions.stackAction))
         is Segment.Body -> RepoBodyRow(segment.section, tab, onRetry = { actions.retryRepo(segment.section.repo) })
     }
 }

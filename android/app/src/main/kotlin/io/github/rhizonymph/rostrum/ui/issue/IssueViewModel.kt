@@ -8,6 +8,7 @@ import io.github.rhizonymph.rostrum.data.RostrumBackend
 import io.github.rhizonymph.rostrum.data.RostrumLog
 import io.github.rhizonymph.rostrum.data.describe
 import io.github.rhizonymph.rostrum.data.model.IssueRef
+import io.github.rhizonymph.rostrum.data.model.TimelineKind
 import io.github.rhizonymph.rostrum.ui.common.ActionState
 import io.github.rhizonymph.rostrum.ui.common.Messages
 import io.github.rhizonymph.rostrum.ui.common.UiState
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.Clock
+import java.time.Instant
 
 /** What the issue screen can ask for. */
 interface IssueActions {
@@ -34,6 +36,15 @@ interface IssueActions {
     fun retryPicker()
     fun toggle(key: String)
     fun closePicker()
+    fun loadEarlier()
+    fun openEditor(field: EditField)
+    fun onEditTitle(title: String)
+    fun onEditBody(body: String)
+    fun showEditMode(mode: EditMode)
+    fun saveEdit()
+    fun reloadTheirs()
+    fun overwrite()
+    fun closeEditor()
 }
 
 object NoIssueActions : IssueActions {
@@ -46,13 +57,24 @@ object NoIssueActions : IssueActions {
     override fun retryPicker() = Unit
     override fun toggle(key: String) = Unit
     override fun closePicker() = Unit
+    override fun loadEarlier() = Unit
+    override fun openEditor(field: EditField) = Unit
+    override fun onEditTitle(title: String) = Unit
+    override fun onEditBody(body: String) = Unit
+    override fun showEditMode(mode: EditMode) = Unit
+    override fun saveEdit() = Unit
+    override fun reloadTheirs() = Unit
+    override fun overwrite() = Unit
+    override fun closeEditor() = Unit
 }
 
 /**
  * One issue: paints the cached screen, then GitHub's; comments, closes as
  * completed or not planned, reopens, and edits labels and assignees through
  * pickers. After every change it re-reads the issue, so the header and the
- * timeline show what GitHub now has.
+ * timeline show what GitHub now has. Edits the title and description
+ * against the opened copy, offering Reload or Overwrite on a conflict, and
+ * pages the timeline back with "load earlier".
  */
 class IssueViewModel(
     private val backend: RostrumBackend,
@@ -193,6 +215,99 @@ class IssueViewModel(
 
     override fun closePicker() {
         _state.update { it.copy(picker = null) }
+    }
+
+    // --- paging ---------------------------------------------------------------------
+
+    override fun loadEarlier() {
+        val detail = (_state.value.detail as? UiState.Loaded)?.data ?: return
+        if (!detail.hasEarlier || _state.value.loadingEarlier) return
+        _state.update { it.copy(loadingEarlier = true) }
+        viewModelScope.launch {
+            when (val earlier = backend.loadEarlierIssue(issue)) {
+                is Outcome.Ok -> _state.update { it.copy(detail = UiState.Loaded(earlier.value), loadingEarlier = false) }
+                is Outcome.Err -> {
+                    failed("issue_load_earlier", earlier.error)
+                    _state.update { it.copy(loadingEarlier = false) }
+                }
+            }
+        }
+    }
+
+    // --- editing --------------------------------------------------------------------
+
+    /** Start from the issue as shown; its `updatedAt` is the base for the conflict check. */
+    override fun openEditor(field: EditField) {
+        val shown = _state.value.issue ?: return
+        val body = (_state.value.detail as? UiState.Loaded)?.data?.timeline
+            ?.firstNotNullOfOrNull { (it.kind as? TimelineKind.Description)?.source }
+            .orEmpty()
+        _state.update { it.copy(editor = IssueEditor(field, shown.updatedAt, shown.title, body)) }
+    }
+
+    private fun updateEditor(transform: (IssueEditor) -> IssueEditor) {
+        _state.update { state -> state.copy(editor = state.editor?.let(transform)) }
+    }
+
+    override fun onEditTitle(title: String) = updateEditor { it.copy(title = title, save = ActionState.Idle) }
+
+    override fun onEditBody(body: String) = updateEditor { it.copy(body = body, save = ActionState.Idle) }
+
+    override fun showEditMode(mode: EditMode) {
+        val editor = _state.value.editor ?: return
+        if (mode == EditMode.Write) return updateEditor { it.copy(mode = mode) }
+        when (val rendered = backend.renderMarkdown(editor.body, issue.repo)) {
+            is Outcome.Ok -> updateEditor { it.copy(mode = mode, preview = rendered.value) }
+            is Outcome.Err -> messages.send("Couldn't render the preview. ${rendered.error.describe()}")
+        }
+    }
+
+    override fun saveEdit() {
+        val editor = _state.value.editor ?: return
+        if (!editor.canSave) return
+        send(editor, base = editor.base, overwrite = false)
+    }
+
+    /** Keep GitHub's version: drop the draft and show the issue as it is now. */
+    override fun reloadTheirs() {
+        _state.update { it.copy(editor = null) }
+        viewModelScope.launch { fetch() }
+    }
+
+    /** Send the draft over GitHub's change. */
+    override fun overwrite() {
+        val editor = _state.value.editor ?: return
+        val conflict = editor.conflict ?: return
+        send(editor.copy(conflict = null), base = conflict.updatedAt, overwrite = true)
+    }
+
+    private fun send(editor: IssueEditor, base: Instant, overwrite: Boolean) {
+        _state.update { it.copy(editor = editor.copy(save = ActionState.Running)) }
+        viewModelScope.launch {
+            when (val saved = backend.editIssue(issue, editor.title.trim(), editor.body, base, overwrite)) {
+                is Outcome.Ok -> {
+                    RostrumLog.i(TAG, "issue_edited", "issue" to issue, "overwrite" to overwrite)
+                    _state.update { it.copy(detail = UiState.Loaded(saved.value), editor = null) }
+                    messages.send("Saved #${issue.number}")
+                }
+                is Outcome.Err -> {
+                    val error = saved.error
+                    RostrumLog.w(TAG, "issue_edit_failed", "issue" to issue, "error" to error::class.simpleName)
+                    updateEditor { current ->
+                        if (error is BackendError.EditConflict) {
+                            current.copy(save = ActionState.Idle, conflict = EditConflictInfo(error.title, error.body, error.updatedAt))
+                        } else {
+                            current.copy(save = ActionState.Failed(error))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    override fun closeEditor() {
+        if (_state.value.editor?.save?.running == true) return
+        _state.update { it.copy(editor = null) }
     }
 
     private fun failed(event: String, error: BackendError) {

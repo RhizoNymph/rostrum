@@ -4,8 +4,10 @@ import io.github.rhizonymph.rostrum.data.model.CloseIssueAs
 import io.github.rhizonymph.rostrum.data.model.IssueDetail
 import io.github.rhizonymph.rostrum.data.model.IssueStatus
 import io.github.rhizonymph.rostrum.data.model.IssueSummary
+import io.github.rhizonymph.rostrum.data.model.MdBlock
 import io.github.rhizonymph.rostrum.ui.common.ActionState
 import io.github.rhizonymph.rostrum.ui.common.UiState
+import io.github.rhizonymph.rostrum.ui.common.running
 import io.github.rhizonymph.rostrum.ui.components.PickerKind
 import io.github.rhizonymph.rostrum.ui.components.PickerState
 import java.time.Instant
@@ -46,6 +48,30 @@ fun issueByline(issue: IssueSummary, age: String): String = buildString {
     issue.milestone?.let { append(" · $it") }
 }
 
+/** Which part of the issue the editor changes (both are saved together). */
+enum class EditField { Title, Description }
+
+/** The description field's two modes. */
+enum class EditMode { Write, Preview }
+
+/** GitHub's title and description, changed while the edit was open. */
+data class EditConflictInfo(val title: String, val body: String, val updatedAt: Instant)
+
+/** An open edit: the draft, and the `updatedAt` it started from. */
+data class IssueEditor(
+    val field: EditField,
+    /** The opened issue's `updatedAt`; a text change on GitHub after it is a conflict. */
+    val base: Instant,
+    val title: String,
+    val body: String,
+    val mode: EditMode = EditMode.Write,
+    val preview: List<MdBlock> = emptyList(),
+    val save: ActionState = ActionState.Idle,
+    val conflict: EditConflictInfo? = null,
+) {
+    val canSave: Boolean get() = title.isNotBlank() && !save.running && conflict == null
+}
+
 /** Everything the issue screen renders. */
 data class IssueUiState(
     val detail: UiState<IssueDetail> = UiState.Loading,
@@ -57,6 +83,10 @@ data class IssueUiState(
     val stateAction: ActionState = ActionState.Idle,
     /** The open labels or assignees picker, if any. */
     val picker: PickerState? = null,
+    /** The title/description editor, if open. */
+    val editor: IssueEditor? = null,
+    /** "Load earlier" is fetching the previous page. */
+    val loadingEarlier: Boolean = false,
     val now: Instant,
 ) {
     val issue: IssueSummary? get() = (detail as? UiState.Loaded)?.data?.issue

@@ -43,6 +43,7 @@ import io.github.rhizonymph.rostrum.ui.components.CommentCard
 import io.github.rhizonymph.rostrum.ui.components.ErrorView
 import io.github.rhizonymph.rostrum.ui.components.EventRow
 import io.github.rhizonymph.rostrum.ui.components.LabelChip
+import io.github.rhizonymph.rostrum.ui.components.LoadEarlierRow
 import io.github.rhizonymph.rostrum.ui.components.LoadingView
 import io.github.rhizonymph.rostrum.ui.components.PickerKind
 import io.github.rhizonymph.rostrum.ui.components.RostrumCard
@@ -71,7 +72,9 @@ fun IssueScreen(
     Column(modifier.fillMaxSize().background(colors.bg).imePadding()) {
         BackTopBar(
             onBack = onBack,
-            actions = { state.issue?.let { IssueMenu(it, busy = state.stateAction.running, onAction = actions::run) } },
+            actions = {
+                state.issue?.let { IssueMenu(it, busy = state.stateAction.running, onAction = actions::run, onEdit = actions::openEditor) }
+            },
         ) {
             TitleStack(ref.repo) {
                 Text("Issue #${ref.number}", style = RostrumText.sheetTitle, color = colors.text, maxLines = 1)
@@ -81,7 +84,7 @@ fun IssueScreen(
             when (val detail = state.detail) {
                 UiState.Loading -> LoadingView(label = "Loading the issue…")
                 is UiState.Error -> ErrorView(detail.error, Modifier.padding(12.dp), title = "Couldn't load this issue", onRetry = actions::retry)
-                is UiState.Loaded -> IssueBody(detail.data, state.now, actions)
+                is UiState.Loaded -> IssueBody(detail.data, state.now, state.loadingEarlier, actions)
             }
         }
         if (state.issue != null) {
@@ -96,14 +99,20 @@ fun IssueScreen(
 }
 
 @Composable
-private fun IssueBody(detail: IssueDetail, now: Instant, actions: IssueActions) {
+private fun IssueBody(detail: IssueDetail, now: Instant, loadingEarlier: Boolean, actions: IssueActions) {
+    // Earlier pages come in after the description, so "Load earlier" sits there.
+    val description = detail.timeline.takeWhile { it.kind is TimelineKind.Description }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item(key = "header") { IssueHeader(detail.issue, now, actions) }
-        items(detail.timeline, key = { it.id }) { entry -> TimelineEntryView(entry, now) }
+        items(description, key = { it.id }) { entry -> TimelineEntryView(entry, now) }
+        if (detail.hasEarlier) {
+            item(key = "load-earlier") { LoadEarlierRow(detail.earlierCount, loadingEarlier, actions::loadEarlier) }
+        }
+        items(detail.timeline.drop(description.size), key = { it.id }) { entry -> TimelineEntryView(entry, now) }
     }
 }
 
@@ -159,14 +168,23 @@ private fun TimelineEntryView(entry: TimelineEntry, now: Instant) {
     }
 }
 
-/** Close as completed / not planned while open; Reopen once closed. */
+/** Edit title / description; close as completed / not planned while open; Reopen once closed. */
 @Composable
-private fun IssueMenu(issue: IssueSummary, busy: Boolean, onAction: (IssueStateAction) -> Unit) {
+private fun IssueMenu(issue: IssueSummary, busy: Boolean, onAction: (IssueStateAction) -> Unit, onEdit: (EditField) -> Unit) {
     val colors = RostrumTheme.colors
     var open by remember { mutableStateOf(false) }
     Box {
         RostrumIconButton(RostrumIcons.MoreVert, "Issue actions", onClick = { open = true }, iconSize = 20.dp, enabled = !busy)
         DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = colors.raised) {
+            EditField.entries.forEach { field ->
+                DropdownMenuItem(
+                    text = { Text(if (field == EditField.Title) "Edit title" else "Edit description", style = RostrumText.label, color = colors.text) },
+                    onClick = {
+                        open = false
+                        onEdit(field)
+                    },
+                )
+            }
             stateActions(issue).forEach { action ->
                 DropdownMenuItem(
                     text = { Text(actionLabel(action), style = RostrumText.label, color = colors.text) },

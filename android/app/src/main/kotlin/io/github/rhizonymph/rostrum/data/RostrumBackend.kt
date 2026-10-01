@@ -54,7 +54,7 @@ import kotlinx.coroutines.flow.Flow
  * Secrets are never persisted here: the app keeps them in its secret store and
  * hands them in with [setGitHubToken] and [setRemote] at start-up.
  */
-interface RostrumBackend {
+interface RostrumBackend : IssuesApi, StackActionsApi {
     // --- session -------------------------------------------------------------
 
     /**
@@ -142,40 +142,6 @@ interface RostrumBackend {
     /** Order pull requests and issues by [key]; [direction] as for [setRepoSort]. */
     suspend fun setItemSort(key: ItemSortKey, direction: SortDirection?): Outcome<FeedSnapshot>
 
-    // --- issues --------------------------------------------------------------
-
-    /** The issue with its timeline, from GitHub. */
-    suspend fun issueDetail(issue: IssueRef): Outcome<IssueDetail>
-
-    /** The last fetched issue screen, if any; never contacts GitHub. */
-    suspend fun cachedIssueDetail(issue: IssueRef): Outcome<IssueDetail?>
-
-    suspend fun commentOnIssue(issue: IssueRef, body: String): Outcome<Unit>
-
-    suspend fun closeIssue(issue: IssueRef, reason: CloseIssueAs): Outcome<Unit>
-
-    suspend fun reopenIssue(issue: IssueRef): Outcome<Unit>
-
-    suspend fun addIssueLabel(issue: IssueRef, label: String): Outcome<Unit>
-
-    suspend fun removeIssueLabel(issue: IssueRef, label: String): Outcome<Unit>
-
-    /** Who issues in [repo] can be assigned to. */
-    suspend fun assignableUsers(repo: String): Outcome<List<UserRef>>
-
-    suspend fun addIssueAssignee(issue: IssueRef, login: String): Outcome<Unit>
-
-    suspend fun removeIssueAssignee(issue: IssueRef, login: String): Outcome<Unit>
-
-    /** Open an issue; answers its number. A blank title is refused. */
-    suspend fun createIssue(
-        repo: String,
-        title: String,
-        body: String,
-        labels: List<String>,
-        assignees: List<String>,
-    ): Outcome<Int>
-
     // --- one repository ------------------------------------------------------
 
     /** The repository's pull requests (stacks grouped) and issues, unfiltered. No network. */
@@ -196,6 +162,9 @@ interface RostrumBackend {
 
     /** The last fetched detail from the cache, or `null`. No network. */
     suspend fun cachedPullDetail(pr: PrRef): Outcome<PullDetail?>
+
+    /** The conversation with its next earlier page merged in; a reload keeps it. */
+    suspend fun loadEarlierPull(pr: PrRef): Outcome<PullDetail>
 
     /** Just the header, from the feed's data. No network. */
     suspend fun pullHeader(pr: PrRef): Outcome<PullHeader>

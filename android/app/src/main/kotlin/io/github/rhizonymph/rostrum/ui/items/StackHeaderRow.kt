@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -21,6 +22,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import io.github.rhizonymph.rostrum.data.model.StackKind
 import io.github.rhizonymph.rostrum.data.model.StackSummary
 import io.github.rhizonymph.rostrum.ui.components.RostrumIconButton
 import io.github.rhizonymph.rostrum.ui.components.RostrumIcons
@@ -28,10 +30,24 @@ import io.github.rhizonymph.rostrum.ui.components.StatusChip
 import io.github.rhizonymph.rostrum.ui.theme.RostrumText
 import io.github.rhizonymph.rostrum.ui.theme.RostrumTheme
 
-/** Stack actions (merge, unstack, make stack) arrive with phase 2b, through the desktop. */
+/** Stack actions (merge, add, unstack, make stack) run on the paired desktop. */
 object StackFlags {
-    /** Off until stack actions exist; the header's overflow menu stays hidden. */
-    const val ACTIONS_ENABLED = false
+    /** The header's actions menu is shown. */
+    const val ACTIONS_ENABLED = true
+}
+
+/** A stack header's menu entry. */
+enum class StackMenuEntry(val label: String) {
+    Merge("Merge stack"),
+    AddTo("Add pull requests"),
+    Unstack("Unstack"),
+    Make("Make stack"),
+}
+
+/** A GitHub stack can be merged, extended and unstacked; a detected chain can be made into one. */
+fun menuEntries(stack: StackSummary): List<StackMenuEntry> = when (stack.kind) {
+    is StackKind.GitHub -> listOf(StackMenuEntry.Merge, StackMenuEntry.AddTo, StackMenuEntry.Unstack)
+    StackKind.Chain -> listOf(StackMenuEntry.Make)
 }
 
 /**
@@ -39,7 +55,7 @@ object StackFlags {
  * trunk (and members not open), and the merge rollup chip.
  */
 @Composable
-fun StackHeaderRow(stack: StackSummary, modifier: Modifier = Modifier) {
+fun StackHeaderRow(stack: StackSummary, modifier: Modifier = Modifier, onAction: ((StackMenuEntry) -> Unit)? = null) {
     val colors = RostrumTheme.colors
     Row(
         modifier = modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp, top = 10.dp, bottom = 4.dp),
@@ -57,16 +73,27 @@ fun StackHeaderRow(stack: StackSummary, modifier: Modifier = Modifier) {
             Text(stackSubline(stack), style = RostrumText.mono12, color = colors.textMuted)
         }
         stack.rollup?.let { StatusChip(it.label, it.role) }
-        if (StackFlags.ACTIONS_ENABLED) StackMenu(stack.title)
+        if (StackFlags.ACTIONS_ENABLED && onAction != null) StackMenu(stack, onAction)
     }
 }
 
-/** The stack's actions; empty until phase 2b. */
+/** The stack's actions, by kind. */
 @Composable
-private fun StackMenu(title: String) {
+private fun StackMenu(stack: StackSummary, onAction: (StackMenuEntry) -> Unit) {
+    val colors = RostrumTheme.colors
     var open by remember { mutableStateOf(false) }
     Box {
-        RostrumIconButton(RostrumIcons.MoreVert, "Actions for $title", onClick = { open = true }, iconSize = 20.dp)
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = RostrumTheme.colors.raised) {}
+        RostrumIconButton(RostrumIcons.MoreVert, "Actions for ${stack.title}", onClick = { open = true }, iconSize = 20.dp)
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = colors.raised) {
+            menuEntries(stack).forEach { entry ->
+                DropdownMenuItem(
+                    text = { Text(entry.label, style = RostrumText.label, color = if (entry == StackMenuEntry.Unstack) colors.dangerText else colors.text) },
+                    onClick = {
+                        open = false
+                        onAction(entry)
+                    },
+                )
+            }
+        }
     }
 }

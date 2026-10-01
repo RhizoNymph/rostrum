@@ -46,5 +46,14 @@ data class IssueRef(val repo: String, val number: Int) {
     override fun toString(): String = "$repo#$number"
 }
 
-/** The issue screen: its header and its timeline (body, comments, events). */
-data class IssueDetail(val issue: IssueSummary, val timeline: List<TimelineEntry>)
+/**
+ * The issue screen: its header and its timeline (body, comments, events),
+ * newest page first; [hasEarlier] when "load earlier" can bring more
+ * ([earlierCount] of them, when GitHub said).
+ */
+data class IssueDetail(
+    val issue: IssueSummary,
+    val timeline: List<TimelineEntry>,
+    val hasEarlier: Boolean = false,
+    val earlierCount: Int? = null,
+)

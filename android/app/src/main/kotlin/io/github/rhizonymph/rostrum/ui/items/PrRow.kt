@@ -56,6 +56,8 @@ fun PrRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     stack: StackPlace? = null,
+    /** Arrange mode: 0 unpicked, else the pick's position (1 = bottom). */
+    pick: Int? = null,
 ) {
     val colors = RostrumTheme.colors
     Row(
@@ -66,6 +68,7 @@ fun PrRow(
             .padding(start = if (stack == null) 14.dp else 8.dp, end = 14.dp, top = 13.dp, bottom = 13.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        if (pick != null) PickBadge(pick)
         if (stack != null) ChainGlyph(stack)
         CiGlyph(
             shape = pr.checks.ciShape(),
@@ -140,6 +143,21 @@ private fun ChainGlyph(place: StackPlace) {
         if (up) Box(Modifier.align(Alignment.TopCenter).width(1.dp).height(10.dp).offset(y = (-13).dp).background(colors.borderStrong))
         if (down) Box(Modifier.align(Alignment.BottomCenter).width(1.dp).fillMaxHeight(0.7f).offset(y = 13.dp).background(colors.borderStrong))
         Icon(RostrumIcons.Link, contentDescription = null, tint = colors.textMuted, modifier = Modifier.align(Alignment.TopCenter).size(14.dp).padding(top = 1.dp))
+    }
+}
+
+/** Arrange mode's checkbox, showing the pick's place in the new stack. */
+@Composable
+private fun PickBadge(pick: Int) {
+    val colors = RostrumTheme.colors
+    Box(Modifier.size(22.dp).clearAndSetSemantics { contentDescription = if (pick > 0) "Picked, number $pick" else "Not picked" }, contentAlignment = Alignment.Center) {
+        if (pick > 0) {
+            Box(Modifier.size(22.dp).background(colors.accent, androidx.compose.foundation.shape.CircleShape), contentAlignment = Alignment.Center) {
+                Text(pick.toString(), style = RostrumText.mono11, color = colors.onAccent)
+            }
+        } else {
+            io.github.rhizonymph.rostrum.ui.components.CheckboxVisual(false)
+        }
     }
 }
 
