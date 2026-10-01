@@ -90,6 +90,13 @@ always `Unauthorized` (the device was revoked), whatever the body says.
 | `/api/v1/sync-all` | GET | token | → `SyncRun \| null` |
 | `/api/v1/handoffs` | GET | token | → `[HandoffSession]` |
 | `/api/v1/device` | DELETE | token | → `null` |
+| `/api/v1/stacks/plan` | POST | token | `StackPlanRequest` → `StackRewritePlan` |
+| `/api/v1/stacks/make` | POST | token | `MakeStackRequest` → `StackJobStatus` |
+| `/api/v1/stacks/arrange` | POST | token | `ArrangeStackRequest` → `StackJobStatus` |
+| `/api/v1/stacks/extend` | POST | token | `ExtendStackRequest` → `StackJobStatus` |
+| `/api/v1/stacks/merge` | POST | token | `MergeStackRequest` → `StackJobStatus` |
+| `/api/v1/stacks/unstack` | POST | token | `UnstackRequest` → `StackJobStatus` |
+| `/api/v1/stacks/jobs/{id}` | GET | token | → `StackJobStatus` |
 
 Errors are `ApiError { code, message }` with `ApiErrorCode::http_status()` as
 the response status.
@@ -105,6 +112,7 @@ the response status.
 | `crates/rostrum-remote/src/host.rs` | `Host`: IP or DNS name, URL authority |
 | `crates/rostrum-remote/src/pairing.rs` | `Endpoint`, `PairingOffer` and its link, `Hello`, `PairRequest`, `PairResponse`, `GitHubHandover` |
 | `crates/rostrum-remote/src/api.rs` | Authenticated request/response types, `SyncRun::summary`, `ApiError` |
+| `crates/rostrum-remote/src/stack.rs` | Stack requests, the dry run (`StackRewritePlan`, `confirms_exactly`), stack jobs (`StackJobId`, `StackJobStatus`, `StackJobState`, `StackJobResult`) |
 | `crates/rostrum-remote/src/client.rs` | `RemoteClient`, `probe`, `PinnedVerifier`, `ClientError` |
 | `crates/rostrum-remote/tests/client.rs` | The client against a real TLS listener: pinning, fallback, probe, errors |
 
@@ -119,6 +127,46 @@ and the refresh interval and notification switch stay per device. Malformed
 repository entries are dropped server-side; logins arrive normalised as
 `LoginKey`s.
 
+## Stacks from a phone
+
+The phone cannot run `gh`, so it asks the desktop to (see
+`docs/features/stacks.md` and `docs/features/rostrumd.md`). Five
+operations — make a stack from a chain, arrange pull requests into one, add
+pull requests to a stack's top, merge a stack, unstack — each `POST` a
+request naming the repository (by `RepoId`, never a path), the pull requests
+(bottom first) and the trunk or stack number.
+
+**They are jobs, like sync-all.** The `POST` validates the request against
+GitHub as it is now and starts the job, answering at once with its
+`StackJobStatus` (`id`, `repo`, `kind`, `started_at`, `finished_at`,
+`state`). `GET /api/v1/stacks/jobs/{id}` (`routes::stack_job(id)`) polls it.
+`state` is `running` (with the current step as `progress`), or finished:
+`done` (with a `result`: `stacked`, `extended`, `merged`, `unstacked`),
+`conflicted`, `handed_off` (session and worktree; run the same request again
+once it is resolved), or `failed` (with `pushed`, the pull requests already
+force-pushed when it stopped). Every finished state carries `detail`, one line
+to show as-is. The desktop remembers its most recent jobs only; an old id is
+404.
+
+**Rewriting is never implicit.** Arrange and extend carry `confirm_rewrite`:
+the branches the phone showed the user. `POST /api/v1/stacks/plan` is the dry
+run that returns them (`StackRewritePlan::confirm_rewrite()`); the desktop
+recomputes the set itself and starts the job only when the two are equal as
+sets (`confirms_exactly`: order and repetition do not matter, a missing or an
+extra branch does). Otherwise it answers 409 `rewrite_not_confirmed`, whose
+message names the branches. Make takes no confirmation and answers the same
+409 when the chain would need a rewrite. Values that cannot be valid do not
+parse: stack `0`, a branch starting with `-`, an unknown merge method.
+
+At most one stack job — or any other job — runs on a clone at a time: 409
+`busy`, checked before anything else.
+
+**Compatibility.** The routes and types are additive and `API_VERSION` stays
+1: an older phone never calls them, and a newer phone talking to an older
+desktop gets 404 for them. The one change older code can see is the new
+`ApiErrorCode::RewriteNotConfirmed`, which only the stack routes return; an
+older client would decode it as an internal error.
+
 ## Invariants
 
 - An `Endpoint` always has at least one host and a non-zero port; it cannot be
@@ -127,5 +175,7 @@ repository entries are dropped server-side; logins arrive normalised as
 - No secret type prints its value in `Debug`.
 - The server never stores a device token, only its hash.
 - A request is sent to at most one host.
+- A stack operation that rewrites branches runs only when the request
+  confirms exactly the branches the desktop computed.
 - The client uses the `ring` provider explicitly, so no process-wide default
   provider needs installing and nothing in the phone's build needs cmake.

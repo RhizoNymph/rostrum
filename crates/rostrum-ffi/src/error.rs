@@ -224,6 +224,9 @@ impl From<ApiErrorCode> for RemoteErrorCode {
             ApiErrorCode::PairingCodeExpired => Self::PairingCodeExpired,
             ApiErrorCode::RateLimited => Self::RateLimited,
             ApiErrorCode::Busy => Self::Busy,
+            // The phone does not drive stacks through the FFI yet; until it
+            // does, an unconfirmed rewrite reads as the request being wrong.
+            ApiErrorCode::RewriteNotConfirmed => Self::BadRequest,
             ApiErrorCode::Internal => Self::Internal,
         }
     }

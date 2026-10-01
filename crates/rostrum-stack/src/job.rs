@@ -87,7 +87,9 @@ impl Progress {
         Self(None)
     }
 
-    pub(crate) fn send(&self, progress: StackProgress) {
+    /// Report a step. Public so a stand-in for a job (a test double, a
+    /// caller wrapping one) reports through the same channel.
+    pub fn send(&self, progress: StackProgress) {
         tracing::debug!(?progress, "stack progress");
         if let Some(sender) = &self.0 {
             let _ = sender.unbounded_send(progress);

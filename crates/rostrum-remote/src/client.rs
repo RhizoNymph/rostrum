@@ -38,6 +38,10 @@ use crate::{
     pairing::{Endpoint, GitHubHandover, Hello, PairRequest, PairResponse},
     routes,
     secret::DeviceToken,
+    stack::{
+        ArrangeStackRequest, ExtendStackRequest, MakeStackRequest, MergeStackRequest, StackJobId,
+        StackJobStatus, StackPlanRequest, StackRewritePlan, UnstackRequest,
+    },
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(4);
@@ -167,6 +171,64 @@ impl RemoteClient {
 
     pub async fn handoffs(&self) -> Result<Vec<HandoffSession>, ClientError> {
         self.call(Method::GET, routes::HANDOFFS, None::<&()>, QUICK)
+            .await
+    }
+
+    /// Which branches an arrangement or extension would rebase and
+    /// force-push. Show them, then send exactly these as `confirm_rewrite`.
+    pub async fn plan_stack_rewrite(
+        &self,
+        request: &StackPlanRequest,
+    ) -> Result<StackRewritePlan, ClientError> {
+        self.call(Method::POST, routes::STACK_PLAN, Some(request), QUICK)
+            .await
+    }
+
+    /// Start making a chain that already chains into a stack.
+    pub async fn make_stack(
+        &self,
+        request: &MakeStackRequest,
+    ) -> Result<StackJobStatus, ClientError> {
+        self.call(Method::POST, routes::STACK_MAKE, Some(request), QUICK)
+            .await
+    }
+
+    /// Start arranging pull requests into a stack.
+    pub async fn arrange_stack(
+        &self,
+        request: &ArrangeStackRequest,
+    ) -> Result<StackJobStatus, ClientError> {
+        self.call(Method::POST, routes::STACK_ARRANGE, Some(request), QUICK)
+            .await
+    }
+
+    /// Start adding pull requests to the top of a stack.
+    pub async fn extend_stack(
+        &self,
+        request: &ExtendStackRequest,
+    ) -> Result<StackJobStatus, ClientError> {
+        self.call(Method::POST, routes::STACK_EXTEND, Some(request), QUICK)
+            .await
+    }
+
+    /// Start merging a whole stack.
+    pub async fn merge_stack(
+        &self,
+        request: &MergeStackRequest,
+    ) -> Result<StackJobStatus, ClientError> {
+        self.call(Method::POST, routes::STACK_MERGE, Some(request), QUICK)
+            .await
+    }
+
+    /// Start dissolving a stack.
+    pub async fn unstack(&self, request: &UnstackRequest) -> Result<StackJobStatus, ClientError> {
+        self.call(Method::POST, routes::STACK_UNSTACK, Some(request), QUICK)
+            .await
+    }
+
+    /// Poll a stack job.
+    pub async fn stack_job(&self, id: StackJobId) -> Result<StackJobStatus, ClientError> {
+        self.call(Method::GET, &routes::stack_job(id), None::<&()>, QUICK)
             .await
     }
 
