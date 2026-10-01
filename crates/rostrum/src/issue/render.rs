@@ -1,7 +1,7 @@
 //! Drawing the issue pane: header, timeline, and the actions bar.
 
 use gpui::{AnyElement, App, Context, Hsla, Window, div, prelude::*, rems};
-use rostrum_core::{CloseReason, Issue, IssueState};
+use rostrum_core::{CloseReason, Issue, IssueState, TimelineItem};
 use rostrum_github::{CloseAs, IssueStateChange};
 use rostrum_ui::{
     ActiveTheme, Theme,
@@ -9,12 +9,12 @@ use rostrum_ui::{
 };
 
 use crate::{
-    detail::conversation::{centered, render_plain_item},
+    detail::conversation::{centered, load_earlier_button, render_plain_item},
     loadable::Loadable,
     pickers::{self, OpenPicker},
 };
 
-use super::IssuePane;
+use super::{IssuePane, edit::EditPhase};
 
 /// GitHub's colour language for an issue's state: green open, purple done,
 /// grey not planned.
@@ -54,12 +54,28 @@ impl IssuePane {
             .p_4()
             .border_b_1()
             .border_color(theme.border)
-            .child(
-                div()
-                    .text_size(rems(1.1))
-                    .text_color(theme.text)
-                    .child(issue.title.clone()),
-            )
+            .child(match &self.editing {
+                // The title input replaces the title while editing; Save and
+                // Cancel sit with the description editor below.
+                Some(editing) => div().child(editing.title.clone()).into_any_element(),
+                None => h_flex()
+                    .gap_2()
+                    .items_start()
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(rems(1.1))
+                            .text_color(theme.text)
+                            .child(issue.title.clone()),
+                    )
+                    .child(
+                        Button::new("issue-edit-title", "Edit")
+                            .disabled(busy || self.detail.loaded().is_none())
+                            .tooltip("Edit the title and description")
+                            .on_click(Self::on_click(cx, |this, cx| this.open_editor(cx))),
+                    )
+                    .into_any_element(),
+            })
             .child(
                 h_flex()
                     .gap_2()
@@ -146,6 +162,7 @@ impl IssuePane {
             Loadable::Loaded(detail) => detail,
         };
         let (owner, repo) = (self.repo.owner(), self.repo.name());
+        let busy = self.busy.is_some();
 
         div()
             .id("issue-timeline")
@@ -153,15 +170,132 @@ impl IssuePane {
             .overflow_y_scroll()
             .p_4()
             .child(
-                v_flex().gap_3().children(
-                    detail
-                        .conversation
-                        .items
-                        .iter()
-                        .enumerate()
-                        .map(|(ix, item)| render_plain_item(item, ix, owner, repo, &theme, cx)),
-                ),
+                v_flex()
+                    .gap_3()
+                    .when_some(
+                        load_earlier_button(&detail.conversation, self.earlier_loading),
+                        |el, button| {
+                            el.child(
+                                button
+                                    .on_click(Self::on_click(cx, |this, cx| this.load_earlier(cx))),
+                            )
+                        },
+                    )
+                    .children(
+                        detail
+                            .conversation
+                            .items
+                            .iter()
+                            .enumerate()
+                            .map(|(ix, item)| match (item, &self.editing) {
+                                (TimelineItem::Body { .. }, Some(_)) => self.render_editor(cx),
+                                (TimelineItem::Body { .. }, None) => v_flex()
+                                    .gap_1()
+                                    .child(
+                                        h_flex().justify_end().child(
+                                            Button::new("issue-edit-body", "Edit description")
+                                                .disabled(busy)
+                                                .on_click(Self::on_click(cx, |this, cx| {
+                                                    this.open_editor(cx)
+                                                })),
+                                        ),
+                                    )
+                                    .child(render_plain_item(item, ix, owner, repo, &theme, cx))
+                                    .into_any_element(),
+                                _ => render_plain_item(item, ix, owner, repo, &theme, cx),
+                            }),
+                    ),
             )
+            .into_any_element()
+    }
+
+    /// The description editor, with Save and Cancel, and the conflict panel
+    /// when someone else edited the issue while it was open.
+    fn render_editor(&self, cx: &Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        let Some(editing) = &self.editing else {
+            return div().into_any_element();
+        };
+        let busy = self.busy.is_some();
+        let checking = matches!(editing.phase, EditPhase::Checking);
+
+        v_flex()
+            .gap_2()
+            .p_3()
+            .border_1()
+            .border_color(theme.accent)
+            .child(editing.body.clone())
+            .when_some(editing.error.clone(), |el, message| {
+                el.child(
+                    div()
+                        .text_size(rems(0.75))
+                        .text_color(theme.danger)
+                        .child(message),
+                )
+            })
+            .map(|el| match &editing.phase {
+                EditPhase::Conflict(current) => el.child(
+                    v_flex()
+                        .gap_2()
+                        .p_2()
+                        .bg(theme.surface_raised)
+                        .child(
+                            div()
+                                .text_size(rems(0.78))
+                                .text_color(theme.warning)
+                                .child(format!(
+                                    "This issue was edited elsewhere {} — its title is now “{}”. \
+                                     Reload to start from that version, or overwrite it with yours.",
+                                    crate::feed::relative_time(current.issue.updated_at),
+                                    current.issue.title
+                                )),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    Button::new("issue-edit-reload", "Reload")
+                                        .style(ButtonStyle::Primary)
+                                        .disabled(busy)
+                                        .tooltip("Replace your text with the current version")
+                                        .on_click(Self::on_click(cx, |this, cx| {
+                                            this.reload_edit(cx)
+                                        })),
+                                )
+                                .child(
+                                    Button::new("issue-edit-overwrite", "Overwrite")
+                                        .style(ButtonStyle::Danger)
+                                        .disabled(busy)
+                                        .tooltip("Save your version over the other edit")
+                                        .on_click(Self::on_click(cx, |this, cx| {
+                                            this.overwrite_edit(cx)
+                                        })),
+                                )
+                                .child(Button::new("issue-edit-cancel", "Cancel").on_click(
+                                    Self::on_click(cx, |this, cx| this.cancel_edit(cx)),
+                                )),
+                        ),
+                ),
+                EditPhase::Editing | EditPhase::Checking => el.child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            Button::new(
+                                "issue-edit-save",
+                                if checking { "Checking…" } else { "Save" },
+                            )
+                            .style(ButtonStyle::Primary)
+                            .disabled(busy || checking)
+                            .tooltip("Save the title and description (ctrl-enter)")
+                            .on_click(Self::on_click(cx, |this, cx| this.save_edit(cx))),
+                        )
+                        .child(
+                            Button::new("issue-edit-cancel", "Cancel")
+                                .disabled(busy)
+                                .on_click(Self::on_click(cx, |this, cx| this.cancel_edit(cx))),
+                        ),
+                ),
+            })
             .into_any_element()
     }
 

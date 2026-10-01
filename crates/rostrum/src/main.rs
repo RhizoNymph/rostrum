@@ -4,6 +4,7 @@ mod detail;
 mod feed;
 mod issue;
 mod loadable;
+mod markdown_editor;
 mod nav;
 mod notify;
 mod pickers;
