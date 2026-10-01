@@ -106,7 +106,7 @@ android {
         applicationId = "io.github.rhizonymph.rostrum"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 6
+        versionCode = 7
         versionName = "0.1.0"
         ndk { abiFilters += androidAbis }
     }
