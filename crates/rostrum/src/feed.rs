@@ -1192,6 +1192,7 @@ mod tests {
             comment_count: 0,
             checks: None,
             base_divergence: None,
+            pushed_at: None,
         }
     }
 
@@ -1201,6 +1202,7 @@ mod tests {
             prs,
             load: rostrum_core::LoadState::Loaded { at: Utc::now() },
             collapsed,
+            meta: None,
         }
     }
 

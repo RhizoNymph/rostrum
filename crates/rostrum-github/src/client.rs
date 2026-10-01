@@ -5,7 +5,9 @@ use reqwest::{
     Client, Method, RequestBuilder, StatusCode,
     header::{ACCEPT, HeaderMap},
 };
-use rostrum_core::{Conversation, Divergence, Label, NodeId, PrNumber, PullRequest, RepoId, User};
+use rostrum_core::{
+    Conversation, Divergence, Label, NodeId, PrNumber, PullRequest, RepoId, RepoMeta, User,
+};
 use serde::de::DeserializeOwned;
 use serde_json::json;
 
@@ -34,6 +36,9 @@ const MAX_PAGES: usize = 100;
 #[derive(Debug)]
 pub struct RepoPullRequests {
     pub pull_requests: Vec<PullRequest>,
+    /// The repository's own facts, for sorting the feed's repositories.
+    /// `None` only if GitHub left them out of the answer.
+    pub meta: Option<RepoMeta>,
     pub rate_limit: Option<RateLimit>,
     /// Who the token belongs to, as reported by this same round trip. `None`
     /// only if GitHub omitted it, which nothing in the app treats as an error:
@@ -114,7 +119,9 @@ impl GitHubClient {
             resource: repo.to_string(),
         })?;
 
+        let meta = repository.meta.into_domain();
         Ok(RepoPullRequests {
+            meta,
             pull_requests: repository
                 .pull_requests
                 .into_vec()

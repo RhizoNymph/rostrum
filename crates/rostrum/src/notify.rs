@@ -136,6 +136,7 @@ mod tests {
             comment_count: 0,
             checks: None,
             base_divergence: None,
+            pushed_at: None,
         }
     }
 
@@ -145,6 +146,7 @@ mod tests {
             prs: values.iter().copied().map(pr).collect(),
             load: LoadState::Loaded { at: Utc::now() },
             collapsed: false,
+            meta: None,
         }
     }
 

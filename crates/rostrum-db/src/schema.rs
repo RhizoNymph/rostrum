@@ -24,8 +24,12 @@ pub(crate) const DRAFT_SCHEMA_VERSION_KEY: &str = "draft_schema_version";
 ///
 /// These names are compile-time constants; they are the only values ever
 /// interpolated into SQL text in this crate.
-pub(crate) const CACHE_TABLES: &[&str] =
-    &["cache_pull_request", "cache_conversation", "cache_http"];
+pub(crate) const CACHE_TABLES: &[&str] = &[
+    "cache_pull_request",
+    "cache_conversation",
+    "cache_http",
+    "cache_repo_meta",
+];
 
 const CREATE_META: &str = "\
 CREATE TABLE IF NOT EXISTS meta (
@@ -84,6 +88,15 @@ CREATE TABLE IF NOT EXISTS cache_http (
     updated_at TEXT NOT NULL
 )",
     "CREATE INDEX IF NOT EXISTS cache_http_age ON cache_http (updated_at)",
+    // Added without a version bump: `IF NOT EXISTS` creates it on the next
+    // open of an existing database, and nothing already cached is invalid.
+    "\
+CREATE TABLE IF NOT EXISTS cache_repo_meta (
+    repo       TEXT PRIMARY KEY,
+    payload    TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)",
+    "CREATE INDEX IF NOT EXISTS cache_repo_meta_age ON cache_repo_meta (updated_at)",
 ];
 
 /// Bring an open database up to the current schema.

@@ -60,8 +60,7 @@ impl Db {
 mod tests {
     use chrono::Utc;
     use rostrum_core::{
-        LoadState, LoginKey, MergeStateStatus, Mergeable, NodeId, PrNumber, PullRequest,
-        RepoState,
+        LoadState, LoginKey, MergeStateStatus, Mergeable, NodeId, PrNumber, PullRequest, RepoState,
     };
 
     use super::*;
@@ -95,6 +94,7 @@ mod tests {
                 comment_count: 0,
                 checks: None,
                 base_divergence: None,
+                pushed_at: None,
             })
             .collect();
         repo
