@@ -7,7 +7,7 @@
 //! explicitly before anything runs.
 
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, rems};
-use rostrum_core::{PrNumber, RefName, RepoId, StackPlan, plan_stack};
+use rostrum_core::{PrNumber, RefName, RepoId, StackNumber, StackPlan, plan_stack};
 use rostrum_ui::{
     ActiveTheme,
     components::{Button, ButtonStyle, Checkbox, h_flex, v_flex},
@@ -18,9 +18,20 @@ use super::{
     stacks::{StackPanel, chain_text, paragraph, store_of},
 };
 
+/// What the picked pull requests are for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PickTarget {
+    /// A new stack ("Arrange PRs").
+    NewStack,
+    /// The top of an existing stack ("Add to stack"). The repository is
+    /// fixed by the stack, so picks elsewhere are ignored.
+    Extend(StackNumber),
+}
+
 /// Pull requests picked for an arrangement, in the order they were clicked.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Picking {
+    pub(super) target: PickTarget,
     /// `None` until the first pick fixes the repository.
     pub(super) repo: Option<RepoId>,
     pub(super) picked: Vec<PrNumber>,
@@ -29,7 +40,17 @@ pub(super) struct Picking {
 impl Picking {
     fn new() -> Self {
         Self {
+            target: PickTarget::NewStack,
             repo: None,
+            picked: Vec::new(),
+        }
+    }
+
+    /// Picking additions for stack `stack` of `repo`.
+    pub(super) fn extending(repo: RepoId, stack: StackNumber) -> Self {
+        Self {
+            target: PickTarget::Extend(stack),
+            repo: Some(repo),
             picked: Vec::new(),
         }
     }
@@ -38,6 +59,9 @@ impl Picking {
     /// there: a stack never spans repositories.
     pub(super) fn toggle(&mut self, repo: &RepoId, number: PrNumber) {
         if self.repo.as_ref() != Some(repo) {
+            if let PickTarget::Extend(_) = self.target {
+                return;
+            }
             self.repo = Some(repo.clone());
             self.picked.clear();
         }
@@ -57,6 +81,47 @@ impl Picking {
             .iter()
             .position(|n| *n == number)
             .map(|at| at + 1)
+    }
+}
+
+/// The picking bar's text, its button, how many picks the button needs, and
+/// the button's tooltip.
+pub(super) fn picking_labels(picking: &Picking) -> (String, &'static str, usize, &'static str) {
+    let count = picking.picked.len();
+    match (picking.target, &picking.repo) {
+        (PickTarget::Extend(stack), Some(repo)) if count > 0 => (
+            format!(
+                "Add to stack {stack}: {count} picked — {} on top",
+                chain_text(&picking.picked)
+            ),
+            "Add…",
+            1,
+            "Order them and confirm",
+        ),
+        (PickTarget::Extend(stack), repo) => (
+            format!(
+                "Add to stack {stack}: click open pull requests of {} to put on top, lowest first",
+                repo.as_ref().map(RepoId::to_string).unwrap_or_default()
+            ),
+            "Add…",
+            1,
+            "Order them and confirm",
+        ),
+        (PickTarget::NewStack, Some(repo)) if count > 0 => (
+            format!(
+                "Arrange: {count} picked in {repo} — {}",
+                chain_text(&picking.picked)
+            ),
+            "Arrange…",
+            2,
+            "Order them, choose the trunk, and confirm",
+        ),
+        (PickTarget::NewStack, _) => (
+            "Arrange: click pull requests of one repository, bottom of the stack first".into(),
+            "Arrange…",
+            2,
+            "Order them, choose the trunk, and confirm",
+        ),
     }
 }
 
@@ -82,7 +147,10 @@ impl FeedView {
 
     pub(super) fn stop_picking(&mut self, cx: &mut Context<Self>) {
         self.stack_ui.picking = None;
-        if matches!(self.stack_ui.panel, Some(StackPanel::Arrange { .. })) {
+        if matches!(
+            self.stack_ui.panel,
+            Some(StackPanel::Arrange { .. } | StackPanel::Extend { .. })
+        ) {
             self.stack_ui.panel = None;
         }
         cx.notify();
@@ -107,12 +175,17 @@ impl FeedView {
 
     fn open_arrange(&mut self, cx: &mut Context<Self>) {
         let Some(Picking {
+            target,
             repo: Some(repo),
             picked,
         }) = self.stack_ui.picking.clone()
         else {
             return;
         };
+        if let PickTarget::Extend(stack) = target {
+            self.open_extend(repo, stack, picked, cx);
+            return;
+        }
         // Suggest the base of the first pick that is not itself a picked head:
         // the branch the arrangement most plausibly sits on.
         let trunk = store_of(self, cx).state.repo(&repo).and_then(|state| {
@@ -173,13 +246,7 @@ impl FeedView {
         let picking = self.stack_ui.picking.clone()?;
         let theme = cx.theme().clone();
         let count = picking.picked.len();
-        let label = match &picking.repo {
-            Some(repo) if count > 0 => format!(
-                "Arrange: {count} picked in {repo} — {}",
-                chain_text(&picking.picked)
-            ),
-            _ => "Arrange: click pull requests of one repository, bottom of the stack first".into(),
-        };
+        let (label, button, min, tip) = picking_labels(&picking);
         Some(
             h_flex()
                 .gap_2()
@@ -195,10 +262,10 @@ impl FeedView {
                         .child(label),
                 )
                 .child(
-                    Button::new("arrange-open", "Arrange…")
+                    Button::new("arrange-open", button)
                         .style(ButtonStyle::Primary)
-                        .disabled(count < 2)
-                        .tooltip("Order them, choose the trunk, and confirm")
+                        .disabled(count < min)
+                        .tooltip(tip)
                         .on_click(cx.listener(|this, _, _window, cx| this.open_arrange(cx))),
                 )
                 .child(
@@ -399,6 +466,37 @@ mod tests {
         assert_eq!(picking.repo, Some(repo("b")));
         assert_eq!(picking.picked, vec![PrNumber(7)]);
         assert_eq!(picking.position(&repo("a"), PrNumber(1)), None);
+    }
+
+    fn seven() -> StackNumber {
+        StackNumber::new(7).expect("non-zero")
+    }
+
+    #[test]
+    fn picking_for_a_stack_ignores_other_repositories() {
+        let mut picking = Picking::extending(repo("a"), seven());
+        picking.toggle(&repo("b"), PrNumber(9));
+        assert_eq!(picking.repo, Some(repo("a")));
+        assert!(picking.picked.is_empty());
+        picking.toggle(&repo("a"), PrNumber(4));
+        picking.toggle(&repo("a"), PrNumber(3));
+        assert_eq!(picking.picked, vec![PrNumber(4), PrNumber(3)]);
+        assert_eq!(picking.position(&repo("a"), PrNumber(3)), Some(2));
+    }
+
+    #[test]
+    fn the_bar_asks_for_one_addition_but_two_for_a_new_stack() {
+        let mut extending = Picking::extending(repo("a"), seven());
+        let (label, button, min, _) = picking_labels(&extending);
+        assert!(label.starts_with("Add to stack 7"), "{label}");
+        assert_eq!((button, min), ("Add…", 1));
+        extending.toggle(&repo("a"), PrNumber(3));
+        let (label, ..) = picking_labels(&extending);
+        assert!(label.contains("#3 on top"), "{label}");
+
+        let (label, button, min, _) = picking_labels(&Picking::new());
+        assert!(label.starts_with("Arrange"), "{label}");
+        assert_eq!((button, min), ("Arrange…", 2));
     }
 
     #[test]
