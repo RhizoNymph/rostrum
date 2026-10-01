@@ -10,8 +10,10 @@
 use std::collections::BTreeSet;
 
 use crate::{
+    issue::Issue,
     model::{LoginKey, PullRequest},
     state::{LoadState, RepoState},
+    tabs::FeedTab,
 };
 
 /// Index into `AppState::repos`.
@@ -23,6 +25,15 @@ pub struct RepoIx(pub usize);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PrIx(pub usize);
 
+/// Index into `RepoState::issues`, unfiltered, exactly like [`PrIx`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct IssueIx(pub usize);
+
+/// One row of the feed.
+///
+/// A feed is built for one tab at a time, so a stream holds `PrRow`s or
+/// `IssueRow`s, never both; the notice rows mean "this repository's list for
+/// the active tab".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FeedRow {
     RepoHeader {
@@ -31,6 +42,10 @@ pub enum FeedRow {
     PrRow {
         repo: RepoIx,
         pr: PrIx,
+    },
+    IssueRow {
+        repo: RepoIx,
+        issue: IssueIx,
     },
     /// Loaded successfully, nothing to show (no open PRs, or none match).
     RepoEmpty {
@@ -55,6 +70,7 @@ impl FeedRow {
         match *self {
             Self::RepoHeader { repo }
             | Self::PrRow { repo, .. }
+            | Self::IssueRow { repo, .. }
             | Self::RepoEmpty { repo }
             | Self::RepoError { repo }
             | Self::RepoLoading { repo }
@@ -64,6 +80,11 @@ impl FeedRow {
 
     pub fn is_spacer(&self) -> bool {
         matches!(self, Self::Spacer { .. })
+    }
+
+    /// Whether keyboard navigation can land here: an item, not chrome.
+    pub fn is_item(&self) -> bool {
+        matches!(self, Self::PrRow { .. } | Self::IssueRow { .. })
     }
 }
 
@@ -119,23 +140,37 @@ impl FeedFilter {
         if self.hide_drafts && pr.is_draft {
             return false;
         }
-        if !self.accepts_author(pr) {
+        if !self.accepts_author(|login| pr.is_authored_by(login), |login| pr.involves(login)) {
             return false;
         }
         pr.matches_query(&self.query)
     }
 
-    /// Whether the author selection lets `pr` through. An empty selection lets
-    /// everything through; otherwise one selected login must match.
-    fn accepts_author(&self, pr: &PullRequest) -> bool {
+    /// The issue counterpart of [`FeedFilter::accepts`]: the same author
+    /// selection and search, where "involved" means assigned. `hide_drafts`
+    /// has nothing to act on — issues have no drafts.
+    pub fn accepts_issue(&self, issue: &Issue) -> bool {
+        self.accepts_author(
+            |login| issue.is_authored_by(login),
+            |login| issue.involves(login),
+        ) && issue.matches_query(&self.query)
+    }
+
+    /// Whether the author selection lets an item through. An empty selection
+    /// lets everything through; otherwise one selected login must match.
+    fn accepts_author(
+        &self,
+        authored_by: impl Fn(&LoginKey) -> bool,
+        involves: impl Fn(&LoginKey) -> bool,
+    ) -> bool {
         if self.authors.is_empty() {
             return true;
         }
         self.authors.iter().any(|login| {
             if self.include_involved {
-                pr.involves(login)
+                involves(login)
             } else {
-                pr.is_authored_by(login)
+                authored_by(login)
             }
         })
     }
@@ -160,9 +195,16 @@ impl FeedFilter {
 pub struct Feed {
     rows: Vec<FeedRow>,
     hidden_repos: usize,
+    /// Which list the rows were built from. Part of equality so a tab switch
+    /// between two streams of identical notice rows still counts as a change.
+    tab: FeedTab,
 }
 
 impl Feed {
+    pub fn tab(&self) -> FeedTab {
+        self.tab
+    }
+
     pub fn rows(&self) -> &[FeedRow] {
         &self.rows
     }
@@ -211,31 +253,61 @@ impl Feed {
     }
 }
 
-/// Build the feed's row stream.
+/// Build the pull request feed's row stream.
 ///
 /// Pure: the only inputs are state and filter, which makes every invariant
 /// below directly testable without a window.
 pub fn flatten(repos: &[RepoState], filter: &FeedFilter) -> Feed {
+    flatten_tab(repos, filter, FeedTab::PullRequests)
+}
+
+/// Build the row stream for one tab.
+///
+/// Both tabs share every rule — container runs, hiding empty repositories,
+/// collapse, the loading/error/empty notices — and differ only in which list
+/// of a repository they read and which [`LoadState`] governs it. Issues have
+/// their own load state, so a repository whose issues failed while its pull
+/// requests loaded shows the error on the Issues tab alone.
+pub fn flatten_tab(repos: &[RepoState], filter: &FeedFilter, tab: FeedTab) -> Feed {
     let mut rows = Vec::new();
     let mut hidden_repos = 0;
 
     for (ix, repo) in repos.iter().enumerate() {
         let repo_ix = RepoIx(ix);
 
-        let visible: Vec<PrIx> = repo
-            .prs
-            .iter()
-            .enumerate()
-            .filter(|(_, pr)| filter.accepts(pr))
-            .map(|(pr_ix, _)| PrIx(pr_ix))
-            .collect();
+        let (visible, load, holds_any): (Vec<FeedRow>, &LoadState, bool) = match tab {
+            FeedTab::PullRequests => (
+                repo.prs
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, pr)| filter.accepts(pr))
+                    .map(|(pr_ix, _)| FeedRow::PrRow {
+                        repo: repo_ix,
+                        pr: PrIx(pr_ix),
+                    })
+                    .collect(),
+                &repo.load,
+                !repo.prs.is_empty(),
+            ),
+            FeedTab::Issues => (
+                repo.issues
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, issue)| filter.accepts_issue(issue))
+                    .map(|(issue_ix, _)| FeedRow::IssueRow {
+                        repo: repo_ix,
+                        issue: IssueIx(issue_ix),
+                    })
+                    .collect(),
+                &repo.issues_load,
+                !repo.issues.is_empty(),
+            ),
+        };
 
         // A repository is only hidden once it has actually loaded. One that is
         // still loading or has failed must stay visible — otherwise a broken
         // repo silently disappears instead of showing its error.
-        if filter.hide_empty_repos
-            && visible.is_empty()
-            && matches!(repo.load, LoadState::Loaded { .. })
+        if filter.hide_empty_repos && visible.is_empty() && matches!(load, LoadState::Loaded { .. })
         {
             hidden_repos += 1;
             continue;
@@ -245,28 +317,26 @@ pub fn flatten(repos: &[RepoState], filter: &FeedFilter) -> Feed {
 
         if !repo.collapsed {
             if visible.is_empty() {
-                rows.push(match &repo.load {
-                    LoadState::Idle | LoadState::Loading if repo.prs.is_empty() => {
+                rows.push(match load {
+                    LoadState::Idle | LoadState::Loading if !holds_any => {
                         FeedRow::RepoLoading { repo: repo_ix }
                     }
-                    LoadState::Failed { .. } if repo.prs.is_empty() => {
-                        FeedRow::RepoError { repo: repo_ix }
-                    }
+                    LoadState::Failed { .. } if !holds_any => FeedRow::RepoError { repo: repo_ix },
                     _ => FeedRow::RepoEmpty { repo: repo_ix },
                 });
             } else {
-                rows.extend(
-                    visible
-                        .into_iter()
-                        .map(|pr| FeedRow::PrRow { repo: repo_ix, pr }),
-                );
+                rows.extend(visible);
             }
         }
 
         rows.push(FeedRow::Spacer { repo: repo_ix });
     }
 
-    Feed { rows, hidden_repos }
+    Feed {
+        rows,
+        hidden_repos,
+        tab,
+    }
 }
 
 #[cfg(test)]
@@ -307,10 +377,9 @@ mod tests {
 
     fn repo(name: &str, prs: Vec<PullRequest>, load: LoadState) -> RepoState {
         RepoState {
-            id: name.parse::<RepoId>().expect("valid repo id"),
             prs,
             load,
-            collapsed: false,
+            ..RepoState::new(name.parse::<RepoId>().expect("valid repo id"))
         }
     }
 
