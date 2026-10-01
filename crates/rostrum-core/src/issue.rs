@@ -157,6 +157,21 @@ pub struct IssueDetail {
     pub conversation: Conversation,
 }
 
+impl IssueDetail {
+    /// The description, as the timeline's body item holds it. Empty when the
+    /// issue has none.
+    pub fn body(&self) -> &str {
+        self.conversation
+            .items
+            .iter()
+            .find_map(|item| match item {
+                crate::timeline::TimelineItem::Body { body, .. } => Some(body.as_str()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+}
+
 /// A title GitHub will accept for a new issue: not blank, trimmed.
 ///
 /// GitHub answers a blank title with a 422. Validating at construction means

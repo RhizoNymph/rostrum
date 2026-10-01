@@ -219,6 +219,7 @@ mod tests {
             is_resolved: false,
             is_outdated: false,
             comments: vec![],
+            opening_review: None,
         }
     }
 
