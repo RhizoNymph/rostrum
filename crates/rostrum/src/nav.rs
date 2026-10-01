@@ -33,11 +33,12 @@ pub fn selected_row(
         .iter()
         .position(|pr| pr.number == selection.pr)?;
 
-    let target = FeedRow::PrRow {
-        repo: RepoIx(repo_ix),
-        pr: PrIx(pr_ix),
-    };
-    feed.rows().iter().position(|row| *row == target)
+    // Matched on position alone: a stack member's row also carries its slot,
+    // which says nothing about which pull request it is.
+    feed.rows().iter().position(|row| {
+        matches!(row, FeedRow::PrRow { repo, pr, .. }
+            if *repo == RepoIx(repo_ix) && *pr == PrIx(pr_ix))
+    })
 }
 
 /// Resolve `nav` to the feed row it should land on, or `None` when the feed
@@ -94,6 +95,7 @@ mod tests {
             comment_count: 0,
             checks: None,
             base_divergence: None,
+            is_cross_repository: false,
         }
     }
 
@@ -103,6 +105,7 @@ mod tests {
             prs: numbers.iter().copied().map(pr).collect(),
             load: LoadState::Loaded { at: Utc::now() },
             collapsed: false,
+            stacks: Vec::new(),
         }
     }
 

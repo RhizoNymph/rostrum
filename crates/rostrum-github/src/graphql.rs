@@ -33,6 +33,7 @@ query($owner: String!, $name: String!, $first: Int!) {
         headRefName
         headRefOid
         baseRefName
+        isCrossRepository
         additions
         deletions
         changedFiles
@@ -520,6 +521,10 @@ pub struct PrNode {
     #[serde(default)]
     pub head_ref_oid: Option<String>,
     pub base_ref_name: String,
+    /// Defaulted for the same reason as the merge fields: a replayed fixture
+    /// from before the field was requested must still decode.
+    #[serde(default)]
+    pub is_cross_repository: bool,
     pub additions: u32,
     pub deletions: u32,
     pub changed_files: u32,
@@ -662,6 +667,7 @@ impl PrNode {
             // Filled in by the follow-up divergence batch, never by the feed
             // query itself.
             base_divergence: None,
+            is_cross_repository: self.is_cross_repository,
         }
     }
 }
@@ -691,6 +697,7 @@ mod tests {
                 "headRefName": "feature",
                 "headRefOid": "deadbeefcafe",
                 "baseRefName": "main",
+                "isCrossRepository": true,
                 "additions": 10,
                 "deletions": 2,
                 "changedFiles": 3,
@@ -747,6 +754,17 @@ mod tests {
             .into_iter()
             .map(PrNode::into_domain)
             .collect()
+    }
+
+    /// Stack detection must be able to tell a fork's head from this
+    /// repository's branch of the same name; a node that predates the field
+    /// is same-repository.
+    #[test]
+    fn decodes_whether_the_head_is_in_a_fork() {
+        let prs = parse();
+        assert!(prs[0].is_cross_repository);
+        assert!(!prs[1].is_cross_repository);
+        assert!(OPEN_PULL_REQUESTS.contains("isCrossRepository"));
     }
 
     #[test]

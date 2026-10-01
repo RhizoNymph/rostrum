@@ -136,6 +136,7 @@ mod tests {
             comment_count: 0,
             checks: None,
             base_divergence: None,
+            is_cross_repository: false,
         }
     }
 
@@ -145,6 +146,7 @@ mod tests {
             prs: values.iter().copied().map(pr).collect(),
             load: LoadState::Loaded { at: Utc::now() },
             collapsed: false,
+            stacks: Vec::new(),
         }
     }
 

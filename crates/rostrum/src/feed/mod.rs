@@ -15,8 +15,8 @@ use gpui::{
 };
 use rostrum_core::{
     AuthorEntry, Chrome, Feed, FeedFilter, FeedRow, LoginKey, MergeStatus, PrIx, RepoId, RepoIx,
-    RepoState, ReviewDecision, Selection, VisibleAuthors, authors::visible as visible_authors,
-    flatten,
+    RepoState, ReviewDecision, Selection, StackSlot, VisibleAuthors,
+    authors::visible as visible_authors, flatten,
 };
 use rostrum_ui::{
     ActiveTheme, InputEvent, Popover, PopoverAnchor, TextInput,
@@ -31,6 +31,10 @@ use crate::{
     nav::{self, Nav},
     sync::{Store, SyncKind},
 };
+
+mod stacks;
+
+use stacks::{STACK_INDENT, stack_glyph};
 
 actions!(
     feed,
@@ -344,7 +348,7 @@ impl FeedView {
         let Some(target) = nav::navigate(&self.feed, current, nav) else {
             return;
         };
-        let Some(FeedRow::PrRow { repo, pr }) = self.feed.row(target) else {
+        let Some(FeedRow::PrRow { repo, pr, .. }) = self.feed.row(target) else {
             return;
         };
         self.select(repo, pr, cx);
@@ -461,7 +465,12 @@ impl FeedView {
         match row {
             FeedRow::Spacer { .. } => div().h(px(10.)).into_any_element(),
             FeedRow::RepoHeader { repo } => self.render_repo_header(repo, chrome, cx),
-            FeedRow::PrRow { repo, pr } => self.render_pr_row(repo, pr, chrome, ix, cx),
+            FeedRow::StackHeader { repo, stack } => {
+                self.render_stack_header(repo, stack, chrome, cx)
+            }
+            FeedRow::PrRow { repo, pr, stack } => {
+                self.render_pr_row(repo, pr, stack, chrome, ix, cx)
+            }
             FeedRow::RepoEmpty { repo } => {
                 self.render_notice(repo, chrome, "No open pull requests", cx)
             }
@@ -538,6 +547,7 @@ impl FeedView {
         &mut self,
         repo: RepoIx,
         pr: PrIx,
+        stack: Option<StackSlot>,
         chrome: Chrome,
         ix: usize,
         cx: &mut Context<Self>,
@@ -599,11 +609,13 @@ impl FeedView {
             });
 
         let theme = cx.theme().clone();
+        let glyph = stack.map(|slot| stack_glyph(slot.place));
 
         card(chrome, cx)
             .id(("pr", ix))
             .px_3()
             .py_2()
+            .when(stack.is_some(), |el| el.pl(px(STACK_INDENT)))
             .when(selected, |el| el.bg(theme.surface_selected))
             .hover(|el| el.bg(theme.surface_hover))
             .cursor_pointer()
@@ -613,6 +625,15 @@ impl FeedView {
                     .child(
                         h_flex()
                             .gap_2()
+                            .when_some(glyph, |el, glyph| {
+                                el.child(
+                                    div()
+                                        .w(px(10.))
+                                        .text_color(theme.accent)
+                                        .text_size(rems(0.72))
+                                        .child(glyph),
+                                )
+                            })
                             .child(Dot::new(theme.check_color(checks)))
                             .child(
                                 div()
@@ -1192,6 +1213,7 @@ mod tests {
             comment_count: 0,
             checks: None,
             base_divergence: None,
+            is_cross_repository: false,
         }
     }
 
@@ -1201,6 +1223,7 @@ mod tests {
             prs,
             load: rostrum_core::LoadState::Loaded { at: Utc::now() },
             collapsed,
+            stacks: Vec::new(),
         }
     }
 

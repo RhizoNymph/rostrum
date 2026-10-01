@@ -9,6 +9,7 @@ pub mod feed;
 pub mod model;
 pub mod probe;
 pub mod review;
+pub mod stack;
 pub mod state;
 pub mod timeline;
 
@@ -18,13 +19,17 @@ pub(crate) mod test_support;
 pub use arrivals::{Arrival, ArrivalKind, Baseline};
 pub use authors::{AuthorEntry, VisibleAuthors, roster};
 pub use feed::flatten;
-pub use feed::{Chrome, Feed, FeedFilter, FeedRow, PrIx, RepoIx};
+pub use feed::{Chrome, Feed, FeedFilter, FeedRow, FeedStack, PrIx, RepoIx, StackPlace, StackSlot};
 pub use model::{
     CheckState, Divergence, Label, LoginKey, MergeStateStatus, MergeStatus, Mergeable, NodeId,
     PrNumber, PullRequest, PullState, Relation, RepoId, ReviewDecision, Side, User,
 };
 pub use probe::{MergeProbeBudget, needs_merge_probe};
 pub use review::{DraftAnchor, drafts_are_stale};
+pub use stack::{
+    FeedUnit, MergeRollup, PlanError, PlanMember, RefName, Stack, StackError, StackGroup, StackIx,
+    StackMembers, StackNumber, StackPlan, plan_stack,
+};
 pub use state::{
     AppState, LoadState, RepoState, Selection, apply_divergences, carry_forward_divergence,
     divergence_query,

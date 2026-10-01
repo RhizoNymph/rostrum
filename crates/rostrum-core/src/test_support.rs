@@ -30,5 +30,6 @@ pub(crate) fn pull(number: u32) -> PullRequest {
         comment_count: 0,
         checks: None,
         base_divergence: None,
+        is_cross_repository: false,
     }
 }

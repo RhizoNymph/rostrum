@@ -190,6 +190,7 @@ mod tests {
             prs: values.iter().copied().map(pull).collect(),
             load: LoadState::Loaded { at: Utc::now() },
             collapsed: false,
+            stacks: Vec::new(),
         }
     }
 

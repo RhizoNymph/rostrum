@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 
 use crate::{
     model::{LoginKey, PullRequest},
+    stack::{FeedUnit, StackGroup, StackIx, default_order, stack_groups, units},
     state::{LoadState, RepoState},
 };
 
@@ -20,17 +21,62 @@ pub struct RepoIx(pub usize);
 
 /// Index into `RepoState::prs`. Always indexes the *unfiltered* vector, so a
 /// row can be resolved back to its pull request regardless of the active filter.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PrIx(pub usize);
+
+/// Where a pull request row sits in its stack, for the chain glyph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StackPlace {
+    Bottom,
+    Middle,
+    Top,
+    /// The only visible member.
+    Only,
+}
+
+impl StackPlace {
+    fn of(ix: usize, len: usize) -> Self {
+        match (ix, len) {
+            (_, 0 | 1) => Self::Only,
+            (0, _) => Self::Bottom,
+            (ix, len) if ix + 1 == len => Self::Top,
+            _ => Self::Middle,
+        }
+    }
+}
+
+/// A pull request row's membership of a stack.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StackSlot {
+    pub stack: StackIx,
+    pub place: StackPlace,
+}
+
+/// A stack group placed in the feed, with the repository it belongs to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FeedStack {
+    pub repo: RepoIx,
+    pub group: StackGroup,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FeedRow {
     RepoHeader {
         repo: RepoIx,
     },
+    /// Heads the rows of one stack: "Stack · 3 PRs", the trunk, the merge
+    /// rollup, and the stack's actions. Always directly followed by the
+    /// stack's visible members, bottom first.
+    StackHeader {
+        repo: RepoIx,
+        stack: StackIx,
+    },
     PrRow {
         repo: RepoIx,
         pr: PrIx,
+        /// `Some` when the row is a member of the stack whose header precedes
+        /// it.
+        stack: Option<StackSlot>,
     },
     /// Loaded successfully, nothing to show (no open PRs, or none match).
     RepoEmpty {
@@ -54,6 +100,7 @@ impl FeedRow {
     pub fn repo(&self) -> RepoIx {
         match *self {
             Self::RepoHeader { repo }
+            | Self::StackHeader { repo, .. }
             | Self::PrRow { repo, .. }
             | Self::RepoEmpty { repo }
             | Self::RepoError { repo }
@@ -160,6 +207,8 @@ impl FeedFilter {
 pub struct Feed {
     rows: Vec<FeedRow>,
     hidden_repos: usize,
+    /// Every stack group with a header in `rows`, indexed by [`StackIx`].
+    stacks: Vec<FeedStack>,
 }
 
 impl Feed {
@@ -182,6 +231,15 @@ impl Feed {
 
     pub fn row(&self, ix: usize) -> Option<FeedRow> {
         self.rows.get(ix).copied()
+    }
+
+    /// The stack group a [`FeedRow::StackHeader`] or [`StackSlot`] names.
+    pub fn stack(&self, ix: StackIx) -> Option<&FeedStack> {
+        self.stacks.get(ix.0)
+    }
+
+    pub fn stacks(&self) -> &[FeedStack] {
+        &self.stacks
     }
 
     /// Border/rounding role of the row at `ix`, derived from whether its
@@ -218,6 +276,7 @@ impl Feed {
 pub fn flatten(repos: &[RepoState], filter: &FeedFilter) -> Feed {
     let mut rows = Vec::new();
     let mut hidden_repos = 0;
+    let mut stacks = Vec::new();
 
     for (ix, repo) in repos.iter().enumerate() {
         let repo_ix = RepoIx(ix);
@@ -255,18 +314,67 @@ pub fn flatten(repos: &[RepoState], filter: &FeedFilter) -> Feed {
                     _ => FeedRow::RepoEmpty { repo: repo_ix },
                 });
             } else {
-                rows.extend(
-                    visible
-                        .into_iter()
-                        .map(|pr| FeedRow::PrRow { repo: repo_ix, pr }),
-                );
+                push_units(&mut rows, &mut stacks, repo_ix, repo, &visible);
             }
         }
 
         rows.push(FeedRow::Spacer { repo: repo_ix });
     }
 
-    Feed { rows, hidden_repos }
+    Feed {
+        rows,
+        hidden_repos,
+        stacks,
+    }
+}
+
+/// One repository's pull request rows: lone pull requests as they are, and
+/// each stack as a header followed by its visible members, bottom first.
+fn push_units(
+    rows: &mut Vec<FeedRow>,
+    stacks: &mut Vec<FeedStack>,
+    repo_ix: RepoIx,
+    repo: &RepoState,
+    visible: &[PrIx],
+) {
+    let groups = stack_groups(repo);
+    let mut ordered = units(visible, &groups);
+    default_order(&mut ordered);
+
+    for unit in ordered {
+        match unit {
+            FeedUnit::Single(pr) => rows.push(FeedRow::PrRow {
+                repo: repo_ix,
+                pr,
+                stack: None,
+            }),
+            FeedUnit::Stack { group, visible } => {
+                let stack = StackIx(stacks.len());
+                stacks.push(FeedStack {
+                    repo: repo_ix,
+                    group: groups[group].clone(),
+                });
+                rows.push(FeedRow::StackHeader {
+                    repo: repo_ix,
+                    stack,
+                });
+                let len = visible.len();
+                rows.extend(
+                    visible
+                        .into_iter()
+                        .enumerate()
+                        .map(|(at, pr)| FeedRow::PrRow {
+                            repo: repo_ix,
+                            pr,
+                            stack: Some(StackSlot {
+                                stack,
+                                place: StackPlace::of(at, len),
+                            }),
+                        }),
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -302,6 +410,7 @@ mod tests {
             comment_count: 0,
             checks: None,
             base_divergence: None,
+            is_cross_repository: false,
         }
     }
 
@@ -311,6 +420,7 @@ mod tests {
             prs,
             load,
             collapsed: false,
+            stacks: Vec::new(),
         }
     }
 
@@ -331,11 +441,13 @@ mod tests {
                 FeedRow::RepoHeader { repo: RepoIx(0) },
                 FeedRow::PrRow {
                     repo: RepoIx(0),
-                    pr: PrIx(0)
+                    pr: PrIx(0),
+                    stack: None
                 },
                 FeedRow::PrRow {
                     repo: RepoIx(0),
-                    pr: PrIx(1)
+                    pr: PrIx(1),
+                    stack: None
                 },
                 FeedRow::Spacer { repo: RepoIx(0) },
             ]
@@ -457,7 +569,8 @@ mod tests {
             feed.row(1),
             Some(FeedRow::PrRow {
                 repo: RepoIx(0),
-                pr: PrIx(0)
+                pr: PrIx(0),
+                stack: None
             })
         );
     }
@@ -479,7 +592,8 @@ mod tests {
             feed.row(1),
             Some(FeedRow::PrRow {
                 repo: RepoIx(0),
-                pr: PrIx(1)
+                pr: PrIx(1),
+                stack: None
             })
         );
     }

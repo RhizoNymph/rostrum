@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use crate::{
     feed::FeedFilter,
     model::{Divergence, PrNumber, PullRequest, RepoId},
+    stack::Stack,
 };
 
 /// Per-repository fetch status.
@@ -46,6 +47,10 @@ pub struct RepoState {
     pub prs: Vec<PullRequest>,
     pub load: LoadState,
     pub collapsed: bool,
+    /// Stacks GitHub knows about in this repository, from its Stacks API (or
+    /// the cache of it). Detected chains are not stored: they are derived
+    /// from `prs` every time the feed is built.
+    pub stacks: Vec<Stack>,
 }
 
 impl RepoState {
@@ -55,6 +60,7 @@ impl RepoState {
             prs: Vec::new(),
             load: LoadState::Idle,
             collapsed: false,
+            stacks: Vec::new(),
         }
     }
 }
@@ -191,6 +197,7 @@ mod tests {
                 comment_count: 0,
                 checks: None,
                 base_divergence: None,
+                is_cross_repository: false,
             })
             .collect();
         state.load = LoadState::Loaded { at: Utc::now() };
