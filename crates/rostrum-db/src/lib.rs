@@ -23,6 +23,7 @@ mod drafts;
 mod error;
 mod files;
 mod schema;
+mod stacks;
 mod types;
 
 use std::{path::Path, time::Duration};

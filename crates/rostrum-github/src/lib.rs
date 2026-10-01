@@ -6,6 +6,7 @@ pub mod conversation;
 pub mod error;
 pub mod graphql;
 pub mod rest;
+pub mod stacks;
 
 pub use auth::{Token, resolve_token};
 pub use client::GitHubClient;
@@ -16,3 +17,4 @@ pub use rest::{
     AddLabels, DraftComment, IssueState, MergeMethod, MergePullRequest, PullRequestFile,
     ReviewEvent, SubmitReview,
 };
+pub use stacks::{RepoStacks, parse_stacks};

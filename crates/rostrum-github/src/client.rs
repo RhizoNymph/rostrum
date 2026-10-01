@@ -21,6 +21,8 @@ use crate::{
     rest::{AddLabels, IssueState, MergePullRequest, PullRequestFile, SubmitReview},
 };
 
+mod stacks;
+
 const GRAPHQL_URL: &str = "https://api.github.com/graphql";
 const REST_BASE: &str = "https://api.github.com";
 const USER_AGENT: &str = concat!("rostrum/", env!("CARGO_PKG_VERSION"));
