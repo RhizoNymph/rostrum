@@ -119,6 +119,9 @@ pub struct PrDetail {
     pub(crate) number: PrNumber,
     tab: DetailTab,
     pub(crate) conversation: Loadable<Conversation>,
+    /// Whether an earlier page of the conversation is being fetched. Guards
+    /// "load earlier" against a second click while one is in flight.
+    pub(crate) earlier_loading: bool,
     pub(crate) files: Loadable<Vec<DiffFile>>,
     /// Every label defined on the repository — the picker's palette, not the
     /// labels on this pull request. Fetched on first open of the picker.
@@ -183,6 +186,7 @@ impl PrDetail {
             number,
             tab: DetailTab::Conversation,
             conversation: Loadable::Idle,
+            earlier_loading: false,
             files: Loadable::Idle,
             repo_labels: Loadable::Idle,
             local: Loadable::Idle,
@@ -326,7 +330,11 @@ impl PrDetail {
         let Some(client) = self.client(cx) else {
             return;
         };
-        self.conversation = Loadable::Loading;
+        // A reload keeps what is on screen until the answer lands; only a
+        // first load shows the spinner.
+        if self.conversation.loaded().is_none() {
+            self.conversation = Loadable::Loading;
+        }
         cx.notify();
 
         let repo = self.repo.clone();
@@ -339,32 +347,104 @@ impl PrDetail {
             .await;
             this.update(cx, |this, cx| {
                 this.conversation = match result {
-                    Ok(Ok(conversation)) => {
+                    Ok(Ok(fresh)) => {
+                        // The reload is the newest page; earlier pages the
+                        // user already loaded are kept rather than dropped.
+                        let conversation = match this.conversation.loaded() {
+                            Some(held) => held.refreshed_by(fresh),
+                            None => fresh,
+                        };
                         tracing::debug!(
                             items = conversation.items.len(),
                             threads = conversation.threads.len(),
                             checks = conversation.checks.len(),
                             "conversation loaded"
                         );
-                        if let Some(db) = this.db(cx) {
-                            let (repo, number) = (this.repo.clone(), this.number);
-                            let snapshot = conversation.clone();
-                            Tokio::spawn(&*cx, async move {
-                                if let Err(error) =
-                                    db.save_conversation(&repo, number, &snapshot).await
-                                {
-                                    tracing::warn!(%error, "could not cache conversation");
-                                }
-                            })
-                            .detach();
-                        }
+                        this.cache_conversation(&conversation, cx);
                         Loadable::Loaded(conversation)
+                    }
+                    // A failed reload keeps the copy on screen.
+                    Ok(Err(err)) if this.conversation.loaded().is_some() => {
+                        this.error = Some(err.to_string());
+                        std::mem::replace(&mut this.conversation, Loadable::Idle)
+                    }
+                    Err(err) if this.conversation.loaded().is_some() => {
+                        this.error = Some(err.to_string());
+                        std::mem::replace(&mut this.conversation, Loadable::Idle)
                     }
                     Ok(Err(err)) => Loadable::Failed(err.to_string()),
                     Err(err) => Loadable::Failed(err.to_string()),
                 };
                 // Threads are interleaved into the diff, so new conversation
                 // data changes the diff row stream too.
+                this.rebuild_diff_rows(cx);
+            })
+            .ok();
+        }));
+    }
+
+    /// Write the conversation as held — every page loaded, and whether more
+    /// remain — so a cold start resumes from the same place.
+    fn cache_conversation(&self, conversation: &Conversation, cx: &mut Context<Self>) {
+        let Some(db) = self.db(cx) else {
+            return;
+        };
+        let (repo, number) = (self.repo.clone(), self.number);
+        let snapshot = conversation.clone();
+        Tokio::spawn(cx, async move {
+            if let Err(error) = db.save_conversation(&repo, number, &snapshot).await {
+                tracing::warn!(%error, "could not cache conversation");
+            }
+        })
+        .detach();
+    }
+
+    /// Fetch the page before the oldest held, for every connection that has
+    /// one, and merge it in.
+    pub(crate) fn load_earlier(&mut self, cx: &mut Context<Self>) {
+        if self.earlier_loading {
+            return;
+        }
+        let Some(request) = self
+            .conversation
+            .loaded()
+            .map(Conversation::earlier_request)
+            .filter(|request| !request.is_empty())
+        else {
+            return;
+        };
+        let Some(client) = self.client(cx) else {
+            return;
+        };
+        self.earlier_loading = true;
+        cx.notify();
+
+        let (repo, number) = (self.repo.clone(), self.number);
+        self.tasks.push(cx.spawn(async move |this, cx| {
+            let result = Tokio::spawn(&*cx, async move {
+                client.conversation_earlier(&repo, number, &request).await
+            })
+            .await;
+            this.update(cx, |this, cx| {
+                this.earlier_loading = false;
+                match result {
+                    Ok(Ok((page, update))) => {
+                        if let Loadable::Loaded(conversation) = &mut this.conversation {
+                            conversation.merge_earlier(page, &update);
+                            tracing::debug!(
+                                items = conversation.items.len(),
+                                threads = conversation.threads.len(),
+                                remaining = conversation.earlier_remaining(),
+                                "earlier page merged"
+                            );
+                            let snapshot = conversation.clone();
+                            this.cache_conversation(&snapshot, cx);
+                        }
+                    }
+                    Ok(Err(err)) => this.error = Some(err.to_string()),
+                    Err(err) => this.error = Some(err.to_string()),
+                }
+                // Earlier threads interleave into the diff as well.
                 this.rebuild_diff_rows(cx);
             })
             .ok();

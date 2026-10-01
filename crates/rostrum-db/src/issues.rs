@@ -379,4 +379,63 @@ mod tests {
         assert_eq!(db.prune_cache(Duration::days(1)).await.expect("prune"), 2);
         assert!(db.load_issues(&repo).await.expect("load").is_empty());
     }
+
+    /// The cache holds the merged set and knows whether earlier pages
+    /// remain, so a cold start offers "load earlier" from where the user
+    /// left off rather than from the newest page.
+    #[tokio::test]
+    async fn a_paged_issue_detail_round_trips_with_its_cursors() {
+        use rostrum_core::{CommentId, Connection, PageCursor, PageState, PageUpdate};
+
+        let db = db().await;
+        let repo = repo("rostrum");
+        let mut paged = detail(5);
+        paged.conversation.items.push(TimelineItem::Comment {
+            id: CommentId("c9".into()),
+            author: None,
+            body: "newest".into(),
+            created_at: at(1_700_000_900),
+        });
+        paged.conversation.apply_page(&PageUpdate::default().with(
+            Connection::Comments,
+            PageState::Earlier {
+                before: PageCursor("cursor-9".into()),
+                total: 40,
+            },
+        ));
+        let earlier = Conversation {
+            items: vec![TimelineItem::Comment {
+                id: CommentId("c1".into()),
+                author: None,
+                body: "older".into(),
+                created_at: at(1_700_000_010),
+            }],
+            ..Default::default()
+        };
+        paged.conversation.merge_earlier(
+            earlier,
+            &PageUpdate::default().with(
+                Connection::Comments,
+                PageState::Earlier {
+                    before: PageCursor("cursor-1".into()),
+                    total: 40,
+                },
+            ),
+        );
+
+        db.save_issue_detail(&repo, &paged).await.expect("save");
+        let back = db
+            .load_issue_detail(&repo, IssueNumber(5))
+            .await
+            .expect("load")
+            .expect("cached");
+        assert_eq!(back, paged);
+        assert_eq!(back.conversation.earlier_remaining(), 38);
+        assert_eq!(
+            back.conversation
+                .earlier_request()
+                .before(Connection::Comments),
+            Some(&PageCursor("cursor-1".into()))
+        );
+    }
 }

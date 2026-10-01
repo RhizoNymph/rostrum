@@ -468,6 +468,7 @@ async fn the_detail_renders_from_the_cache() {
                 body: "why?".into(),
                 created_at: support::at(1_700_000_100),
             }],
+            opening_review: None,
         }],
         checks: vec![CheckRun {
             name: "ci".into(),
@@ -475,6 +476,7 @@ async fn the_detail_renders_from_the_cache() {
             url: None,
         }],
         state: Some(CoreState::Merged),
+        paging: Default::default(),
     };
     db.save_conversation(&repo(), PrNumber(1), &conversation)
         .await

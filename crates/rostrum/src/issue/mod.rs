@@ -6,6 +6,7 @@
 //! one cancels its in-flight requests.
 
 pub(crate) mod create;
+mod edit;
 mod render;
 
 use std::{rc::Rc, sync::Arc};
@@ -43,6 +44,10 @@ pub struct IssuePane {
     /// At most one picker is open at a time.
     picker: Option<OpenPicker>,
     composer: Entity<TextInput>,
+    /// The title and description editor, while it is open.
+    editing: Option<edit::Editing>,
+    /// Whether an earlier page of the timeline is being fetched.
+    earlier_loading: bool,
     /// Label of the in-flight mutation; also the guard against a second one.
     busy: Option<&'static str>,
     error: Option<String>,
@@ -75,6 +80,8 @@ impl IssuePane {
             assignable: Loadable::Idle,
             picker: None,
             composer,
+            editing: None,
+            earlier_loading: false,
             busy: None,
             error: None,
             tasks: Vec::new(),
@@ -158,10 +165,20 @@ impl IssuePane {
             .await;
             this.update(cx, |this, cx| {
                 match result {
-                    Ok(Ok(detail)) => {
+                    Ok(Ok(fresh)) => {
+                        // The reload is the newest page; earlier pages
+                        // already loaded are kept.
+                        let detail = match this.detail.loaded() {
+                            Some(held) => IssueDetail {
+                                conversation: held.conversation.refreshed_by(fresh.conversation),
+                                issue: fresh.issue,
+                            },
+                            None => fresh,
+                        };
                         tracing::debug!(
                             items = detail.conversation.items.len(),
                             state = ?detail.issue.state,
+                            earlier = detail.conversation.earlier_remaining(),
                             "issue loaded"
                         );
                         this.cache_detail(&detail, cx);
@@ -199,6 +216,56 @@ impl IssuePane {
             }
         })
         .detach();
+    }
+
+    /// Fetch the page of comments and events before the oldest held, and
+    /// merge it in.
+    pub(crate) fn load_earlier(&mut self, cx: &mut Context<Self>) {
+        if self.earlier_loading {
+            return;
+        }
+        let Some(request) = self
+            .detail
+            .loaded()
+            .map(|detail| detail.conversation.earlier_request())
+            .filter(|request| !request.is_empty())
+        else {
+            return;
+        };
+        let Some(client) = self.client(cx) else {
+            return;
+        };
+        self.earlier_loading = true;
+        cx.notify();
+
+        let (repo, number) = (self.repo.clone(), self.number);
+        self.tasks.push(cx.spawn(async move |this, cx| {
+            let result = Tokio::spawn(&*cx, async move {
+                client.issue_earlier(&repo, number, &request).await
+            })
+            .await;
+            this.update(cx, |this, cx| {
+                this.earlier_loading = false;
+                match result {
+                    Ok(Ok((page, update))) => {
+                        if let Loadable::Loaded(detail) = &mut this.detail {
+                            detail.conversation.merge_earlier(page, &update);
+                            tracing::debug!(
+                                items = detail.conversation.items.len(),
+                                remaining = detail.conversation.earlier_remaining(),
+                                "earlier issue page merged"
+                            );
+                            let snapshot = detail.clone();
+                            this.cache_detail(&snapshot, cx);
+                        }
+                    }
+                    Ok(Err(error)) => this.error = Some(error.to_string()),
+                    Err(error) => this.error = Some(error.to_string()),
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
     }
 
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
@@ -290,6 +357,9 @@ impl IssuePane {
         };
 
         let label = mutation.progress_label();
+        // A saved edit closes the editor; a failed one leaves it open with
+        // the text, and the reason in the banner.
+        let closes_editor = matches!(mutation, IssueMutation::Edit(_));
         self.busy = Some(label);
         self.error = None;
         cx.notify();
@@ -305,6 +375,9 @@ impl IssuePane {
                 this.busy = None;
                 match result {
                     Ok(Ok(())) => {
+                        if closes_editor {
+                            this.editing = None;
+                        }
                         this.load_detail(cx);
                         let repo = this.repo.clone();
                         this.store

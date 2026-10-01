@@ -1,0 +1,143 @@
+{
+ "data": {
+  "rateLimit": {
+   "cost": 1,
+   "remaining": 4995,
+   "resetAt": "2026-10-01T20:04:20Z"
+  },
+  "repository": {
+   "issue": {
+    "id": "I_kwDOAAsO6M6MhuMq",
+    "number": 126600,
+    "title": "`std::process::exit` is not thread-safe in combination with C code calling `exit`",
+    "url": "https://github.com/rust-lang/rust/issues/126600",
+    "state": "OPEN",
+    "stateReason": null,
+    "body": "Calling `exit` concurrently from Rust and C (or from 2 different copies of the Rust runtime in the same binary) is UB. This is permitted by the C standard, and can actually cause trouble in practice since not all versions of all libc implementations do proper locking when traversing the list of `atexit` functions. For programs only using Rust, we mitigated this by adding a lock, but this only helps when *all* calls to `exit` come from Rust (and they must come from the same Rust runtime). Note that returning from `main` is equivalent to calling `exit` so it can also cause this issue.\n\n### Current status\n\nMitigation on our end (only covers pure Rust programs): #126606\n\nThe current status is that the specification language stems from a time when C did not specify multithreading and the intent was to forbid reentrancy. External discussion indicates that there's intent to fix it both in libc implementations and the specs:\n\n- glibc: https://sourceware.org/bugzilla/show_bug.cgi?id=31997\n  - patch: https://sourceware.org/pipermail/libc-alpha/2024-July/158579.html\n- POSIX: https://austingroupbugs.net/view.php?id=1845\n   - also [a comment](https://austingroupbugs.net/view.php?id=1845#c6853) mentioning taking it to the C committee.\n- libc-coord (including musl author): https://www.openwall.com/lists/libc-coord/2024/07/24/4\n- musl patch: https://git.musl-libc.org/cgit/musl/commit/?id=8cca79a72cccbdb54726125d690d7d0095fc2409\n- freebsd patch: https://reviews.freebsd.org/D46108\n- bionic: https://android.googlesource.com/platform/bionic.git/+/089f4d17265480a5ad9311bcbd8890bc9f361801%5E%21/\n\n### Original bugreport (partially outdated)\n\nThe current implementation of `std::process::exit` is unsound on Linux and possibly related platforms where it defers to libc's `exit()` function. `exit()` [is documented to be](https://man7.org/linux/man-pages/man3/exit.3.html#ATTRIBUTES) not thread-safe, and hence `std::process::exit` is not thread-safe either, despite being a non-`unsafe` function.\n\nTo show that this isn't just a theoretical problem, here is a minimal example that segfaults on my machine (Ubuntu with glibc 2.37):\n\n```rust\nuse std::thread;\n\nfn main() {\n    for _ in 0..32 {\n        unsafe { libc::atexit(exit_handler) };\n    }\n    for _ in 0..2 {\n        thread::spawn(|| std::process::exit(0));\n    }\n}\n\nextern \"C\" fn exit_handler() {\n    thread::sleep_ms(1000);\n}\n```\n\nThe example contains `unsafe` code, but only to install exit handlers. AFAICT nothing about the `libc::atexit` call is unsafe. The UB is introduced by calling `std::process::exit` concurrently afterwards.\n\nIf you are curious, https://github.com/MaterializeInc/database-issues/issues/6528 lays out what causes the segfault (it's a use-after-free). That's not terribly relevant though, given that glibc has no obligation to ensure `exit()` is thread safe when it's clearly documented not to be. Instead, Rust should either mark `std::process::exit` as `unsafe` (which is something it could do for the 2024 edition), or introduce locking to ensure only a single thread gets to call `exit()` at a time.\n\n",
+    "createdAt": "2024-06-17T15:36:23Z",
+    "updatedAt": "2025-06-21T13:22:17Z",
+    "author": {
+     "login": "teskje",
+     "avatarUrl": "https://avatars.githubusercontent.com/u/4521314?u=0a2bd7f3189da01d5081a231a488bd84db3a741f&v=4"
+    },
+    "assignees": {
+     "nodes": []
+    },
+    "labels": {
+     "nodes": [
+      {
+       "name": "I-unsound",
+       "color": "e11d21"
+      },
+      {
+       "name": "C-bug",
+       "color": "f5f1fd"
+      },
+      {
+       "name": "T-libs",
+       "color": "bfd4f2"
+      },
+      {
+       "name": "A-process",
+       "color": "f7e101"
+      }
+     ]
+    },
+    "milestone": null,
+    "comments": {
+     "totalCount": 156,
+     "pageInfo": {
+      "startCursor": "Y3Vyc29yOnYyOpHOnFSHBg==",
+      "hasPreviousPage": true
+     },
+     "nodes": [
+      {
+       "id": "IC_kwDOAAsO6M6cVIcG",
+       "body": "Please, document in https://doc.rust-lang.org/nightly/std/process/fn.exit.html , on which platforms `exit` is fully thread-safe (even if some C code calls it), and on which platforms it is not. As well as I understand, `exit` is fully safe on musl. This should be documented on that page.\n\nAlso, as well as I understand, musl is shipped with Rust itself. This means nothing prevents us from patching it! So, I suggest patching all remaining similarly unsafe C functions (`setenv`?) in musl implementation we ship. This will allow us fully solve all these remaining Rust unsoundness problems caused by system libc once and for all (at least for system libraries we ship).\n\nAlso, we can create alternative target with static glibc. We will patch that glibc however we want, we will fix all `exit`, `setenv`, etc problems there. (Unfortunately, if we really want static glibc, we should build it with `--enable-static-nss`, but this is blocked by https://sourceware.org/bugzilla/show_bug.cgi?id=27959 )",
+       "createdAt": "2025-01-29T20:34:07Z",
+       "author": {
+        "login": "safinaskar",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/859494?v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M6cVJv3",
+       "body": "> Please, document in https://doc.rust-lang.org/nightly/std/process/fn.exit.html , on which platforms exit is fully thread-safe (even if some C code calls it), and on which platforms it is not. As well as I understand, exit is fully safe on musl. This should be documented on that page.\n\nThat is really something the respective platforms need to document. We shouldn't be in the business of providing a central repository of  all the ways in which various C implementations promise more than the C standard. We track this for our own needs here, but that is not the same as making it part of the official docs.\n\nAnd we are also not interested in maintaining a patched fork of musl or glibc.",
+       "createdAt": "2025-01-29T20:36:48Z",
+       "author": {
+        "login": "RalfJung",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/330628?u=562ead6e5c8da9a02015f73a9aefdb6c82d4e2cf&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M6cVLYZ",
+       "body": "What we should do, however, is document that it is UB to call this `exit` concurrently with C code calling `exit`.",
+       "createdAt": "2025-01-29T20:40:12Z",
+       "author": {
+        "login": "RalfJung",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/330628?u=562ead6e5c8da9a02015f73a9aefdb6c82d4e2cf&v=4"
+       }
+      }
+     ]
+    },
+    "timelineItems": {
+     "totalCount": 28,
+     "pageInfo": {
+      "startCursor": "Y3Vyc29yOnYyOpPPAAABnteNuVACqjc1MjAzMDExODA=",
+      "hasPreviousPage": true
+     },
+     "nodes": [
+      {
+       "__typename": "CrossReferencedEvent",
+       "createdAt": "2026-06-17T21:47:30Z",
+       "actor": {
+        "login": "ChrisDenton",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/4459874?v=4"
+       },
+       "source": {
+        "__typename": "PullRequest",
+        "number": 156788,
+        "title": "Document that destructors in running threads are not run on program exit",
+        "repository": {
+         "nameWithOwner": "rust-lang/rust"
+        }
+       }
+      },
+      {
+       "__typename": "CrossReferencedEvent",
+       "createdAt": "2026-06-20T12:33:41Z",
+       "actor": {
+        "login": "ChrisDenton",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/4459874?v=4"
+       },
+       "source": {
+        "__typename": "Issue",
+        "number": 12951,
+        "title": "all: \"Don't exit\" policy makes code complex, difficult to fix some bugs, and inflates code",
+        "repository": {
+         "nameWithOwner": "uutils/coreutils"
+        }
+       }
+      },
+      {
+       "__typename": "CrossReferencedEvent",
+       "createdAt": "2026-08-13T02:31:53Z",
+       "actor": {
+        "login": "qwaz",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/5073807?u=b7560d91c5cf6d19883f5561f541f54b4222d4ad&v=4"
+       },
+       "source": {
+        "__typename": "Issue",
+        "number": 161018,
+        "title": "`process::exit` in a child thread unmaps the main thread's sigalt stack",
+        "repository": {
+         "nameWithOwner": "rust-lang/rust"
+        }
+       }
+      }
+     ]
+    }
+   }
+  }
+ }
+}

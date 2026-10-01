@@ -221,6 +221,7 @@ mod tests {
             threads: vec![],
             checks: vec![],
             state: None,
+            paging: Default::default(),
         }
     }
 
@@ -331,6 +332,7 @@ mod tests {
                 body: "`nit`".into(),
                 created_at: at(5),
             }],
+            opening_review: None,
         };
         let view = thread_view(&thread, &repo());
         assert_eq!(view.location, "src/lib.rs:12");

@@ -16,11 +16,14 @@ pub use conversation::PULL_REQUEST_CONVERSATION;
 pub use error::GitHubError;
 pub use graphql::{BranchUpdateMethod, DraftState};
 pub use issues::{
-    Assignees, CloseAs, CommentBody, CreateIssue, DraftError, IssueDraft, IssueMutation,
-    IssueStateChange, RepoIssues,
+    Assignees, CloseAs, CommentBody, CreateIssue, DraftError, EditCheck, EditError, IssueDraft,
+    IssueEdit, IssueEditor, IssueMutation, IssueStateChange, RepoIssues,
 };
 pub use rest::{
     AddLabels, DraftComment, IssueState, MergeMethod, MergePullRequest, PullRequestFile,
     ReviewEvent, SubmitReview,
 };
 pub use stacks::{RepoStacks, parse_stacks};
+
+#[cfg(test)]
+mod paging_tests;

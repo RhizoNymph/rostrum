@@ -793,6 +793,7 @@ mod tests {
             is_resolved: false,
             is_outdated: false,
             comments: Vec::new(),
+            opening_review: None,
         }
     }
 
