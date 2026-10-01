@@ -5454,6 +5454,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rostrum-stack"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "futures",
+ "rostrum-config",
+ "rostrum-core",
+ "rostrum-git",
+ "rostrum-handoff",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "rostrum-ui"
 version = "0.1.0"
 dependencies = [
