@@ -487,6 +487,88 @@ impl<T> Connection<T> {
     }
 }
 
+/// `pageInfo` of a connection read newest-first (`last: N`): where the page
+/// starts and whether anything precedes it.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageInfo {
+    pub start_cursor: Option<String>,
+    #[serde(default)]
+    pub has_previous_page: bool,
+}
+
+/// A connection read a page at a time, newest page first.
+///
+/// `totalCount` and `pageInfo` are optional so a response from a document
+/// that did not ask for them — an older fixture, a cached body — decodes as
+/// a complete connection rather than failing.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Paged<T> {
+    #[serde(default)]
+    pub total_count: u32,
+    pub page_info: Option<PageInfo>,
+    pub nodes: Option<Vec<Option<T>>>,
+}
+
+impl<T> Paged<T> {
+    /// The page's entries, and what the page says about earlier ones.
+    pub fn into_parts(self) -> (Vec<T>, rostrum_core::PageState) {
+        let state = match self.page_info {
+            Some(info) => rostrum_core::PageState::from_page_info(
+                info.start_cursor,
+                info.has_previous_page,
+                self.total_count,
+            ),
+            None => rostrum_core::PageState::Complete,
+        };
+        let nodes = self.nodes.unwrap_or_default().into_iter().flatten().collect();
+        (nodes, state)
+    }
+}
+
+/// How many entries each paged connection fetches per request.
+pub const PAGE_SIZE: u32 = 100;
+
+/// Variables for a paged conversation document: `$pageSize`, and per
+/// connection a `$with<Name>` switch and a `$<name>Before` cursor.
+///
+/// With no `earlier` request every connection is included from its newest
+/// end (`before: null`). With one, a connection is included only when the
+/// request has a cursor for it; a complete connection is left out by its
+/// `@include(if: false)`, so the response carries nothing to merge for it and
+/// its paging is left alone.
+pub fn page_variables(
+    base: serde_json::Value,
+    connections: &[(rostrum_core::Connection, &str)],
+    earlier: Option<&rostrum_core::EarlierRequest>,
+    page_size: u32,
+) -> serde_json::Value {
+    let mut variables = match base {
+        serde_json::Value::Object(map) => map,
+        _ => serde_json::Map::new(),
+    };
+    variables.insert("pageSize".into(), page_size.into());
+    for (connection, name) in connections {
+        let before = earlier.and_then(|request| request.before(*connection));
+        let include = earlier.is_none() || before.is_some();
+        let mut switch = String::from("with");
+        let mut chars = name.chars();
+        if let Some(first) = chars.next() {
+            switch.extend(first.to_uppercase());
+            switch.push_str(chars.as_str());
+        }
+        variables.insert(switch, include.into());
+        variables.insert(
+            format!("{name}Before"),
+            before
+                .map(|cursor| serde_json::Value::from(cursor.as_str()))
+                .unwrap_or(serde_json::Value::Null),
+        );
+    }
+    serde_json::Value::Object(variables)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoQueryData {

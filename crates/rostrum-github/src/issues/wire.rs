@@ -8,14 +8,14 @@
 
 use chrono::{DateTime, Utc};
 use rostrum_core::{
-    CommentId, Conversation, Issue, IssueDetail, IssueNumber, IssueState, Label, Milestone, NodeId,
-    TimelineItem,
+    CommentId, Connection, Conversation, Issue, IssueDetail, IssueNumber, IssueState, Label,
+    Milestone, NodeId, PageUpdate, TimelineItem,
 };
 use serde::Deserialize;
 
 use crate::{
     conversation::{IssueCommentNode, TimelineEventNode, close_reason},
-    graphql::{AuthorNode, Connection, LabelNode, RateLimit},
+    graphql::{AuthorNode, Connection as GqlConnection, LabelNode, Paged, RateLimit},
 };
 
 /// Open issues for one repository, most recently updated first.
@@ -56,8 +56,15 @@ query($owner: String!, $name: String!, $first: Int!) {
 /// the `comments` connection above it. `CrossReferencedEvent` is cheap — one
 /// small `source` selection — and is the event that most often explains what
 /// happened to an issue, so it is included.
+///
+/// Comments and events are read newest-first, `$pageSize` at a time, and the
+/// same document fetches an earlier page when given cursors; see
+/// [`crate::graphql::page_variables`]. The issue's own fields ride along on an
+/// earlier page too — they cost nothing — but only the pages are merged.
 pub const ISSUE_DETAIL: &str = r#"
-query($owner: String!, $name: String!, $number: Int!) {
+query($owner: String!, $name: String!, $number: Int!, $pageSize: Int!,
+      $withComments: Boolean!, $commentsBefore: String,
+      $withEvents: Boolean!, $eventsBefore: String) {
   rateLimit { cost remaining resetAt }
   repository(owner: $owner, name: $name) {
     issue(number: $number) {
@@ -74,11 +81,12 @@ query($owner: String!, $name: String!, $number: Int!) {
       assignees(first: 20) { nodes { login avatarUrl } }
       labels(first: 50) { nodes { name color } }
       milestone { title }
-      comments(first: 100) {
+      comments(last: $pageSize, before: $commentsBefore) @include(if: $withComments) {
         totalCount
+        pageInfo { startCursor hasPreviousPage }
         nodes { id body createdAt author { login avatarUrl } }
       }
-      timelineItems(first: 100, itemTypes: [
+      timelineItems(last: $pageSize, before: $eventsBefore, itemTypes: [
         CLOSED_EVENT,
         REOPENED_EVENT,
         LABELED_EVENT,
@@ -87,7 +95,9 @@ query($owner: String!, $name: String!, $number: Int!) {
         UNASSIGNED_EVENT,
         RENAMED_TITLE_EVENT,
         CROSS_REFERENCED_EVENT
-      ]) {
+      ]) @include(if: $withEvents) {
+        totalCount
+        pageInfo { startCursor hasPreviousPage }
         nodes {
           __typename
           ... on ClosedEvent { createdAt actor { login avatarUrl } stateReason }
@@ -98,22 +108,12 @@ query($owner: String!, $name: String!, $number: Int!) {
           ... on AssignedEvent {
             createdAt
             actor { login avatarUrl }
-            assignee {
-              ... on User { login }
-              ... on Bot { login }
-              ... on Mannequin { login }
-              ... on Organization { login }
-            }
+            assignee { ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Organization { login } }
           }
           ... on UnassignedEvent {
             createdAt
             actor { login avatarUrl }
-            assignee {
-              ... on User { login }
-              ... on Bot { login }
-              ... on Mannequin { login }
-              ... on Organization { login }
-            }
+            assignee { ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Organization { login } }
           }
           ... on CrossReferencedEvent {
             createdAt
@@ -131,6 +131,10 @@ query($owner: String!, $name: String!, $number: Int!) {
 }
 "#;
 
+/// The paged connections of [`ISSUE_DETAIL`] and their variable stems.
+pub const ISSUE_PAGES: [(Connection, &str); 2] =
+    [(Connection::Comments, "comments"), (Connection::Events, "events")];
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenIssuesData {
@@ -143,7 +147,7 @@ pub struct OpenIssuesData {
 pub struct IssuesRepositoryNode {
     /// `null` when the repository has issues disabled — not an error, just a
     /// repository with nothing to list.
-    pub issues: Option<Connection<IssueNode>>,
+    pub issues: Option<GqlConnection<IssueNode>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -178,25 +182,17 @@ pub struct IssueNode {
     pub updated_at: DateTime<Utc>,
     /// `null` for deleted accounts and some bot actors.
     pub author: Option<AuthorNode>,
-    pub assignees: Option<Connection<AuthorNode>>,
-    pub labels: Option<Connection<LabelNode>>,
-    pub comments: Option<IssueComments>,
+    pub assignees: Option<GqlConnection<AuthorNode>>,
+    pub labels: Option<GqlConnection<LabelNode>>,
+    /// `comments { totalCount }` in the feed, a full page in the detail.
+    pub comments: Option<Paged<IssueCommentNode>>,
     pub milestone: Option<MilestoneNode>,
     /// Detail query only.
     #[serde(default)]
     pub body: Option<String>,
     /// Detail query only.
     #[serde(default)]
-    pub timeline_items: Option<Connection<TimelineEventNode>>,
-}
-
-/// `comments`: the count in both documents, the nodes in the detail one.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IssueComments {
-    #[serde(default)]
-    pub total_count: u32,
-    pub nodes: Option<Vec<Option<IssueCommentNode>>>,
+    pub timeline_items: Option<Paged<TimelineEventNode>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -221,61 +217,42 @@ pub fn issue_state(state: Option<&str>, reason: Option<&str>) -> IssueState {
 impl IssueNode {
     /// The summary the feed lists.
     pub fn into_domain(self) -> Issue {
-        self.split().0
+        self.into_page().0
     }
 
-    /// The summary plus the timeline, for the issue pane.
+    /// The summary plus the newest page of the timeline, for the issue pane.
     pub fn into_detail(self) -> IssueDetail {
-        let (issue, body, comments, events) = self.split();
-
-        let mut items = vec![TimelineItem::Body {
-            author: issue.author.clone(),
-            body: body.unwrap_or_default(),
-            created_at: issue.created_at,
-        }];
-        items.extend(
-            comments
-                .into_iter()
-                .flatten()
-                .map(|comment| TimelineItem::Comment {
-                    id: CommentId(comment.id),
-                    author: comment.author.and_then(AuthorNode::into_user),
-                    body: comment.body,
-                    created_at: comment.created_at,
-                }),
-        );
-        items.extend(
-            events
-                .map(Connection::into_vec)
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(TimelineEventNode::into_domain),
-        );
-
-        let mut conversation = Conversation {
-            items,
-            ..Default::default()
-        };
-        conversation.sort();
+        let (issue, mut conversation, update) = self.into_page();
+        conversation.apply_page(&update);
         IssueDetail {
             issue,
             conversation,
         }
     }
 
-    #[allow(clippy::type_complexity)]
-    fn split(
-        self,
-    ) -> (
-        Issue,
-        Option<String>,
-        Vec<Option<IssueCommentNode>>,
-        Option<Connection<TimelineEventNode>>,
-    ) {
-        let (comment_count, comment_nodes) = match self.comments {
-            Some(comments) => (comments.total_count, comments.nodes.unwrap_or_default()),
+    /// The summary, one page of the timeline, and what that page says about
+    /// each connection it included. An earlier page is merged into the
+    /// conversation already held; its summary is ignored.
+    pub fn into_page(self) -> (Issue, Conversation, PageUpdate) {
+        let mut update = PageUpdate::default();
+        let (comment_count, comments) = match self.comments {
+            Some(comments) => {
+                let total = comments.total_count;
+                let (nodes, state) = comments.into_parts();
+                update = update.with(Connection::Comments, state);
+                (total, nodes)
+            }
             None => (0, Vec::new()),
         };
+        let events = match self.timeline_items {
+            Some(events) => {
+                let (nodes, state) = events.into_parts();
+                update = update.with(Connection::Events, state);
+                nodes
+            }
+            None => Vec::new(),
+        };
+
         let issue = Issue {
             number: IssueNumber(self.number),
             node_id: NodeId(self.id),
@@ -287,14 +264,14 @@ impl IssueNode {
             author: self.author.and_then(AuthorNode::into_user),
             assignees: self
                 .assignees
-                .map(Connection::into_vec)
+                .map(GqlConnection::into_vec)
                 .unwrap_or_default()
                 .into_iter()
                 .filter_map(AuthorNode::into_user)
                 .collect(),
             labels: self
                 .labels
-                .map(Connection::into_vec)
+                .map(GqlConnection::into_vec)
                 .unwrap_or_default()
                 .into_iter()
                 .map(|label| Label {
@@ -305,7 +282,26 @@ impl IssueNode {
             comment_count,
             milestone: self.milestone.map(|m| Milestone { title: m.title }),
         };
-        (issue, self.body, comment_nodes, self.timeline_items)
+
+        let mut items = vec![TimelineItem::Body {
+            author: issue.author.clone(),
+            body: self.body.unwrap_or_default(),
+            created_at: issue.created_at,
+        }];
+        items.extend(comments.into_iter().map(|comment| TimelineItem::Comment {
+            id: CommentId(comment.id),
+            author: comment.author.and_then(AuthorNode::into_user),
+            body: comment.body,
+            created_at: comment.created_at,
+        }));
+        items.extend(events.into_iter().filter_map(TimelineEventNode::into_domain));
+
+        let mut conversation = Conversation {
+            items,
+            ..Default::default()
+        };
+        conversation.sort();
+        (issue, conversation, update)
     }
 }
 
@@ -317,7 +313,7 @@ impl OpenIssuesData {
         Some(
             repository
                 .issues
-                .map(Connection::into_vec)
+                .map(GqlConnection::into_vec)
                 .unwrap_or_default()
                 .into_iter()
                 .map(IssueNode::into_domain)

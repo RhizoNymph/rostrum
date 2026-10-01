@@ -79,9 +79,20 @@ impl Assignees {
     }
 }
 
+/// A new title and description for an existing issue.
+///
+/// Both are always sent: the editor edits them together, and sending an
+/// empty body is how a description is cleared. The title cannot be blank.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct IssueEdit {
+    pub title: IssueTitle,
+    pub body: String,
+}
+
 /// Every change the issue pane can make to an existing issue.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IssueMutation {
+    Edit(IssueEdit),
     Comment(CommentBody),
     SetState(IssueStateChange),
     AddLabels(AddLabels),
@@ -103,6 +114,7 @@ impl IssueMutation {
     /// What the in-flight banner says.
     pub fn progress_label(&self) -> &'static str {
         match self {
+            Self::Edit(_) => "Saving",
             Self::Comment(_) => "Commenting",
             Self::SetState(IssueStateChange::Close(CloseAs::Completed)) => "Closing as completed",
             Self::SetState(IssueStateChange::Close(CloseAs::NotPlanned)) => {
@@ -124,7 +136,7 @@ impl IssueMutation {
             Self::AddAssignees(people) | Self::RemoveAssignees(people) => {
                 people.assignees.is_empty()
             }
-            Self::Comment(_) | Self::SetState(_) | Self::RemoveLabel(_) => false,
+            Self::Edit(_) | Self::Comment(_) | Self::SetState(_) | Self::RemoveLabel(_) => false,
         }
     }
 
@@ -136,6 +148,7 @@ impl IssueMutation {
             number.0
         );
         let (method, path, body) = match self {
+            Self::Edit(edit) => (Method::PATCH, issue, Some(to_value(edit))),
             Self::Comment(body) => (
                 Method::POST,
                 format!("{issue}/comments"),
@@ -294,6 +307,36 @@ mod tests {
     }
 
     #[test]
+    fn an_edit_patches_title_and_body() {
+        let edit = IssueEdit {
+            title: IssueTitle::new(" New title ").expect("valid"),
+            body: "New **body**".into(),
+        };
+        assert_eq!(
+            call(IssueMutation::Edit(edit)),
+            RestCall {
+                method: Method::PATCH,
+                path: "/repos/rust-lang/rust/issues/42".into(),
+                body: Some(json!({ "title": "New title", "body": "New **body**" })),
+            }
+        );
+    }
+
+    /// Clearing the description is an edit like any other: the empty body is
+    /// sent, not omitted.
+    #[test]
+    fn an_edit_that_clears_the_body_still_sends_it() {
+        let edit = IssueEdit {
+            title: IssueTitle::new("t").expect("valid"),
+            body: String::new(),
+        };
+        assert_eq!(
+            call(IssueMutation::Edit(edit)).body,
+            Some(json!({ "title": "t", "body": "" }))
+        );
+    }
+
+    #[test]
     fn a_blank_comment_cannot_be_built() {
         assert_eq!(CommentBody::new(""), Err(EmptyComment));
         assert_eq!(CommentBody::new(" \n "), Err(EmptyComment));
@@ -402,6 +445,10 @@ mod tests {
     #[test]
     fn every_mutation_names_its_progress() {
         let labels = [
+            IssueMutation::Edit(IssueEdit {
+                title: IssueTitle::new("t").expect("valid"),
+                body: String::new(),
+            }),
             IssueMutation::Comment(CommentBody::new("x").expect("valid")),
             IssueMutation::SetState(IssueStateChange::Close(CloseAs::Completed)),
             IssueMutation::SetState(IssueStateChange::Close(CloseAs::NotPlanned)),

@@ -6,14 +6,17 @@ use reqwest::{
     header::{ACCEPT, HeaderMap},
 };
 use rostrum_core::{
-    Conversation, Divergence, Label, NodeId, PrNumber, PullRequest, RepoId, RepoMeta, User,
+    Conversation, Divergence, EarlierRequest, Label, NodeId, PageUpdate, PrNumber, PullRequest,
+    RepoId, RepoMeta, User,
 };
 use serde::de::DeserializeOwned;
 use serde_json::json;
 
 use crate::{
     auth::Token,
-    conversation::{ConversationNode, ConversationQueryData, PULL_REQUEST_CONVERSATION},
+    conversation::{
+        ConversationNode, ConversationQueryData, PULL_REQUEST_CONVERSATION, PULL_REQUEST_PAGES,
+    },
     error::GitHubError,
     graphql::{
         self, AuthorNode, BranchUpdateMethod, DivergenceBatchData, DivergenceQueryData, DraftState,
@@ -148,11 +151,7 @@ impl GitHubClient {
         let data: ConversationQueryData = self
             .graphql(
                 PULL_REQUEST_CONVERSATION,
-                json!({
-                    "owner": repo.owner(),
-                    "name": repo.name(),
-                    "number": number.0,
-                }),
+                conversation_variables(repo, number, None),
                 &resource,
             )
             .await?;
@@ -160,6 +159,30 @@ impl GitHubClient {
         data.repository
             .and_then(|repository| repository.pull_request)
             .map(ConversationNode::into_domain)
+            .ok_or(GitHubError::NotFound { resource })
+    }
+
+    /// The page before the one held, for every connection `earlier` has a
+    /// cursor for. The caller merges it with
+    /// [`Conversation::merge_earlier`]. A complete connection is not
+    /// requested at all.
+    pub async fn conversation_earlier(
+        &self,
+        repo: &RepoId,
+        number: PrNumber,
+        earlier: &EarlierRequest,
+    ) -> Result<(Conversation, PageUpdate), GitHubError> {
+        let resource = format!("{} (earlier)", resource_name(repo, number));
+        let data: ConversationQueryData = self
+            .graphql(
+                PULL_REQUEST_CONVERSATION,
+                conversation_variables(repo, number, Some(earlier)),
+                &resource,
+            )
+            .await?;
+        data.repository
+            .and_then(|repository| repository.pull_request)
+            .map(ConversationNode::into_page)
             .ok_or(GitHubError::NotFound { resource })
     }
 
@@ -707,6 +730,21 @@ impl RawResponse {
             None => Ok(()),
         }
     }
+}
+
+/// Variables for [`PULL_REQUEST_CONVERSATION`]: the newest page with no
+/// `earlier`, otherwise the page before each cursor it holds.
+pub fn conversation_variables(
+    repo: &RepoId,
+    number: PrNumber,
+    earlier: Option<&EarlierRequest>,
+) -> serde_json::Value {
+    graphql::page_variables(
+        json!({ "owner": repo.owner(), "name": repo.name(), "number": number.0 }),
+        &PULL_REQUEST_PAGES,
+        earlier,
+        graphql::PAGE_SIZE,
+    )
 }
 
 fn resource_name(repo: &RepoId, number: PrNumber) -> String {

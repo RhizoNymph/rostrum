@@ -4,16 +4,18 @@
 //! the [`RestCall`]s the request types describe.
 
 use reqwest::Method;
-use rostrum_core::{IssueDetail, IssueNumber, RepoId, User};
+use rostrum_core::{
+    Conversation, EarlierRequest, IssueDetail, IssueNumber, PageUpdate, RepoId, User,
+};
 use serde_json::json;
 
 use crate::{
     client::{GitHubClient, MAX_PAGES, classify_label_removal, next_page_url},
     error::GitHubError,
-    graphql::RateLimit,
+    graphql::{PAGE_SIZE, RateLimit, page_variables},
     issues::{
         rest::{AssignableUser, CreateIssue, CreatedIssue, IssueMutation, RestCall},
-        wire::{ISSUE_DETAIL, IssueDetailData, OPEN_ISSUES, OpenIssuesData},
+        wire::{ISSUE_DETAIL, ISSUE_PAGES, IssueDetailData, OPEN_ISSUES, OpenIssuesData},
     },
 };
 
@@ -22,6 +24,21 @@ use crate::{
 pub struct RepoIssues {
     pub issues: Vec<rostrum_core::Issue>,
     pub rate_limit: Option<RateLimit>,
+}
+
+/// Variables for [`ISSUE_DETAIL`]: the newest page with no `earlier`,
+/// otherwise the page before each cursor it holds.
+pub fn issue_variables(
+    repo: &RepoId,
+    number: IssueNumber,
+    earlier: Option<&EarlierRequest>,
+) -> serde_json::Value {
+    page_variables(
+        json!({ "owner": repo.owner(), "name": repo.name(), "number": number.0 }),
+        &ISSUE_PAGES,
+        earlier,
+        PAGE_SIZE,
+    )
 }
 
 fn issue_resource(repo: &RepoId, number: IssueNumber) -> String {
@@ -55,15 +72,33 @@ impl GitHubClient {
     ) -> Result<IssueDetail, GitHubError> {
         let resource = issue_resource(repo, number);
         let data: IssueDetailData = self
-            .graphql(
-                ISSUE_DETAIL,
-                json!({ "owner": repo.owner(), "name": repo.name(), "number": number.0 }),
-                &resource,
-            )
+            .graphql(ISSUE_DETAIL, issue_variables(repo, number, None), &resource)
             .await?;
         data.repository
             .and_then(|repository| repository.issue)
             .map(|issue| issue.into_detail())
+            .ok_or(GitHubError::NotFound { resource })
+    }
+
+    /// The page of comments and events before the ones held, for each
+    /// connection `earlier` has a cursor for. The caller merges it with
+    /// [`rostrum_core::Conversation::merge_earlier`].
+    pub async fn issue_earlier(
+        &self,
+        repo: &RepoId,
+        number: IssueNumber,
+        earlier: &EarlierRequest,
+    ) -> Result<(Conversation, PageUpdate), GitHubError> {
+        let resource = format!("{} (earlier)", issue_resource(repo, number));
+        let data: IssueDetailData = self
+            .graphql(ISSUE_DETAIL, issue_variables(repo, number, Some(earlier)), &resource)
+            .await?;
+        data.repository
+            .and_then(|repository| repository.issue)
+            .map(|issue| {
+                let (_, conversation, update) = issue.into_page();
+                (conversation, update)
+            })
             .ok_or(GitHubError::NotFound { resource })
     }
 
