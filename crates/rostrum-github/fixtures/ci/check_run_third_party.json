@@ -1,0 +1,92 @@
+{
+ "id": 110657723167,
+ "name": "VS Code PR Check",
+ "node_id": "CR_kwDOAn8RLM8AAAAZw7bbHw",
+ "head_sha": "209f1823c8a6f8167ee883f816804ce7a118e3a6",
+ "external_id": "",
+ "url": "https://api.github.com/repos/microsoft/vscode/check-runs/110657723167",
+ "html_url": "https://github.com/microsoft/vscode/runs/110657723167",
+ "details_url": "https://code.visualstudio.com",
+ "status": "in_progress",
+ "conclusion": null,
+ "started_at": "2026-10-02T01:03:25Z",
+ "completed_at": null,
+ "output": {
+  "title": "Awaiting approvals (0/1)",
+  "summary": "PR classified as **team-member**.\n\n✅ Head commit `209f182` is signed by **justschen** with trusted key `A35C18557FC0BAA5E30AEAD883B645C4FB759B00` — approval requirement reduced from 2 to **1**.\n\n⚠️ Collaborator approvals: **0/1**.\n\n_Needs 1 more collaborator approval to merge._\n\n✅ No newly added runnable binary files.\n\n✅ Engineering system changes are allowed.\n\n- `build/lib/stylelint/vscode-known-variables.json`\n\nThe PR author is a current VS Code team member.\n\n<!-- vpc:state={\"passed\":false,\"threshold\":1,\"reason\":\"approvals\",\"signed\":true} -->",
+  "text": null,
+  "annotations_count": 0,
+  "annotations_url": "https://api.github.com/repos/microsoft/vscode/check-runs/110657723167/annotations"
+ },
+ "check_suite": {
+  "id": 100084169492
+ },
+ "app": {
+  "id": 281319,
+  "client_id": "Iv1.8a642b211332ec58",
+  "slug": "vs-code-engineering",
+  "node_id": "A_kwHOA6PZ4M4ABErn",
+  "owner": {
+   "login": "Visual-Studio-Code",
+   "id": 61069792,
+   "node_id": "MDEyOk9yZ2FuaXphdGlvbjYxMDY5Nzky",
+   "avatar_url": "https://avatars.githubusercontent.com/u/61069792?v=4",
+   "gravatar_id": "",
+   "url": "https://api.github.com/users/Visual-Studio-Code",
+   "html_url": "https://github.com/Visual-Studio-Code",
+   "followers_url": "https://api.github.com/users/Visual-Studio-Code/followers",
+   "following_url": "https://api.github.com/users/Visual-Studio-Code/following{/other_user}",
+   "gists_url": "https://api.github.com/users/Visual-Studio-Code/gists{/gist_id}",
+   "starred_url": "https://api.github.com/users/Visual-Studio-Code/starred{/owner}{/repo}",
+   "subscriptions_url": "https://api.github.com/users/Visual-Studio-Code/subscriptions",
+   "organizations_url": "https://api.github.com/users/Visual-Studio-Code/orgs",
+   "repos_url": "https://api.github.com/users/Visual-Studio-Code/repos",
+   "events_url": "https://api.github.com/users/Visual-Studio-Code/events{/privacy}",
+   "received_events_url": "https://api.github.com/users/Visual-Studio-Code/received_events",
+   "type": "Organization",
+   "user_view_type": "public",
+   "site_admin": false
+  },
+  "name": "VS Code Engineering",
+  "description": "This application is used for the following tasks:\r\n- [Community PR Checks](https://github.com/microsoft/vscode-engineering/blob/721d657e6d297ab472aef07b9a73d2836417bfeb/.github/actions/community-pr-check/src/main.ts#L19C9-L19C16)",
+  "external_url": "https://code.visualstudio.com",
+  "html_url": "https://github.com/apps/vs-code-engineering",
+  "created_at": "2023-01-13T13:34:40Z",
+  "updated_at": "2026-06-24T07:58:26Z",
+  "permissions": {
+   "actions": "write",
+   "checks": "write",
+   "contents": "write",
+   "issues": "write",
+   "metadata": "read",
+   "pull_requests": "write",
+   "workflows": "write"
+  },
+  "events": []
+ },
+ "pull_requests": [
+  {
+   "url": "https://api.github.com/repos/microsoft/vscode/pulls/339210",
+   "id": 4711413934,
+   "number": 339210,
+   "head": {
+    "ref": "agents/fix-progress-toolbar-jump-issue",
+    "sha": "209f1823c8a6f8167ee883f816804ce7a118e3a6",
+    "repo": {
+     "id": 41881900,
+     "url": "https://api.github.com/repos/microsoft/vscode",
+     "name": "vscode"
+    }
+   },
+   "base": {
+    "ref": "main",
+    "sha": "4ffbb26a9fe3a00f5cf7107f3f108f7469b56ffd",
+    "repo": {
+     "id": 41881900,
+     "url": "https://api.github.com/repos/microsoft/vscode",
+     "name": "vscode"
+    }
+   }
+  }
+ ]
+}

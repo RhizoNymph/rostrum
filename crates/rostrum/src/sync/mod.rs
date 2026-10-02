@@ -5,6 +5,7 @@
 //! handle and re-wraps the join handle as a `gpui::Task` (cancelled on drop).
 //! Results are applied back on the main thread through `entity.update`.
 
+mod ci;
 mod config_file;
 mod issues;
 
@@ -170,6 +171,12 @@ pub struct Store {
     /// apart from `pending` so a merge probe's pull request refresh never
     /// waits on, or cancels, an issue fetch.
     pending_issues: HashMap<RepoId, Task<()>>,
+    /// Every watched repository's CI checks, for the CI view.
+    pub ci: rostrum_core::ci::CiChecks,
+    /// In-flight checks refresh per repository, guarded like the others.
+    pending_ci: HashMap<RepoId, Task<()>>,
+    /// The CI view's faster poll, alive only while the view is showing.
+    ci_watch: Option<Task<()>>,
     /// Held so the poll loop is not dropped (dropping a `Task` cancels it).
     poll: Option<Task<()>>,
     /// Follow-up refreshes chasing a merge state GitHub has not finished
@@ -228,6 +235,9 @@ impl Store {
             client: None,
             pending: HashMap::new(),
             pending_issues: HashMap::new(),
+            ci: Default::default(),
+            pending_ci: HashMap::new(),
+            ci_watch: None,
             poll: None,
             merge_probes: HashMap::new(),
             merge_probe_attempts: HashMap::new(),
@@ -380,6 +390,8 @@ impl Store {
         // Dropping the in-flight tasks cancels their requests.
         self.pending.remove(id);
         self.pending_issues.remove(id);
+        self.pending_ci.remove(id);
+        self.ci.forget(id);
         self.divergence_probes.remove(id);
         self.stacks.forget(id);
         // A verdict for a repository that is no longer listed has no row to
@@ -721,7 +733,8 @@ impl Store {
             .collect();
         for id in ids {
             self.refresh_repo(id.clone(), cx);
-            self.refresh_issues(id, cx);
+            self.refresh_issues(id.clone(), cx);
+            self.refresh_ci(id, cx);
         }
     }
 

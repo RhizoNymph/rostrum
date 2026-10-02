@@ -26,6 +26,13 @@ Overview:
       feed's item sort; with nothing selected the right pane shows the branch
       tree — trunks against the default branch, pull requests against their
       base, stacks nested.
+    ci_grid: >
+      A whole-window PRs × checks grid reached from the feed: each open pull
+      request's head-commit checks (Actions jobs, other apps' check runs,
+      legacy statuses) with live elapsed / since-finished times, a log viewer
+      with collapsible sections and the failing step highlighted, and
+      confirmed re-runs that flip cells to queued at once. Matrix, timing, log
+      parsing and re-run rules are pure in `rostrum_core::ci`.
     issues: >
       The Issues tab and everything behind it: fetching and caching each
       repository's open issues in the poll cycle, the issue pane (header with
@@ -282,6 +289,11 @@ Features Index:
     entry_points: [crates/rostrum/src/repo_view/mod.rs, crates/rostrum-core/src/branches/mod.rs, crates/rostrum-core/src/navigation.rs]
     depends_on: [repo_feed, issues, feed_sort, pr_detail, github_sync, ui_foundation]
     doc: docs/features/repo_view.md
+  ci_grid:
+    description: PRs × checks grid with live timings, job logs, and re-runs.
+    entry_points: [crates/rostrum/src/ci/mod.rs, crates/rostrum/src/sync/ci.rs, crates/rostrum-core/src/ci/mod.rs, crates/rostrum-github/src/ci/mod.rs]
+    depends_on: [repo_feed, feed_sort, github_sync, ui_foundation]
+    doc: docs/features/ci_grid.md
   issues:
     description: Issues tab, issue fetch and cache, issue pane with labels/assignees/close/reopen, and issue creation.
     entry_points: [crates/rostrum/src/issue/mod.rs, crates/rostrum/src/sync/issues.rs, crates/rostrum-core/src/issue.rs, crates/rostrum-core/src/tabs.rs, crates/rostrum-github/src/issues/mod.rs]
@@ -412,6 +424,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 |---|---|---|
 | Auth | `gh auth token`, `$GITHUB_TOKEN` fallback | No secret storage of our own; `gh` handles SSO and refresh |
 | Reads | GraphQL v4 | One round-trip per repo instead of dozens; cost-based rate limit |
+| CI checks | A third GraphQL document per repository (`statusCheckRollup` contexts of each open PR's head commit), on the feed's poll plus a 15 s poll while the grid shows something running | Keeps the feed query lean; a point-1 request per repository; the fast poll touches only repositories with running checks |
 | Issues | A second GraphQL document per repository, not a selection on the pull request query | Separate load states per list, no coupling to the merge-probe timer; one extra point-1 request per repository per poll |
 | Mutations | REST v3, except draft conversion and branch updates | Simpler, better-documented endpoints for merge/review/comment. REST accepts `draft` only at creation, and its `update-branch` endpoint can only merge, so those two go through GraphQL |
 | Node ids | Fetched with the feed query | GraphQL mutations address a pull request by node id only. Carrying it on `PullRequest` makes a conversion one round trip, and is what the other GraphQL-only operations will need |
@@ -529,7 +542,7 @@ Each phase leaves a usable application.
 
 ## Status
 
-All five phases are complete and verified against the live API. 1497 tests pass
+All five phases are complete and verified against the live API. 1622 tests pass
 (154 of them in `rostrum-ffi`); clippy is clean across the workspace.
 
 Issues are on the desktop: a tab beside pull requests, an issue pane with
