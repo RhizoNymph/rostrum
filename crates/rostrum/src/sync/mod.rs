@@ -465,7 +465,7 @@ impl Store {
 
     /// Config writes are small and infrequent; a failure is worth reporting but
     /// not worth interrupting the user over.
-    fn persist_config(&self) {
+    pub(crate) fn persist_config(&self) {
         if let Err(error) = self.config.save() {
             tracing::warn!(%error, "could not save the config file");
         }

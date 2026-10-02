@@ -139,6 +139,15 @@ the pull requests use (`order_issues`). Issues have no branch, so the
 **pushed** key orders them by `updatedAt`. Repository "updated" counts open
 issues as well as pull requests.
 
+### In a repository's view
+
+A repository's own view (`docs/features/repo_view.md`) lists the same
+`RepoState::issues` in the bottom half of its sidebar — unfiltered, in the
+same item sort, drawn by the same `issue_row_content` the feed's issue row
+uses. Selecting one sets the same `Selection::Issue`, so the workspace opens
+the same `IssuePane`; its **+ New issue** opens the same form preset to that
+repository.
+
 `FeedFilter::accepts_issue` applies the search (title, number, author, labels,
 milestone) and the author selection; `hide_drafts` does not apply and the
 drafts button is hidden on the Issues tab. The filter bar's "N of M shown",

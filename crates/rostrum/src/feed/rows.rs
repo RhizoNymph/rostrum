@@ -1,15 +1,21 @@
 //! Row renderers for the feed: one per [`FeedRow`] variant, plus the
 //! container chrome each row draws its share of.
+//!
+//! The *body* of an item row — [`pr_row_content`], [`issue_row_content`] — is
+//! a free function of the item and the theme, shared with the repository
+//! view's two lists, so a pull request or an issue reads the same wherever it
+//! is listed. The feed wraps it in container chrome; the repository view in a
+//! plain bordered row.
 
 use chrono::{DateTime, Utc};
 use gpui::{AnyElement, App, Context, Div, div, prelude::*, px, rems};
 use rostrum_core::{
-    Chrome, FeedRow, FeedTab, IssueIx, MergeStatus, PrIx, RepoIx, RepoState, ReviewDecision,
-    Selection,
+    Chrome, FeedRow, FeedTab, Issue, IssueIx, MergeStatus, PrIx, PullRequest, RepoIx, RepoState,
+    ReviewDecision, Selection,
 };
 use rostrum_local::LocalResult;
 use rostrum_ui::{
-    ActiveTheme,
+    ActiveTheme, Theme,
     components::{Chip, DiffStat, Dot, Initial, h_flex, hex_color, v_flex},
 };
 
@@ -96,10 +102,22 @@ impl FeedView {
                             .child(if collapsed { "▸" } else { "▾" }),
                     )
                     .child(
+                        // The name opens the repository's own view; the rest
+                        // of the header still collapses it.
                         div()
+                            .id(("repo-name", repo.0))
                             .text_color(cx.theme().text)
                             .text_size(rems(0.82))
-                            .child(name),
+                            .cursor_pointer()
+                            .hover(|el| el.text_color(cx.theme().accent))
+                            .child(name)
+                            .on_click(cx.listener({
+                                let id = id.clone();
+                                move |_, _, _window, cx| {
+                                    cx.stop_propagation();
+                                    cx.emit(FeedEvent::OpenRepo(id.clone()));
+                                }
+                            })),
                     )
                     .child(
                         div()
@@ -110,10 +128,11 @@ impl FeedView {
                     .when(failed, |el| {
                         el.child(Chip::new("error").color(cx.theme().danger))
                     })
+                    .child(div().flex_1())
                     // Creating an issue starts from the repository it goes
                     // in, so the Issues tab offers it on every header.
                     .when(tab == FeedTab::Issues, |el| {
-                        el.child(div().flex_1()).child(
+                        el.child(
                             div()
                                 .id(("new-issue", repo.0))
                                 .px_1p5()
@@ -131,7 +150,24 @@ impl FeedView {
                                     });
                                 })),
                         )
-                    }),
+                    })
+                    .child(
+                        div()
+                            .id(("open-repo", repo.0))
+                            .px_1()
+                            .cursor_pointer()
+                            .text_size(rems(0.72))
+                            .text_color(cx.theme().text_subtle)
+                            .hover(|el| el.text_color(cx.theme().accent))
+                            .child("open ›")
+                            .on_click(cx.listener({
+                                let id = id.clone();
+                                move |_, _, _window, cx| {
+                                    cx.stop_propagation();
+                                    cx.emit(FeedEvent::OpenRepo(id.clone()));
+                                }
+                            })),
+                    ),
             )
             .on_click(move |_, _window, cx| {
                 store.update(cx, |store, cx| store.toggle_collapsed(&id, cx));
@@ -160,48 +196,9 @@ impl FeedView {
                 number: pull.number,
             });
 
-        let number = pull.number.to_string();
-        let title = pull.title.clone();
-        let author = pull.author.as_ref().map(|a| a.login.clone());
-        let updated = relative_time(pull.updated_at);
-        let is_draft = pull.is_draft;
-        let additions = pull.additions;
-        let deletions = pull.deletions;
-        let checks = pull.checks;
-        let decision = pull.review_decision;
-        let merge = pull.merge_status();
-        let base_ref = pull.base_ref.clone();
-        // The exact count from the divergence batch, once it has answered.
-        // Only "behind" earns a chip: ahead is the normal state of a pull
-        // request and says nothing the reviewer must act on.
-        let behind = pull
-            .base_divergence
-            .filter(|d| d.is_behind())
-            .map(|d| d.behind);
-        // The merge chip's own "behind" carries less than the count, so it
-        // yields to the count when both are known; every other merge chip
-        // says something the count does not.
-        let merge_chip = merge
-            .chip()
-            .filter(|_| behind.is_none() || merge != MergeStatus::Behind);
-        let labels: Vec<_> = pull
-            .labels
-            .iter()
-            .take(3)
-            .map(|l| (l.name.clone(), hex_color(&l.color)))
-            .collect();
-        // The latest "sync all" verdict, when it is one worth a chip.
-        let sync_chip = self
-            .store
-            .read(cx)
-            .sync_result(&state.id, pull.number)
-            .and_then(|result| {
-                result
-                    .chip()
-                    .map(|text| (text, result.detail(), sync_chip_color(result)))
-            });
-
+        let sync = self.store.read(cx).sync_result(&state.id, pull.number);
         let theme = cx.theme().clone();
+        let content = pr_row_content(pull, sync, ix, &theme);
 
         card(chrome, cx)
             .id(("pr", ix))
@@ -210,99 +207,7 @@ impl FeedView {
             .when(selected, |el| el.bg(theme.surface_selected))
             .hover(|el| el.bg(theme.surface_hover))
             .cursor_pointer()
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(Dot::new(theme.check_color(checks)))
-                            .child(
-                                div()
-                                    .text_color(theme.text_subtle)
-                                    .text_size(rems(0.72))
-                                    .child(number),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .truncate()
-                                    .text_color(if is_draft {
-                                        theme.text_muted
-                                    } else {
-                                        theme.text
-                                    })
-                                    .text_size(rems(0.82))
-                                    .child(title),
-                            )
-                            .when(is_draft, |el| {
-                                el.child(Chip::new("draft").color(theme.draft))
-                            })
-                            .when_some(behind, |el, behind| {
-                                el.child(
-                                    Chip::new(format!("↓{behind}"))
-                                        .color(theme.warning)
-                                        // A distinct tag from the merge chip's:
-                                        // GPUI element ids must be unique
-                                        // within the row, and both can render.
-                                        .tooltip(
-                                            ("behind-count", ix),
-                                            format!("{behind} commit(s) behind {base_ref}"),
-                                        ),
-                                )
-                            })
-                            // `chip` returns nothing for draft and unstable:
-                            // the draft chip beside this one and the check dot
-                            // at the head of the row already say both.
-                            .when_some(merge_chip, |el, text| {
-                                el.child(
-                                    Chip::new(text)
-                                        .color(theme.merge_color(merge))
-                                        .tooltip(("merge-status", ix), merge.explanation()),
-                                )
-                            })
-                            .when_some(review_label(decision), |el, (text, color)| {
-                                el.child(Chip::new(text).color(color(&theme)))
-                            })
-                            .when_some(sync_chip, |el, (text, detail, color)| {
-                                el.child(
-                                    Chip::new(text)
-                                        .color(color(&theme))
-                                        // Its own tag: the merge and behind
-                                        // chips can share the row, and GPUI
-                                        // element ids must not collide.
-                                        .tooltip(("sync-result", ix), detail),
-                                )
-                            }),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .pl(px(15.))
-                            .when_some(author, |el, login| {
-                                el.child(Initial::new(login.clone())).child(
-                                    div()
-                                        .text_color(theme.text_muted)
-                                        .text_size(rems(0.72))
-                                        .child(login),
-                                )
-                            })
-                            .child(
-                                div()
-                                    .text_color(theme.text_subtle)
-                                    .text_size(rems(0.72))
-                                    .child(updated),
-                            )
-                            .child(DiffStat::new(additions, deletions))
-                            .children(labels.into_iter().map(|(name, color)| {
-                                let chip = Chip::new(name);
-                                match color {
-                                    Some(color) => chip.color(color),
-                                    None => chip,
-                                }
-                            })),
-                    ),
-            )
+            .child(content)
             .on_click(
                 cx.listener(move |this, _, _window, cx| {
                     this.select(FeedRow::PrRow { repo, pr }, cx)
@@ -311,8 +216,6 @@ impl FeedView {
             .into_any_element()
     }
 
-    /// One issue: state dot, number, title, labels; then author, age,
-    /// assignees, milestone and comment count.
     fn render_issue_row(
         &mut self,
         repo: RepoIx,
@@ -333,26 +236,8 @@ impl FeedView {
                 repo: state.id.clone(),
                 number: issue.number,
             });
-        let number = issue.number.to_string();
-        let title = issue.title.clone();
-        let author = issue.author.as_ref().map(|a| a.login.clone());
-        let updated = relative_time(issue.updated_at);
-        let assignees: Vec<String> = issue
-            .assignees
-            .iter()
-            .take(3)
-            .map(|user| user.login.clone())
-            .collect();
-        let milestone = issue.milestone.as_ref().map(|m| m.title.clone());
-        let comments = issue.comment_count;
-        let labels: Vec<_> = issue
-            .labels
-            .iter()
-            .take(3)
-            .map(|l| (l.name.clone(), hex_color(&l.color)))
-            .collect();
-
         let theme = cx.theme().clone();
+        let content = issue_row_content(issue, &theme);
 
         card(chrome, cx)
             .id(("issue", ix))
@@ -361,77 +246,7 @@ impl FeedView {
             .when(selected, |el| el.bg(theme.surface_selected))
             .hover(|el| el.bg(theme.surface_hover))
             .cursor_pointer()
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            // Every listed issue is open; green is GitHub's
-                            // colour for that.
-                            .child(Dot::new(theme.success))
-                            .child(
-                                div()
-                                    .text_color(theme.text_subtle)
-                                    .text_size(rems(0.72))
-                                    .child(number),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .truncate()
-                                    .text_color(theme.text)
-                                    .text_size(rems(0.82))
-                                    .child(title),
-                            )
-                            .when(comments > 0, |el| {
-                                el.child(
-                                    div()
-                                        .text_color(theme.text_subtle)
-                                        .text_size(rems(0.7))
-                                        .child(format!("💬 {comments}")),
-                                )
-                            }),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .pl(px(15.))
-                            .flex_wrap()
-                            .when_some(author, |el, login| {
-                                el.child(Initial::new(login.clone())).child(
-                                    div()
-                                        .text_color(theme.text_muted)
-                                        .text_size(rems(0.72))
-                                        .child(login),
-                                )
-                            })
-                            .child(
-                                div()
-                                    .text_color(theme.text_subtle)
-                                    .text_size(rems(0.72))
-                                    .child(updated),
-                            )
-                            .when(!assignees.is_empty(), |el| {
-                                el.child(
-                                    div()
-                                        .text_color(theme.text_subtle)
-                                        .text_size(rems(0.72))
-                                        .child(format!("→ {}", assignees.join(", "))),
-                                )
-                            })
-                            .when_some(milestone, |el, title| {
-                                el.child(Chip::new(format!("◷ {title}")).color(theme.text_muted))
-                            })
-                            .children(labels.into_iter().map(|(name, color)| {
-                                let chip = Chip::new(name);
-                                match color {
-                                    Some(color) => chip.color(color),
-                                    None => chip,
-                                }
-                            })),
-                    ),
-            )
+            .child(content)
             .on_click(cx.listener(move |this, _, _window, cx| {
                 this.select(
                     FeedRow::IssueRow {
@@ -479,6 +294,237 @@ impl FeedView {
     }
 }
 
+/// The two lines of a pull request row: status dot, number, title and chips;
+/// then author, age, size and labels.
+///
+/// `sync` is the latest "sync all" verdict for this pull request, if any.
+/// `ix` makes the row's tooltip ids unique within its list.
+pub(crate) fn pr_row_content(
+    pull: &PullRequest,
+    sync: Option<&LocalResult>,
+    ix: usize,
+    theme: &Theme,
+) -> Div {
+    let number = pull.number.to_string();
+    let title = pull.title.clone();
+    let author = pull.author.as_ref().map(|a| a.login.clone());
+    let updated = relative_time(pull.updated_at);
+    let is_draft = pull.is_draft;
+    let checks = pull.checks;
+    let merge = pull.merge_status();
+    let base_ref = pull.base_ref.clone();
+    // The exact count from the divergence batch, once it has answered.
+    // Only "behind" earns a chip: ahead is the normal state of a pull
+    // request and says nothing the reviewer must act on.
+    let behind = pull
+        .base_divergence
+        .filter(|d| d.is_behind())
+        .map(|d| d.behind);
+    // The merge chip's own "behind" carries less than the count, so it
+    // yields to the count when both are known; every other merge chip
+    // says something the count does not.
+    let merge_chip = merge
+        .chip()
+        .filter(|_| behind.is_none() || merge != MergeStatus::Behind);
+    let labels: Vec<_> = pull
+        .labels
+        .iter()
+        .take(3)
+        .map(|l| (l.name.clone(), hex_color(&l.color)))
+        .collect();
+    // The latest "sync all" verdict, when it is one worth a chip.
+    let sync_chip = sync.and_then(|result| {
+        result
+            .chip()
+            .map(|text| (text, result.detail(), sync_chip_color(result)))
+    });
+
+    v_flex()
+        .gap_1()
+        .child(
+            h_flex()
+                .gap_2()
+                .child(Dot::new(theme.check_color(checks)))
+                .child(
+                    div()
+                        .text_color(theme.text_subtle)
+                        .text_size(rems(0.72))
+                        .child(number),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .truncate()
+                        .text_color(if is_draft {
+                            theme.text_muted
+                        } else {
+                            theme.text
+                        })
+                        .text_size(rems(0.82))
+                        .child(title),
+                )
+                .when(is_draft, |el| {
+                    el.child(Chip::new("draft").color(theme.draft))
+                })
+                .when_some(behind, |el, behind| {
+                    el.child(
+                        Chip::new(format!("↓{behind}"))
+                            .color(theme.warning)
+                            // A distinct tag from the merge chip's: GPUI
+                            // element ids must be unique within the row, and
+                            // both can render.
+                            .tooltip(
+                                ("behind-count", ix),
+                                format!("{behind} commit(s) behind {base_ref}"),
+                            ),
+                    )
+                })
+                // `chip` returns nothing for draft and unstable: the draft
+                // chip beside this one and the check dot at the head of the
+                // row already say both.
+                .when_some(merge_chip, |el, text| {
+                    el.child(
+                        Chip::new(text)
+                            .color(theme.merge_color(merge))
+                            .tooltip(("merge-status", ix), merge.explanation()),
+                    )
+                })
+                .when_some(review_label(pull.review_decision), |el, (text, color)| {
+                    el.child(Chip::new(text).color(color(theme)))
+                })
+                .when_some(sync_chip, |el, (text, detail, color)| {
+                    el.child(
+                        Chip::new(text)
+                            .color(color(theme))
+                            // Its own tag: the merge and behind chips can
+                            // share the row, and GPUI element ids must not
+                            // collide.
+                            .tooltip(("sync-result", ix), detail),
+                    )
+                }),
+        )
+        .child(
+            h_flex()
+                .gap_2()
+                .pl(px(15.))
+                .when_some(author, |el, login| {
+                    el.child(Initial::new(login.clone())).child(
+                        div()
+                            .text_color(theme.text_muted)
+                            .text_size(rems(0.72))
+                            .child(login),
+                    )
+                })
+                .child(
+                    div()
+                        .text_color(theme.text_subtle)
+                        .text_size(rems(0.72))
+                        .child(updated),
+                )
+                .child(DiffStat::new(pull.additions, pull.deletions))
+                .children(labels.into_iter().map(|(name, color)| {
+                    let chip = Chip::new(name);
+                    match color {
+                        Some(color) => chip.color(color),
+                        None => chip,
+                    }
+                })),
+        )
+}
+
+/// The two lines of an issue row: state dot, number, title and comment
+/// count; then author, age, assignees, milestone and labels.
+pub(crate) fn issue_row_content(issue: &Issue, theme: &Theme) -> Div {
+    let number = issue.number.to_string();
+    let title = issue.title.clone();
+    let author = issue.author.as_ref().map(|a| a.login.clone());
+    let updated = relative_time(issue.updated_at);
+    let assignees: Vec<String> = issue
+        .assignees
+        .iter()
+        .take(3)
+        .map(|user| user.login.clone())
+        .collect();
+    let milestone = issue.milestone.as_ref().map(|m| m.title.clone());
+    let comments = issue.comment_count;
+    let labels: Vec<_> = issue
+        .labels
+        .iter()
+        .take(3)
+        .map(|l| (l.name.clone(), hex_color(&l.color)))
+        .collect();
+
+    v_flex()
+        .gap_1()
+        .child(
+            h_flex()
+                .gap_2()
+                // Every listed issue is open; green is GitHub's colour for
+                // that.
+                .child(Dot::new(theme.success))
+                .child(
+                    div()
+                        .text_color(theme.text_subtle)
+                        .text_size(rems(0.72))
+                        .child(number),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .truncate()
+                        .text_color(theme.text)
+                        .text_size(rems(0.82))
+                        .child(title),
+                )
+                .when(comments > 0, |el| {
+                    el.child(
+                        div()
+                            .text_color(theme.text_subtle)
+                            .text_size(rems(0.7))
+                            .child(format!("💬 {comments}")),
+                    )
+                }),
+        )
+        .child(
+            h_flex()
+                .gap_2()
+                .pl(px(15.))
+                .flex_wrap()
+                .when_some(author, |el, login| {
+                    el.child(Initial::new(login.clone())).child(
+                        div()
+                            .text_color(theme.text_muted)
+                            .text_size(rems(0.72))
+                            .child(login),
+                    )
+                })
+                .child(
+                    div()
+                        .text_color(theme.text_subtle)
+                        .text_size(rems(0.72))
+                        .child(updated),
+                )
+                .when(!assignees.is_empty(), |el| {
+                    el.child(
+                        div()
+                            .text_color(theme.text_subtle)
+                            .text_size(rems(0.72))
+                            .child(format!("→ {}", assignees.join(", "))),
+                    )
+                })
+                .when_some(milestone, |el, title| {
+                    el.child(Chip::new(format!("◷ {title}")).color(theme.text_muted))
+                })
+                .children(labels.into_iter().map(|(name, color)| {
+                    let chip = Chip::new(name);
+                    match color {
+                        Some(color) => chip.color(color),
+                        None => chip,
+                    }
+                })),
+        )
+}
+
 /// Draw the portion of the container border this row owns.
 fn card(chrome: Chrome, cx: &App) -> Div {
     let theme = cx.theme();
@@ -513,7 +559,7 @@ fn card(chrome: Chrome, cx: &App) -> Div {
     }
 }
 
-type ThemeColor = fn(&rostrum_ui::Theme) -> gpui::Hsla;
+type ThemeColor = fn(&Theme) -> gpui::Hsla;
 
 /// Severity colour for a sync verdict chip: red for what stopped, accent for
 /// what was handed on, amber for what git would not start.

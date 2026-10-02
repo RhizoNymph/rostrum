@@ -272,6 +272,11 @@ direction (`Newest first ⇅`) that reverses it. Clicks call
 log the new sort at debug, and notify — the feed's store observer re-flattens
 and splices live.
 
+A repository's own view follows the item sort too: both halves of its
+sidebar — pull requests and issues — are listed in `sort.items` order
+(`repo_view::order::ListOrder`), unfiltered. It has no sort control of its
+own.
+
 The popover adds no key context and takes no focus, so `j`/`k` still resolve
 in the `Feed` context and typing still resolves in the filter box; `escape`
 closes it first, like the other two.

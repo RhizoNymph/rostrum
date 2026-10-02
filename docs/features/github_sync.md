@@ -323,6 +323,17 @@ the document text. Verified live at cost 1. A `NOT_FOUND` scoped to one alias
 cannot blank out the batch. The single `divergence()` remains for callers that
 want one answer.
 
+### Branch metadata for the repository view
+
+`GitHubClient::repo_branch_meta` (`branches.rs`) answers, in one request,
+a repository's `url`, `stargazerCount`, `defaultBranchRef` and whether each
+probed branch name exists: `build_branch_meta_query(n)` aliases one
+`rN: ref(qualifiedName: $rN) { name }` per name, and the names travel as
+fully qualified `refs/heads/…` variables, so a tag cannot answer for a branch
+and no name reaches the document text. A missing branch answers `null` with
+no error. The view's comparisons then go through the same `divergences`
+batch described above. See `docs/features/repo_view.md`.
+
 ### One GraphQL path for reads and writes
 
 `GitHubClient::graphql` is the single place that posts a document and unpacks the
@@ -436,6 +447,7 @@ Two rules that matter in practice:
 | `crates/rostrum-github/src/rest/mod.rs` | Mutation and file-fetch endpoints |
 | `crates/rostrum-github/src/models.rs` | Wire types and domain conversions |
 | `crates/rostrum-github/src/error.rs` | `GitHubError` |
+| `crates/rostrum-github/src/branches.rs` | Repository branch metadata for the repository view |
 | `crates/rostrum-github/src/rate_limit.rs` | Budget accounting, backoff |
 | `crates/rostrum-github/src/cache.rs` | SQLite schema, ETag storage |
 | `crates/rostrum/src/sync/mod.rs` | `SyncEngine` entity, poll loop, reconciliation |

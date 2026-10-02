@@ -22,7 +22,7 @@ use rostrum_ui::{
     components::{Button, ButtonStyle, Checkbox, Tab, h_flex, tab_bar, v_flex},
 };
 
-pub(crate) use rows::relative_time;
+pub(crate) use rows::{issue_row_content, pr_row_content, relative_time};
 
 use crate::{
     nav::{self, Nav},
@@ -42,6 +42,7 @@ actions!(
         FocusFilter,
         DismissFilter,
         ToggleCollapse,
+        OpenRepo,
         NextTab,
         PreviousTab,
     ]
@@ -72,6 +73,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", DismissFilter, Some(FEED_CONTEXT)),
         KeyBinding::new("escape", DismissFilter, Some(FILTER_CONTEXT)),
         KeyBinding::new("c", ToggleCollapse, Some(FEED_CONTEXT)),
+        KeyBinding::new("o", OpenRepo, Some(FEED_CONTEXT)),
         // Brackets, not a modifier chord: they sit beside `j`/`k` on the
         // home row and read as "left"/"right", and like them they are inert
         // while typing in the filter box.
@@ -80,16 +82,17 @@ pub fn bind_keys(cx: &mut App) {
     ]);
 }
 
-/// Raised so the workspace, which owns the detail pane, can act on it.
+/// Raised for the workspace, which owns the detail pane and the navigation.
 #[derive(Clone, Debug)]
 pub enum FeedEvent {
+    /// Move focus into the detail pane.
     FocusDetail,
+    /// Switch the left pane to this repository's own view.
+    OpenRepo(RepoId),
     /// Open the new-issue form, with this repository chosen when the request
     /// came from its header, or the form's own default when it came from the
     /// tab bar.
-    NewIssue {
-        repo: Option<RepoId>,
-    },
+    NewIssue { repo: Option<RepoId> },
 }
 
 /// Corner radius of a repo container, in pixels.
@@ -425,6 +428,20 @@ impl FeedView {
             self.clear_filter(cx);
         } else {
             window.focus(&self.focus_handle, cx);
+        }
+    }
+
+    /// `o`: open the selected item's repository in its own view.
+    fn open_repo(&mut self, _: &OpenRepo, _window: &mut Window, cx: &mut Context<Self>) {
+        let repo = self
+            .store
+            .read(cx)
+            .state
+            .selection
+            .as_ref()
+            .map(|selection| selection.repo().clone());
+        if let Some(repo) = repo {
+            cx.emit(FeedEvent::OpenRepo(repo));
         }
     }
 
@@ -841,6 +858,7 @@ impl Render for FeedView {
             .on_action(cx.listener(Self::focus_filter))
             .on_action(cx.listener(Self::dismiss_filter))
             .on_action(cx.listener(Self::toggle_collapse))
+            .on_action(cx.listener(Self::open_repo))
             .on_action(cx.listener(Self::next_tab))
             .on_action(cx.listener(Self::previous_tab))
             .child(self.render_tabs(cx))
