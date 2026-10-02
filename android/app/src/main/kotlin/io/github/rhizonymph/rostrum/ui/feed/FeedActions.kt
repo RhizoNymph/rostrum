@@ -20,6 +20,8 @@ class FeedActions(
     val newIssue: () -> Unit = {},
     val selectTab: (FeedTab) -> Unit = {},
     val openSort: () -> Unit = {},
+    /** The CI grid of every repository. */
+    val openChecks: () -> Unit = {},
     /** A stack header's menu entry (run on the paired desktop). */
     val stackAction: (ItemRow.StackHeader, StackMenuEntry) -> Unit = { _, _ -> },
     val openProfiles: () -> Unit = {},

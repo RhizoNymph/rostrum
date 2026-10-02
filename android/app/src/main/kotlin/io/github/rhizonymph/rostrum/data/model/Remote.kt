@@ -73,7 +73,51 @@ data class DesktopConfigPreview(
     val autostash: Boolean,
     /** Copying would change anything on this phone. */
     val changesAnything: Boolean,
+    /** The desktop's revision of these settings; a push names it. Empty only without one. */
+    val revision: String = "",
+    /** `null` from a desktop that does not share it. */
+    val issuesPerRepo: Int? = null,
+    /** What copying the desktop's settings would change on this phone. */
+    val copyChanges: List<ConfigChange> = emptyList(),
+    /** What pushing this phone's settings would change on the desktop. */
+    val pushChanges: List<ConfigChange> = emptyList(),
 )
+
+/** One shareable setting, by its key in the desktop's `config.json`. */
+enum class ConfigField {
+    Repos,
+    PrsPerRepo,
+    IssuesPerRepo,
+    HideDrafts,
+    HideEmptyRepos,
+    Authors,
+    IncludeInvolved,
+    Autostash,
+    RepoSort,
+    ItemSort,
+    Trunks,
+}
+
+/** One setting that would change, both values written out (lists comma-separated, `(none)` when empty). */
+data class ConfigChange(
+    val field: ConfigField,
+    /** `Pull requests per repository`. */
+    val label: String,
+    val before: String,
+    val after: String,
+)
+
+/** How a push of this phone's settings to the desktop ended. */
+sealed interface ConfigPushResult {
+    /** The desktop's settings now, with their new revision. */
+    val desktop: DesktopConfigPreview
+
+    /** Written. */
+    data class Applied(override val desktop: DesktopConfigPreview) : ConfigPushResult
+
+    /** Not written: the desktop's settings changed since the preview; [desktop] has the new difference. */
+    data class Changed(override val desktop: DesktopConfigPreview) : ConfigPushResult
+}
 
 /** Whether a desktop is set for this session. */
 sealed interface RemoteStatus {

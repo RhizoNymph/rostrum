@@ -33,6 +33,7 @@ fun FeedRoute(
     onOpenRepo: (String) -> Unit = {},
     onNewIssue: () -> Unit = {},
     onPairDesktop: () -> Unit = {},
+    onOpenChecks: () -> Unit = {},
 ) {
     val vm = profileViewModel { container, profile ->
         FeedViewModel(
@@ -63,6 +64,7 @@ fun FeedRoute(
             selectTab = vm::selectTab,
             stackAction = { header, entry -> stacks.request(entry, header.repo, header.stack, header.members) },
             openSort = vm::openSort,
+            openChecks = onOpenChecks,
             openProfiles = onOpenProfiles,
             refresh = vm::refresh,
             retry = vm::retry,

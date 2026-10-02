@@ -217,7 +217,7 @@ class FfiMappingsTest {
             val expected = listOf(
                 RemoteErrorCode.Unauthorized, RemoteErrorCode.Forbidden, RemoteErrorCode.BadRequest,
                 RemoteErrorCode.NotFound, RemoteErrorCode.PairingCodeInvalid, RemoteErrorCode.PairingCodeExpired,
-                RemoteErrorCode.RateLimited, RemoteErrorCode.Busy, RemoteErrorCode.RewriteNotConfirmed, RemoteErrorCode.Internal,
+                RemoteErrorCode.RateLimited, RemoteErrorCode.Busy, RemoteErrorCode.ConfigChanged, RemoteErrorCode.RewriteNotConfirmed, RemoteErrorCode.Internal,
             )
             assertEquals(expected, FRemoteErrorCode.entries.map { it.toModel() })
         }

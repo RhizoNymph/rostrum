@@ -15,6 +15,8 @@ import io.github.rhizonymph.rostrum.notifications.rememberNotificationPermission
 import io.github.rhizonymph.rostrum.ui.common.CollectMessages
 import io.github.rhizonymph.rostrum.ui.common.UiState
 import io.github.rhizonymph.rostrum.ui.common.profileViewModel
+import io.github.rhizonymph.rostrum.ui.desktopconfig.PushSettingsSheet
+import io.github.rhizonymph.rostrum.ui.desktopconfig.PushSettingsViewModel
 
 /**
  * The Settings tab's entry point, wired into the navigation graph. Everything
@@ -36,6 +38,9 @@ fun SettingsRoute(
     val actions = remember(viewModel, permission) { PermissionAwareActions(viewModel, permission) }
     val copySheet = profileViewModel { _, profile -> DesktopConfigSheetViewModel(profile.backend) }
     val sheetState by copySheet.state.collectAsStateWithLifecycle()
+    val pushSheet = profileViewModel { _, profile -> PushSettingsViewModel(profile.backend) }
+    val pushState by pushSheet.state.collectAsStateWithLifecycle()
+    CollectMessages(pushSheet.messages.flow)
     CollectMessages(viewModel.messages.flow)
     CollectMessages(copySheet.messages.flow)
     LaunchedEffect(copySheet) { copySheet.copied.collect { viewModel.refreshContent() } }
@@ -50,11 +55,13 @@ fun SettingsRoute(
         onOpenDesktop = onOpenDesktop,
         onPairDesktop = onPairDesktop,
         onCopySettings = copySheet::open,
+        onSendSettings = pushSheet::open,
         modifier = modifier,
         profilesSection = profilesSection,
     )
     val machine = ((state.content as? UiState.Loaded)?.data?.desktop as? DesktopSummary.Connected)?.machine?.name
     CopySettingsSheet(sheetState, copySheet, machine)
+    PushSettingsSheet(pushState, pushSheet, machine)
 }
 
 /** Turning a notification toggle on asks for the permission it needs, when missing. */

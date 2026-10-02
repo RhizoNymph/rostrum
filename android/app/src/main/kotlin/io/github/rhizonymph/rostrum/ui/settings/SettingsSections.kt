@@ -213,6 +213,7 @@ fun DesktopSection(
     onPairDesktop: () -> Unit,
     modifier: Modifier = Modifier,
     onCopySettings: () -> Unit = {},
+    onSendSettings: () -> Unit = {},
 ) {
     val colors = RostrumTheme.colors
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -243,13 +244,43 @@ fun DesktopSection(
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text("Copy settings from ${desktop.machine.name}", style = RostrumText.rowTitle, color = colors.text)
                         Text(
-                            "Repositories, feed filters and stash default",
+                            "Repositories, feed filters, sorts, trunks and stash default",
+                            style = RostrumText.caption,
+                            color = colors.textMuted,
+                        )
+                    }
+                }
+                CardDivider()
+                ChevronRow(onClick = onSendSettings) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Send settings to ${desktop.machine.name}", style = RostrumText.rowTitle, color = colors.text)
+                        Text(
+                            io.github.rhizonymph.rostrum.ui.desktopconfig.PushConfigText.rowCaption(desktop.machine.name),
                             style = RostrumText.caption,
                             color = colors.textMuted,
                         )
                     }
                 }
             }
+        }
+    }
+}
+
+/** How many open pull requests and issues each repository fetches. */
+@Composable
+fun FetchSection(
+    prsPerRepo: Int,
+    issuesPerRepo: Int,
+    onChoosePrs: () -> Unit,
+    onChooseIssues: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionHeader("Fetching")
+        RostrumCard(Modifier.fillMaxWidth()) {
+            ValueRow("Pull requests per repository", prsPerRepo.toString(), onClick = onChoosePrs)
+            CardDivider()
+            ValueRow("Issues per repository", issuesPerRepo.toString(), onClick = onChooseIssues)
         }
     }
 }
