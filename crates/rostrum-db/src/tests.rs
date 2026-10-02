@@ -861,7 +861,9 @@ async fn migrating_twice_over_one_database_is_idempotent() {
         .expect("save drafts");
     db.save_pull_requests(&repo, &[pr(1)]).await.expect("save");
 
-    schema::migrate(db.pool()).await.expect("re-migrate");
+    schema::migrate(&mut db.pool().acquire().await.expect("connection"))
+        .await
+        .expect("re-migrate");
 
     assert_eq!(
         db.load_pull_requests(&repo).await.expect("load"),
