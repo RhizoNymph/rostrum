@@ -312,6 +312,16 @@ one first (details in `android_profiles.md`). Per profile:
   copy the sheet closes, shows "Copied …", and Settings reloads its list.
   Settings also reloads whenever it resumes, e.g. back from pairing.
 
+### Sending settings to the desktop and the CI grid
+
+Sending this profile's settings to the paired desktop (Desktop tab and
+Settings › Desktop), the issues-per-repository setting, and the CI grid
+(`Destination.Checks`, from the feed header and the repository screen) are
+described in `docs/features/android_ci_config.md`. The copy sheet above now
+also names issues per repository, sorts and trunks; `desktopConfig`,
+`copyDesktopConfig` and `pushConfigToDesktop` live in `DesktopConfigApi`,
+which `RostrumBackend` extends.
+
 ### Secrets at rest
 
 `EncryptedFileSecretStore` keeps one file per profile and `SecretKey` under
