@@ -227,6 +227,9 @@ impl From<ApiErrorCode> for RemoteErrorCode {
             // The phone does not drive stacks through the FFI yet; until it
             // does, an unconfirmed rewrite reads as the request being wrong.
             ApiErrorCode::RewriteNotConfirmed => Self::BadRequest,
+            // The phone does not push settings through the FFI yet; until it
+            // does, a stale push reads as the request being wrong.
+            ApiErrorCode::ConfigChanged => Self::BadRequest,
             ApiErrorCode::Internal => Self::Internal,
         }
     }

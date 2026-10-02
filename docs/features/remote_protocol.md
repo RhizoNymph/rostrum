@@ -81,7 +81,8 @@ always `Unauthorized` (the device was revoked), whatever the body says.
 | `/api/v1/hello` | GET | none | → `Hello` |
 | `/api/v1/pair` | POST | code | `PairRequest` → `PairResponse` |
 | `/api/v1/machine` | GET | token | → `MachineInfo` |
-| `/api/v1/config` | GET | token | → `DesktopConfig` |
+| `/api/v1/config` | GET | token | → `RevisedConfig` (a `DesktopConfig` plus `revision`) |
+| `/api/v1/config` | PUT | token | `ConfigPush` → `RevisedConfig`; 409 `ConfigConflict` on a stale `base` |
 | `/api/v1/github-token` | GET | token | → `GitHubHandover` |
 | `/api/v1/local/status` | POST | token | `LocalStatusRequest` → `LocalStatus` |
 | `/api/v1/local/job` | POST | token | `JobRequest` → `JobOutcome` |
@@ -111,21 +112,64 @@ the response status.
 | `crates/rostrum-remote/src/secret.rs` | `DeviceToken`, `TokenHash`, `DeviceId`, `GitHubToken` — all redacted in `Debug` |
 | `crates/rostrum-remote/src/host.rs` | `Host`: IP or DNS name, URL authority |
 | `crates/rostrum-remote/src/pairing.rs` | `Endpoint`, `PairingOffer` and its link, `Hello`, `PairRequest`, `PairResponse`, `GitHubHandover` |
-| `crates/rostrum-remote/src/api.rs` | Authenticated request/response types, `SyncRun::summary`, `ApiError` |
+| `crates/rostrum-remote/src/api.rs` | Authenticated request/response types, `DesktopConfig`, `RepoTrunks`, `SyncRun::summary`, `ApiError` |
+| `crates/rostrum-remote/src/config.rs` | Sharing settings both ways: `ConfigRevision`, `RevisedConfig`, `ConfigPush`, `ConfigConflict`, `ConfigPushOutcome`, the client-side `diff` (`ConfigChange`, `ConfigField`) |
 | `crates/rostrum-remote/src/stack.rs` | Stack requests, the dry run (`StackRewritePlan`, `confirms_exactly`), stack jobs (`StackJobId`, `StackJobStatus`, `StackJobState`, `StackJobResult`) |
 | `crates/rostrum-remote/src/client.rs` | `RemoteClient`, `probe`, `PinnedVerifier`, `ClientError` |
 | `crates/rostrum-remote/tests/client.rs` | The client against a real TLS listener: pinning, fallback, probe, errors |
 
-## Copying the desktop's config
+## Sharing settings with the desktop
 
-`DesktopConfig` is the part of the desktop's `config.json` a phone may adopt:
-watched repositories, PRs per repository, and the feed preferences (hide
-drafts, hide empty repositories, author filter, include involved) plus
-`autostash`. Clone paths and the conflict-handler command are never sent —
-they describe the desktop's disk, and a handler command can embed secrets —
-and the refresh interval and notification switch stay per device. Malformed
-repository entries are dropped server-side; logins arrive normalised as
-`LoginKey`s.
+`DesktopConfig` is the part of `config.json` a phone and the desktop share,
+both ways:
+
+| Field | Since | Notes |
+|---|---|---|
+| `repos` | v1 | `RepoId`s in the desktop's order; malformed entries are dropped server-side |
+| `prs_per_repo` | v1 | |
+| `hide_drafts`, `hide_empty_repos`, `include_involved` | v1 | |
+| `authors` | v1 | `LoginKey`s, normalised |
+| `autostash` | v1 | |
+| `issues_per_repo` | later, `Option` | |
+| `repo_sort`, `item_sort` | later, `Option` | `Sort` values as `config.json` stores them |
+| `trunks` | later, `Option` | `[{repo, trunks: [TrunkName]}]`; a repository not listed has its trunks detected |
+
+**Never shared:** `clones` and `conflict_handler` (they describe the desktop's
+disk, and a handler command can embed secrets), `refresh_secs`,
+`notifications` and `notify_review_requests` (each device's own habits), and
+`feed_tab` (which list the user is looking at right now, like a half-typed
+search).
+
+**Copying (GET).** `RemoteClient::config()` returns the `DesktopConfig`;
+`config_with_revision()` returns it with its `ConfigRevision`, an opaque hash
+of the desktop's shareable settings (the response is a `RevisedConfig`, whose
+JSON is a `DesktopConfig` plus a `revision` key, so an older phone reads it
+unchanged). The desktop always fills the `Option` fields.
+
+**Pushing (PUT).** "Send settings to <desktop>" is on demand only: the phone
+reads `config_with_revision()`, shows `diff(current, proposed)` — there is no
+preview route, the phone has both sides — and sends a `ConfigPush`, the
+proposed `DesktopConfig` plus `base`, the revision it previewed against. The
+desktop:
+
+- replaces exactly the shareable settings, and leaves an `Option` field that
+  is `None` as it is, so a phone that does not know a field cannot reset it;
+- with `base` given and the desktop's settings changed since, writes nothing
+  and answers 409 with a `ConfigConflict` body — `code: "config_changed"`,
+  `message`, and `current`, the settings as they are now — which
+  `push_config` returns as `ConfigPushOutcome::Changed(current)` so the phone
+  can preview again; without `base` it applies unconditionally;
+- otherwise answers `ConfigPushOutcome::Applied` with the new settings and
+  revision;
+- refuses invalid values with 400 (duplicate repositories, a per-repository
+  count outside 1–100, a login GitHub would not accept, a repository's trunks
+  listed twice); values that cannot be valid do not parse at all (a trunk
+  name starting with `-`, a malformed repository).
+
+**Compatibility.** Additive: `API_VERSION` stays 1. An older phone never
+sends `PUT` and reads `GET` as before; a newer phone gets 405 from an older
+desktop's `PUT`. The new error code `config_changed` only ever comes from
+`PUT`.
 
 ## Stacks from a phone
 
@@ -175,6 +219,8 @@ older client would decode it as an internal error.
 - No secret type prints its value in `Debug`.
 - The server never stores a device token, only its hash.
 - A request is sent to at most one host.
+- A settings push changes only the shareable settings, and with a `base`
+  only if they are still at that revision.
 - A stack operation that rewrites branches runs only when the request
   confirms exactly the branches the desktop computed.
 - The client uses the `ring` provider explicitly, so no process-wide default
