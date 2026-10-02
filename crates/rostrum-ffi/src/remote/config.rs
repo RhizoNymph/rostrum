@@ -58,9 +58,12 @@ impl RostrumCore {
     pub async fn copy_desktop_config(&self) -> Result<Settings, RostrumError> {
         let client = self.remote().await?;
         let desktop = client.config().await?;
-        self.actor
-            .try_call(move |state| {
-                state.edit_config(|config| apply(config, &desktop))?;
+        self.change_config(
+            move |_, config| {
+                apply(config, &desktop);
+                Ok(())
+            },
+            |state, ()| {
                 let (ids, _) = state.config.repo_ids();
                 for id in state.feed.set_repos(ids) {
                     state.forget_repo(&id);
@@ -76,8 +79,9 @@ impl RostrumCore {
                     "copied the desktop's config"
                 );
                 Ok(state.settings())
-            })
-            .await
+            },
+        )
+        .await
     }
 }
 

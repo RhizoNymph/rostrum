@@ -255,16 +255,20 @@ impl RostrumCore {
         &self,
         edit: impl FnOnce(&mut FeedSort) + Send + 'static,
     ) -> Result<FeedSnapshot, RostrumError> {
-        self.actor
-            .try_call(move |state| {
+        self.change_config(
+            move |state, config| {
                 let mut filter = state.feed.filter.clone();
                 edit(&mut filter.sort);
-                state.edit_config(|config| config.absorb_filter(&filter))?;
+                config.absorb_filter(&filter);
+                Ok(filter)
+            },
+            |state, filter| {
                 tracing::debug!(sort = %filter.sort.summary(), "feed sort changed");
                 state.feed.filter = filter;
                 Ok(state.publish())
-            })
-            .await
+            },
+        )
+        .await
     }
 }
 

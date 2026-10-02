@@ -87,44 +87,41 @@ impl RostrumCore {
     /// input and `DuplicateRepo` when it is already watched. The repository
     /// starts out `Idle`; call `refresh_repo` to fetch it.
     pub async fn add_repo(&self, input: String) -> Result<String, RostrumError> {
-        self.actor
-            .try_call(move |state| {
-                let mut added = None;
-                let mut failure = None;
-                state.edit_config(|config| match config.try_add_repo(&input) {
-                    Ok(id) => added = Some(id),
-                    Err(error) => failure = Some(error),
-                })?;
-                if let Some(error) = failure {
-                    return Err(add_repo_error(&input, error));
-                }
-                let id =
-                    added.ok_or_else(|| RostrumError::internal("add_repo reported nothing"))?;
+        self.change_config(
+            move |_, config| {
+                config
+                    .try_add_repo(&input)
+                    .map_err(|error| add_repo_error(&input, error))
+            },
+            |state, id| {
                 let order = state.config.repos.clone();
                 state.feed.add_repo(id.clone(), &order);
                 state.publish();
                 tracing::info!(repo = %id, "repository added");
                 Ok(id.to_string())
-            })
-            .await
+            },
+        )
+        .await
     }
 
     /// Stop watching a repository. Returns whether it was watched. Pending
     /// review drafts on its pull requests are kept.
     pub async fn remove_repo(&self, repo: String) -> Result<bool, RostrumError> {
         let id = parse_repo(&repo)?;
-        self.actor
-            .try_call(move |state| {
-                let mut removed = false;
-                state.edit_config(|config| removed = config.remove_repo(&id))?;
+        let forget = id.clone();
+        self.change_config(
+            move |_, config| Ok(config.remove_repo(&id)),
+            move |state, removed| {
                 if removed {
+                    let id = forget;
                     state.forget_repo(&id);
                     state.publish();
                     tracing::info!(repo = %id, "repository removed");
                 }
                 Ok(removed)
-            })
-            .await
+            },
+        )
+        .await
     }
 
     /// Set the foreground refresh interval; out-of-range values are clamped.
@@ -165,12 +162,14 @@ impl RostrumCore {
         &self,
         edit: impl FnOnce(&mut Config) + Send + 'static,
     ) -> Result<Settings, RostrumError> {
-        self.actor
-            .try_call(move |state| {
-                state.edit_config(edit)?;
-                Ok(state.settings())
-            })
-            .await
+        self.change_config(
+            move |_, config| {
+                edit(config);
+                Ok(())
+            },
+            |state, ()| Ok(state.settings()),
+        )
+        .await
     }
 }
 

@@ -63,23 +63,20 @@ impl RostrumCore {
         &self,
         preferences: FeedPreferences,
     ) -> Result<FeedSnapshot, RostrumError> {
-        self.actor
-            .try_call(move |state| {
-                let mut filter = state.feed.filter.clone();
-                filter.hide_drafts = preferences.hide_drafts;
-                filter.hide_empty_repos = preferences.hide_empty_repos;
-                filter.include_involved = preferences.include_involved;
-                filter.authors = preferences
-                    .authors
-                    .iter()
-                    .map(|login| LoginKey::new(login))
-                    .filter(|login| !login.is_empty())
-                    .collect();
-                state.edit_config(|config| config.absorb_filter(&filter))?;
-                state.feed.filter = filter;
-                Ok(state.publish())
-            })
-            .await
+        self.edit_filter(move |state| {
+            let mut filter = state.feed.filter.clone();
+            filter.hide_drafts = preferences.hide_drafts;
+            filter.hide_empty_repos = preferences.hide_empty_repos;
+            filter.include_involved = preferences.include_involved;
+            filter.authors = preferences
+                .authors
+                .iter()
+                .map(|login| LoginKey::new(login))
+                .filter(|login| !login.is_empty())
+                .collect();
+            filter
+        })
+        .await
     }
 
     /// Add or remove one author from the filter (case-insensitive).
@@ -88,28 +85,18 @@ impl RostrumCore {
         if key.is_empty() {
             return Err(RostrumError::invalid("a login cannot be blank"));
         }
-        self.actor
-            .try_call(move |state| {
-                let mut filter = state.feed.filter.clone();
-                filter.toggle_author(key);
-                state.edit_config(|config| config.absorb_filter(&filter))?;
-                state.feed.filter = filter;
-                Ok(state.publish())
-            })
-            .await
+        self.edit_filter(move |state| {
+            let mut filter = state.feed.filter.clone();
+            filter.toggle_author(key);
+            filter
+        })
+        .await
     }
 
     /// Reset the query and every filter preference to their defaults. The
     /// sort is not a filter and is kept, as on the desktop.
     pub async fn clear_filter(&self) -> Result<FeedSnapshot, RostrumError> {
-        self.actor
-            .try_call(|state| {
-                let filter = state.feed.filter.cleared();
-                state.edit_config(|config| config.absorb_filter(&filter))?;
-                state.feed.filter = filter;
-                Ok(state.publish())
-            })
-            .await
+        self.edit_filter(|state| state.feed.filter.cleared()).await
     }
 
     /// Collapse or expand a repository's container. Not persisted.
@@ -127,14 +114,18 @@ impl RostrumCore {
 
     /// Show the Pull requests or the Issues list. Persisted.
     pub async fn set_feed_tab(&self, tab: FeedTab) -> Result<FeedSnapshot, RostrumError> {
-        self.actor
-            .try_call(move |state| {
-                let tab = rostrum_core::FeedTab::from(tab);
-                state.edit_config(|config| config.feed_tab = tab)?;
+        let tab = rostrum_core::FeedTab::from(tab);
+        self.change_config(
+            move |_, config| {
+                config.feed_tab = tab;
+                Ok(())
+            },
+            move |state, ()| {
                 state.feed.tab = tab;
                 Ok(state.publish())
-            })
-            .await
+            },
+        )
+        .await
     }
 
     /// The people the author filter can be pointed at, for the active tab:
@@ -189,5 +180,29 @@ impl RostrumCore {
                 }
             })
             .await
+    }
+}
+
+impl RostrumCore {
+    /// Persist the feed filter `choose` builds from the current state, then
+    /// show it.
+    async fn edit_filter(
+        &self,
+        choose: impl FnOnce(&crate::engine::state::CoreState) -> rostrum_core::FeedFilter
+        + Send
+        + 'static,
+    ) -> Result<FeedSnapshot, RostrumError> {
+        self.change_config(
+            move |state, config| {
+                let filter = choose(state);
+                config.absorb_filter(&filter);
+                Ok(filter)
+            },
+            |state, filter| {
+                state.feed.filter = filter;
+                Ok(state.publish())
+            },
+        )
+        .await
     }
 }

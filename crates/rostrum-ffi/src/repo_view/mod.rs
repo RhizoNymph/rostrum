@@ -239,13 +239,17 @@ impl RostrumCore {
     ) -> Result<TrunkSettings, RostrumError> {
         let id = parse_repo(&repo)?;
         let choice = parse_trunks(names)?;
-        self.actor
-            .try_call(move |state| {
-                state.edit_config(|config| config.set_trunk_choice(&id, &choice))?;
+        self.change_config(
+            move |_, config| {
+                config.set_trunk_choice(&id, &choice);
+                Ok((id, choice))
+            },
+            |state, (id, choice)| {
                 tracing::info!(repo = %id, detected = matches!(choice, TrunkChoice::Detected), "trunks set");
                 Ok(trunk_settings(&choice, state.branch_meta.get(&id)))
-            })
-            .await
+            },
+        )
+        .await
     }
 }
 

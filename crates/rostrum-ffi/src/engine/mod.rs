@@ -6,6 +6,7 @@
 //! - [`state`]: the state itself.
 
 pub(crate) mod actor;
+pub(crate) mod config_write;
 pub(crate) mod notifier;
 pub(crate) mod recent;
 pub(crate) mod state;
@@ -20,6 +21,7 @@ use rostrum_github::GitHubError;
 use crate::{
     engine::{
         actor::Actor,
+        config_write::ConfigWrites,
         notifier::Notifier,
         state::{CoreState, Startup},
         writer::Writer,
@@ -38,6 +40,7 @@ use crate::{
 pub struct RostrumCore {
     pub(crate) actor: Actor,
     pub(crate) db: Db,
+    pub(crate) config_writes: ConfigWrites,
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -106,7 +109,11 @@ impl RostrumCore {
         };
         let actor = Actor::spawn(|me| CoreState::new(startup, me));
         tracing::info!(dir = %dir.display(), "core opened");
-        Ok(Arc::new(Self { actor, db }))
+        Ok(Arc::new(Self {
+            actor,
+            db,
+            config_writes: ConfigWrites::default(),
+        }))
     }
 
     /// Close the SQLite pool, flushing it, before the profile directory under
