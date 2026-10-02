@@ -202,6 +202,38 @@ edit, absorbs the filter into the config, and saves. Every persisted toggle
 `set_include_involved`, `clear_filter`) goes through it. `FeedView::update_filter`
 remains for the query alone, and is documented as such.
 
+### Sharing the file with other writers
+
+`config.json` has more than one writer: the desktop app, `rostrumd` applying
+settings a paired phone sent (`PUT /api/v1/config`, see `rostrumd.md`), and a
+person with an editor. The app must neither clobber their writes nor miss
+them (`crates/rostrum/src/sync/config_file.rs`, on
+`rostrum_config::document`):
+
+- **Every save is a compare-and-swap** (`Store::persist_config` →
+  `rostrum_config::save_merged`). The store keeps the config as it last read
+  or wrote it (`FileState::base`) and that file's content hash. If the file
+  still has that hash, the in-memory config is written. If not, the file is
+  read again and `merge3(base, disk, mine)` re-applies only the fields the app
+  changed since `base` on top of what is there now; that is written, and the
+  running state adopts anything merged in. The write overlays the config onto
+  the existing document, so keys this build does not know survive, and is
+  atomic (temporary file, fsync, rename).
+- **The file is watched.** Every two seconds its modification time and size
+  are checked; when they move and its hash differs from the last one seen,
+  it is read and adopted (`Store::check_config_file`): the filter (keeping a
+  half-typed search), the tab and the repository list follow it, repositories
+  that appeared are fetched and ones that disappeared are dropped from the
+  feed, and changed fetch limits trigger a full refresh. The refresh interval
+  still applies on the next launch.
+- A file that is not JSON is never overwritten: the app keeps its settings
+  in memory, and a save fails with a warning until the file is fixed.
+
+`merge3` lists every `Config` field explicitly, so adding a field does not
+compile until someone decides how it merges. The window between reading the
+hash and the rename is not locked across processes; two writers in the same
+few microseconds can still race, and the later one wins whole fields.
+
 `Config::load_from` / `save_to` take an explicit path so the round trip is
 tested against a temporary directory. "Remembered across restarts" is a claim
 about those two functions agreeing, and it should not take a restart to find out

@@ -5,6 +5,7 @@
 //! handle and re-wraps the join handle as a `gpui::Task` (cancelled on drop).
 //! Results are applied back on the main thread through `entity.update`.
 
+mod config_file;
 mod issues;
 
 use std::{
@@ -201,6 +202,11 @@ pub struct Store {
     /// [`stacks`].
     stacks: stacks::StackSync,
     _hydrate: Option<Task<()>>,
+    /// What the store last knew of `config.json` on disk; see
+    /// [`config_file`].
+    file: config_file::FileState,
+    /// Held so the config-file watch is not dropped.
+    config_watch: Option<Task<()>>,
 }
 
 impl Store {
@@ -212,6 +218,7 @@ impl Store {
         let mut state = AppState::with_repos(repo_ids);
         state.filter = config.feed_filter();
         state.tab = config.feed_tab;
+        let file = config_file::FileState::at_startup(Config::path().as_ref(), &config);
 
         let mut store = Self {
             config,
@@ -231,9 +238,12 @@ impl Store {
             db: None,
             stacks: stacks::StackSync::default(),
             _hydrate: None,
+            file,
+            config_watch: None,
         };
         store.open_database(cx);
         store.authenticate(cx);
+        store.start_config_watch(cx);
         store
     }
 
@@ -336,7 +346,7 @@ impl Store {
         // Keep the feed in the same order as the config, which `add_repo`
         // sorts, so the list does not jump around between launches.
         self.state.repos.sort_by(|a, b| a.id.cmp(&b.id));
-        self.persist_config();
+        self.persist_config(cx);
         self.refresh_repo(id.clone(), cx);
         self.refresh_issues(id, cx);
         cx.notify();
@@ -348,6 +358,14 @@ impl Store {
         if !self.config.remove_repo(id) {
             return;
         }
+        self.forget_repo_state(id);
+        self.persist_config(cx);
+        cx.notify();
+    }
+
+    /// Drop everything the running app holds about a repository that is no
+    /// longer watched; the config is the caller's business.
+    pub(crate) fn forget_repo_state(&mut self, id: &RepoId) {
         self.state.repos.retain(|repo| &repo.id != id);
         // A selection pointing into the removed repo would resolve to nothing
         // and leave the detail pane stranded.
@@ -369,8 +387,6 @@ impl Store {
         if let Some(sync) = &mut self.sync {
             sync.results.retain(|(repo, _), _| repo != id);
         }
-        self.persist_config();
-        cx.notify();
     }
 
     pub fn set_hide_empty_repos(&mut self, hide: bool, cx: &mut Context<Self>) {
@@ -444,7 +460,7 @@ impl Store {
     fn edit_filter(&mut self, edit: impl FnOnce(&mut FeedFilter), cx: &mut Context<Self>) {
         edit(&mut self.state.filter);
         self.config.absorb_filter(&self.state.filter);
-        self.persist_config();
+        self.persist_config(cx);
         cx.notify();
     }
 
@@ -464,7 +480,7 @@ impl Store {
 
     pub fn set_autostash(&mut self, autostash: bool, cx: &mut Context<Self>) {
         self.config.autostash = autostash;
-        self.persist_config();
+        self.persist_config(cx);
         cx.notify();
     }
 
@@ -476,14 +492,6 @@ impl Store {
     /// is aborted; `Some` means it is left in place and handed to this command.
     pub fn conflict_handler(&self) -> Option<ConflictHandler> {
         self.config.conflict_handler.clone()
-    }
-
-    /// Config writes are small and infrequent; a failure is worth reporting but
-    /// not worth interrupting the user over.
-    pub(crate) fn persist_config(&self) {
-        if let Err(error) = self.config.save() {
-            tracing::warn!(%error, "could not save the config file");
-        }
     }
 
     /// The cache handle, for views that persist their own state.

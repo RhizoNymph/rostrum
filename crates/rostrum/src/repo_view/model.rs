@@ -237,7 +237,7 @@ impl Store {
         cx: &mut Context<Self>,
     ) {
         self.config.set_trunk_choice(repo, choice);
-        self.persist_config();
+        self.persist_config(cx);
         cx.notify();
     }
 }

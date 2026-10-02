@@ -90,6 +90,12 @@ separate table that a cache rebuild does not touch.
 Repositories may be given as `owner/name` or pasted as a GitHub URL. Malformed
 and duplicate entries are reported in the app rather than silently dropped.
 
+Edits to the file while the app is running are picked up within a couple of
+seconds, and the app's own saves merge with them rather than overwriting
+them. A paired phone can also send its repositories and feed preferences
+here, on demand (through `rostrumd`); clones, the conflict handler, the
+refresh interval and notifications are never sent or replaced.
+
 You do not have to edit this file by hand — the **repos** button in the feed
 opens a panel to add and remove repositories, and changes are saved
 immediately. `hide_empty_repos` is on by default and hides repositories that
