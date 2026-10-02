@@ -198,6 +198,10 @@ decodes leniently: an unknown value is absent, not a failed conversation.
 | Issue comment, close/reopen, labels, assignees | `IssueMutation::call` — `POST …/issues/{n}/comments`, `PATCH …/issues/{n}` with `state`/`state_reason`, `POST`/`DELETE …/issues/{n}/labels`, `POST`/`DELETE …/issues/{n}/assignees` |
 | Create issue | `POST /repos/{o}/{r}/issues` — `CreateIssue` |
 | Assignable users | `GET /repos/{o}/{r}/assignees` (paginated) |
+| Job log | `GET /repos/{o}/{r}/actions/jobs/{id}/logs` — redirects to storage on another host; followed without the token |
+| Check run output | `GET /repos/{o}/{r}/check-runs/{id}` and `…/annotations` |
+| Re-run job / failed jobs / all | `POST …/actions/jobs/{id}/rerun`, `POST …/actions/runs/{id}/rerun-failed-jobs`, `POST …/actions/runs/{id}/rerun` — `rerun_call`; refusals typed by `classify_rerun` |
+| Re-request a check suite | `POST /repos/{o}/{r}/check-suites/{id}/rerequest` |
 | Convert to draft | GraphQL `convertPullRequestToDraft` — no REST equivalent |
 | Ready for review | GraphQL `markPullRequestReadyForReview` — no REST equivalent |
 | Update from base | GraphQL `updatePullRequestBranch` — REST cannot rebase |
@@ -474,6 +478,8 @@ Two rules that matter in practice:
 | `crates/rostrum/src/sync/issues.rs` | Issue refresh in the same poll cycle, its overlap guard and cache write |
 | `crates/rostrum-github/src/issues/` | Issue documents, REST requests, client methods — see `docs/features/issues.md` |
 | `crates/rostrum-db/src/issues.rs` | Issue lists and issue details cached per repository |
+| `crates/rostrum-github/src/ci/` | The CI checks document, job logs, check output, re-runs — see `docs/features/ci_grid.md` |
+| `crates/rostrum/src/sync/ci.rs` | Checks refresh on the poll, the CI view's 15 s poll, optimistic requeue |
 | `crates/rostrum-core/src/probe.rs` | `MergeProbeBudget`, `needs_merge_probe` |
 | `crates/rostrum-db/src/files.rs` | Changed files cached per head sha |
 | `crates/rostrum-db/src/baseline.rs` | The notification seen set |

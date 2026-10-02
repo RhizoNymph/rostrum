@@ -124,6 +124,11 @@ Settings live in `~/.config/rostrum/rostrumd.json`; see
 | `/` | Focus the filter box |
 | `escape` | Clear the filter |
 | `c` | Collapse the selected repository |
+| `shift-c` | Open the CI grid (and back to the feed from it) |
+| `h` `j` `k` `l` / arrows | In the CI grid: move between cells |
+| `enter` | In the CI grid: open the selected check's log |
+| `r` | In the CI grid: re-run the selected check (asks first) |
+| `f` | In the CI grid: show only failing or running pull requests |
 | `ctrl-c` | Copy the selected diff lines, or the selected text |
 | `ctrl-r` | Refresh repositories and the open pull request |
 | `ctrl-q` | Quit |
@@ -144,6 +149,19 @@ Click a pull request, then use the tabs:
 
 Labels are editable from the header: remove one with its `×`, or open the picker
 to toggle any of the repository's labels.
+
+## CI
+
+**CI** in the feed's filter bar (or `shift-c`) swaps the window to a grid of
+every open pull request's checks: one row per pull request, grouped by
+repository and stack in the feed's order, one column per check. Each cell
+shows the status and how long it has been running or how long ago it
+finished; hover for the duration. `f` narrows to failing or running pull
+requests. `enter` opens the check's log — collapsible sections, the failing
+step highlighted, searchable — or, for another app's check, its output and
+annotations. `r` re-runs: the job, the run's failed jobs or the whole run for
+GitHub Actions, or re-requests another app's suite, after confirming. While
+the grid is open and something is running it refreshes every 15 seconds.
 
 ## Issues
 
