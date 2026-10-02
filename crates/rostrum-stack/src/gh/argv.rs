@@ -56,6 +56,17 @@ pub enum GhStackCommand {
         base: BranchName,
         members: StackMembers,
     },
+    /// Append existing pull requests to the top of stack `stack`, bottom
+    /// first: `gh stack link <stack> <pr>...`. As with [`Self::Link`], pull
+    /// request *numbers* only, so `link` has nothing to push; it retargets the
+    /// first addition's base to the stack's top and each next one to the
+    /// previous. A numeric first argument is read as a stack only when one
+    /// with that number exists, and stack and pull request numbers never
+    /// overlap.
+    LinkExtend {
+        stack: StackNumber,
+        additions: StackMembers,
+    },
     /// Track existing local branches as a stack in the clone, bottom first:
     /// `gh stack init --base <trunk> -- <branch>...`. Local only; writes
     /// `<git-dir>/gh-stack` and checks the top branch out.
@@ -85,6 +96,10 @@ impl GhStackCommand {
                 argv.extend(["link".into(), "--base".into(), base.to_string()]);
                 argv.extend(members.as_slice().iter().map(|n| n.0.to_string()));
             }
+            Self::LinkExtend { stack, additions } => {
+                argv.extend(["link".into(), stack.to_string()]);
+                argv.extend(additions.as_slice().iter().map(|n| n.0.to_string()));
+            }
             Self::Init { base, branches } => {
                 argv.extend(["init".into(), "--base".into(), base.to_string()]);
                 // `--` so a branch can never be read as a flag, even though
@@ -112,7 +127,7 @@ impl GhStackCommand {
     /// The subcommand, for logs and errors.
     pub fn name(&self) -> &'static str {
         match self {
-            Self::Link { .. } => "stack link",
+            Self::Link { .. } | Self::LinkExtend { .. } => "stack link",
             Self::Init { .. } => "stack init",
             Self::ViewJson => "stack view",
             Self::Merge { .. } => "stack merge",
@@ -126,7 +141,9 @@ impl GhStackCommand {
     pub fn timeout(&self) -> Duration {
         match self {
             Self::ViewJson | Self::Init { .. } => Duration::from_secs(60),
-            Self::Link { .. } | Self::Unstack { .. } => Duration::from_secs(180),
+            Self::Link { .. } | Self::LinkExtend { .. } | Self::Unstack { .. } => {
+                Duration::from_secs(180)
+            }
             Self::Merge { .. } => Duration::from_secs(900),
         }
     }
@@ -176,6 +193,21 @@ mod tests {
         // Numbers only: a branch argument would make `link` push it.
         assert!(command.argv()[4..].iter().all(|a| a.parse::<u32>().is_ok()));
         assert!(command.needs_clone());
+    }
+
+    #[test]
+    fn extending_names_the_stack_first_then_pull_request_numbers_only() {
+        let command = GhStackCommand::LinkExtend {
+            stack: number(7),
+            additions: members(&[43, 44]),
+        };
+        assert_eq!(command.argv(), vec!["stack", "link", "7", "43", "44"]);
+        // Every argument after `link` is a number: a branch name would be
+        // pushed by `link`, and `--base` is ignored when adding.
+        assert!(command.argv()[2..].iter().all(|a| a.parse::<u32>().is_ok()));
+        assert!(!command.argv().contains(&"--base".to_string()));
+        assert!(command.needs_clone());
+        assert_eq!(command.name(), "stack link");
     }
 
     #[test]
@@ -242,6 +274,10 @@ mod tests {
             GhStackCommand::Init {
                 base: branch("main"),
                 branches: vec![branch("a")],
+            },
+            GhStackCommand::LinkExtend {
+                stack: number(2),
+                additions: members(&[3]),
             },
             GhStackCommand::ViewJson,
             GhStackCommand::Merge {
