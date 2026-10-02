@@ -6,10 +6,13 @@
 //! tree itself is built by `rostrum_core::branches::build_tree`; this module
 //! only draws [`BranchRow`]s.
 
+use std::collections::HashMap;
+
 use gpui::{AnyElement, Context, Entity, Hsla, Subscription, Window, div, prelude::*, px, rems};
 use rostrum_core::{
-    Divergence, PrNumber, PullRequest, RepoId, Selection,
+    Divergence, PrNumber, PullRequest, RepoId, RepoState, Selection, StackNumber,
     branches::{BranchRow, PullNote, TrunkDrift},
+    stack::stack_groups,
 };
 use rostrum_ui::{
     ActiveTheme, Theme,
@@ -60,11 +63,15 @@ impl BranchesPane {
         &self,
         ix: usize,
         row: BranchRow,
-        prs: &[PullRequest],
-        default: &str,
+        context: &RowContext<'_>,
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let RowContext {
+            prs,
+            stacks,
+            default,
+        } = *context;
         match row {
             BranchRow::Trunk { name, drift, pulls } => h_flex()
                 .gap_2()
@@ -165,6 +172,24 @@ impl BranchesPane {
                             .child(title),
                     )
                     .children(divergence_chips(ix, drift, &base, theme))
+                    // The tree already nests a chain; the chip says whether
+                    // GitHub knows it as a stack or rostrum only detected it.
+                    .when_some(stacks.get(&number), |el, stack| {
+                        let (text, why) = match stack {
+                            Some(stack) => {
+                                (format!("stack {stack}"), "A member of this GitHub stack")
+                            }
+                            None => (
+                                "chain".to_string(),
+                                "A detected chain, not yet a stack on GitHub",
+                            ),
+                        };
+                        el.child(
+                            Chip::new(text)
+                                .color(theme.accent)
+                                .tooltip(("branch-stack", ix), why),
+                        )
+                    })
                     .when(is_draft, |el| {
                         el.child(Chip::new("draft").color(theme.draft))
                     })
@@ -282,15 +307,44 @@ fn divergence_chips(
     ]
 }
 
+/// Which stack each grouped pull request belongs to: `Some(number)` for a
+/// GitHub stack, `None` for a chain rostrum detected. The same grouping the
+/// feed uses, so the tree and the feed never disagree about membership.
+/// What every row of one paint reads besides the row itself.
+#[derive(Clone, Copy)]
+struct RowContext<'a> {
+    prs: &'a [PullRequest],
+    stacks: &'a StackMembership,
+    default: &'a str,
+}
+
+type StackMembership = HashMap<PrNumber, Option<StackNumber>>;
+
+fn stack_membership(repo: &RepoState) -> StackMembership {
+    stack_groups(repo)
+        .into_iter()
+        .flat_map(|group| {
+            let number = group.stack.number;
+            group
+                .stack
+                .members
+                .as_slice()
+                .to_vec()
+                .into_iter()
+                .map(move |member| (member, number))
+        })
+        .collect()
+}
+
 impl Render for BranchesPane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let prs: Vec<PullRequest> = self
+        let (prs, stacks): (Vec<PullRequest>, StackMembership) = self
             .store
             .read(cx)
             .state
             .repo(&self.repo)
-            .map(|repo| repo.prs.clone())
+            .map(|repo| (repo.prs.clone(), stack_membership(repo)))
             .unwrap_or_default();
         let branches = self.branches.read(cx);
         let status = branches.status().clone();
@@ -304,12 +358,17 @@ impl Render for BranchesPane {
                     Branches::Empty => String::new(),
                 };
                 let rows = tree.rows();
+                let context = RowContext {
+                    prs: &prs,
+                    stacks: &stacks,
+                    default: &default,
+                };
                 v_flex()
                     .pb_4()
                     .children(
                         rows.into_iter()
                             .enumerate()
-                            .map(|(ix, row)| self.render_row(ix, row, &prs, &default, &theme, cx)),
+                            .map(|(ix, row)| self.render_row(ix, row, &context, &theme, cx)),
                     )
                     .into_any_element()
             }

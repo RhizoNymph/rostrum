@@ -197,7 +197,8 @@ mod tests {
             prs.row(1),
             Some(FeedRow::PrRow {
                 repo: RepoIx(0),
-                pr: PrIx(0)
+                pr: PrIx(0),
+                stack: None
             })
         );
         let issues = flatten_tab(&repos, &filter, FeedTab::Issues);
@@ -273,7 +274,8 @@ mod tests {
             flatten(std::slice::from_ref(&state), &filter).row(1),
             Some(FeedRow::PrRow {
                 repo: RepoIx(0),
-                pr: PrIx(0)
+                pr: PrIx(0),
+                stack: None
             })
         );
     }

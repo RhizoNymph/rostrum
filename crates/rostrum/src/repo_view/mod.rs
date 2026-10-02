@@ -23,11 +23,11 @@ use gpui::{
 use rostrum_core::{IssueNumber, LoadState, PrNumber, RepoId, Selection};
 use rostrum_ui::{
     ActiveTheme, InputEvent, PopoverAnchor, TextInput,
-    components::{Button, ButtonStyle, h_flex, v_flex},
+    components::{Button, ButtonStyle, Chip, h_flex, v_flex},
 };
 
 use crate::{
-    feed::{issue_row_content, pr_row_content},
+    feed::{STACK_INDENT, issue_row_content, pr_row_content, stack_glyph},
     nav::Nav,
     sync::Store,
 };
@@ -395,6 +395,47 @@ impl RepoView {
         let theme = cx.theme().clone();
         let content = pr_row_content(pull, sync, ix, &theme);
         let number = pull.number;
+        let glyph = self.order.slot_at(ix).map(|slot| stack_glyph(slot.place));
+        // The stack's header rides on its bottom member's row, so the list
+        // keeps one row per pull request. Its actions stay in the feed.
+        let header = self.order.header_at(ix).map(|placed| {
+            let group = &placed.group;
+            let count = group.stack.members.len();
+            let title = match group.stack.number {
+                Some(number) => format!("Stack {number} · {count} PRs"),
+                None => format!("Stackable chain · {count} PRs"),
+            };
+            let rollup = group.rollup(&repo.prs);
+            h_flex()
+                .gap_2()
+                .pb_1()
+                .child(
+                    div()
+                        .text_color(theme.accent)
+                        .text_size(rems(0.78))
+                        .child("⛓"),
+                )
+                .child(
+                    div()
+                        .text_color(theme.text)
+                        .text_size(rems(0.74))
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .text_color(theme.text_subtle)
+                        .text_size(rems(0.7))
+                        .child(format!("onto {}", group.stack.trunk)),
+                )
+                .when_some(rollup, |el, rollup| {
+                    let color = if rollup.all_mergeable() {
+                        theme.success
+                    } else {
+                        theme.merge_color(rollup.worst)
+                    };
+                    el.child(Chip::new(rollup.label()).color(color))
+                })
+        });
 
         div()
             .id(("repo-pr", ix))
@@ -405,7 +446,26 @@ impl RepoView {
             .when(selected, |el| el.bg(theme.surface_selected))
             .hover(|el| el.bg(theme.surface_hover))
             .cursor_pointer()
-            .child(content)
+            .child(
+                v_flex()
+                    .when_some(header, |el, header| el.child(header))
+                    .child(
+                        h_flex()
+                            .items_start()
+                            .gap_2()
+                            .when(glyph.is_some(), |el| el.pl(px(STACK_INDENT - 12.)))
+                            .when_some(glyph, |el, glyph| {
+                                el.child(
+                                    div()
+                                        .w(px(10.))
+                                        .text_color(theme.accent)
+                                        .text_size(rems(0.72))
+                                        .child(glyph),
+                                )
+                            })
+                            .child(content.flex_1().min_w_0()),
+                    ),
+            )
             .on_click(cx.listener(move |this, _, _window, cx| this.select_pull(number, cx)))
             .into_any_element()
     }

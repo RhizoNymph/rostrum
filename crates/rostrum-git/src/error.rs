@@ -122,6 +122,17 @@ pub enum GitError {
     /// user's own and not rostrum's to describe or continue.
     #[error("nothing to describe: {}", in_progress.map(InProgress::describe).unwrap_or("no operation is in progress"))]
     NothingToDescribe { in_progress: Option<InProgress> },
+
+    /// A branch ref was not moved because a worktree has it checked out:
+    /// moving it underneath that worktree would leave its index and files
+    /// describing a commit the branch no longer names.
+    #[error("`{branch}` is checked out in `{}`; not moving it", path.display())]
+    CheckedOut { branch: String, path: PathBuf },
+
+    /// A rewrite that only runs on a detached HEAD in a worktree rostrum made
+    /// for it found a branch, or local changes, instead. Nothing was run.
+    #[error("`{}` is not a clean detached worktree: {reason}", path.display())]
+    NotScratch { path: PathBuf, reason: String },
 }
 
 impl GitError {

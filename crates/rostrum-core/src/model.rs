@@ -470,6 +470,14 @@ pub struct PullRequest {
     /// `merge_state`: rows cached before it existed must still decode.
     #[serde(default)]
     pub base_divergence: Option<Divergence>,
+    /// Whether the head branch lives in another repository (a fork).
+    ///
+    /// A fork's `head_ref` names a branch in *that* repository, so another
+    /// pull request whose base happens to have the same name is not built on
+    /// it. Stack detection excludes these for that reason. Defaulted like
+    /// `merge_state`: a row cached before it existed must still decode.
+    #[serde(default)]
+    pub is_cross_repository: bool,
 }
 
 impl PullRequest {
@@ -657,6 +665,7 @@ mod tests {
             comment_count: 0,
             checks: None,
             base_divergence: None,
+            is_cross_repository: false,
             pushed_at: None,
         }
     }

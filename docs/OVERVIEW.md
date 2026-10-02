@@ -47,13 +47,20 @@ Overview:
       in, how far it has drifted from GitHub and from its base, and pull/merge/
       rebase on it — one at a time from the detail pane, or across every open
       pull request from the feed. Drives the `git` command line; never writes
-      to a remote.
+      to a remote, except the one leased push behind arranging a stack.
     feed_sort: >
       Ordering the feed: repository containers by pushed, updated, created,
       owner, name or stars, and the items in each by pushed, updated,
       created, author or title, each either way. Pure comparisons in
       rostrum-core (with a hook for groups that sort as one unit), applied by
       `flatten`, persisted with the other feed preferences.
+    stacks: >
+      Stacks of pull requests. Reads GitHub's stacks (Stacks REST API, cached),
+      detects chains that could be one, renders each stack under a header in
+      its repository's container and sorts it as one unit; makes stacks from
+      a clone (`gh stack link`/`init`, rebasing and lease-pushing branches
+      first when arranging arbitrary pull requests), merges a whole stack
+      atomically (`gh stack merge`) and unstacks. Desktop only for now.
     author_filter: >
       Narrowing the feed to chosen people — authored, or optionally also
       assigned/review-requested — and the persistence of every feed setting
@@ -154,6 +161,20 @@ Overview:
     what is restored cannot drift apart. The search query is the one filter
     excluded, deliberately. The two feed sorts ride the same funnel, but are
     not filters: they never count as an active filter and survive "clear".
+
+    Stacks ride beside the pull requests. After each refresh the store reads
+    the repository's stacks from GitHub's Stacks API into `RepoState::stacks`
+    (and `cache_stack`), and `flatten` groups each repository's visible pull
+    requests into units — GitHub's stacks, then chains detected from base and
+    head branches — sorting a stack as one unit through the sort's group
+    hook and emitting a `StackHeader` row before its members. Only the Pull
+    requests tab groups; issues are never in a stack. A repository's own view
+    lays its pull requests out the same way (`repo_pull_rows`), and its branch
+    tree marks stack members. Stack actions
+    flow out through `rostrum-stack`: one operation at a time, run on Tokio,
+    driving `git` in the clone (scratch worktrees, the leased push) and `gh
+    stack` through its one runner, with progress returned over a channel and
+    a refresh when it ends.
 
     Mutations (comment, review, merge) go out over REST, are applied optimistically
     to local state where safe, and are reconciled by the next poll. Draft
@@ -262,6 +283,15 @@ Features Index:
     entry_points: [crates/rostrum-core/src/sort/mod.rs, crates/rostrum-core/src/sort/compare.rs, crates/rostrum/src/feed/sort_menu.rs]
     depends_on: [repo_feed, github_sync, author_filter]
     doc: docs/features/feed_sort.md
+  stacks:
+    description: >
+      Stacks of pull requests — GitHub's (Stacks API, cached) and detected
+      chains — grouped and sorted as one unit in the feed; Make stack, Arrange
+      (rebase + leased force-push), atomic Merge stack, and Unstack via `gh
+      stack`.
+    entry_points: [crates/rostrum-core/src/stack/mod.rs, crates/rostrum-stack/src/lib.rs, crates/rostrum/src/feed/stacks.rs, crates/rostrum/src/sync/stacks.rs]
+    depends_on: [repo_feed, feed_sort, github_sync, local_git, conflict_handoff]
+    doc: docs/features/stacks.md
   author_filter:
     description: Author/involvement filtering of the feed, and persisted feed settings.
     entry_points: [crates/rostrum-core/src/authors.rs, crates/rostrum-config/src/lib.rs]
@@ -324,6 +354,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 | `rostrum-git` | no | Worktrees, clone status, divergence, pull/merge/rebase, conflict context via the `git` CLI |
 | `rostrum-handoff` | no | Context bundle rendering and tmux session spawning for conflict handoff |
 | `rostrum-local` | no | One pull request's local state (`local_state`) and one local operation on it (`run_local_job`), shared by every caller |
+| `rostrum-stack` | no | Stacks that act: the `gh stack` runner and its typed commands, reading gh-stack's local file, making/arranging (`run_stack_job`), merging and unstacking |
 | `rostrum-remote` | no | Phone ↔ desktop protocol: pairing, device tokens, API types, and (feature `client`) the pinned HTTPS client |
 | `rostrumd` | no | Desktop daemon: pairing page and APK download over HTTP, the paired phone's API over HTTPS, systemd user service |
 | `rostrum-config` | no | `config.json`: watched repositories, clones, feed preferences, conflict handler |
@@ -345,7 +376,9 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 | Diff parsing | hand-rolled | `diffy` requires `---`/`+++` headers GitHub's per-file patches lack, and exposes neither `\ No newline` nor the raw `@@` line |
 | Highlighting | `syntect` (pure-Rust regex) | One dependency covering many languages, versus matching the tree-sitter ABI across a grammar crate per language. Tree-sitter remains the better long-term choice |
 | Local git | Drive the `git` CLI, not libgit2 | Inherits the user's credential helpers, ssh agent, hooks, and `rerere` for free; libgit2's rebase is a partial substitute and its credential negotiation would have to be reimplemented. `auth.rs` already shells out to `gh` |
-| Local writes | Never push | A local merge or rebase leaves the clone ahead, and that count is the cue to push. Keeps force-push out of the app entirely |
+| Local writes | Never push — with one exception: arranging pull requests into a stack | A local merge or rebase leaves the clone ahead, and that count is the cue to push. Arranging is the exception because rebasing a branch onto another is invisible to its pull request until pushed. It goes through one function (`Repo::push_with_lease`, always `--force-with-lease=<ref>:<expected-oid>`, never a bare force), runs only after every member rebased cleanly, only behind an explicit confirmation, and `gh stack` is never allowed to push on rostrum's behalf. See `docs/features/stacks.md` |
+| Stacks | GitHub's Stacks API is the source of truth; `gh stack` performs every stack write | The API needs no clone, so every watched repository groups; gh-stack owns link/merge/unstack semantics, and its local file is read, never written |
+| `gh` environment | Inherited (like tmux), minus `GIT_DIR`-family variables, with `GH_REPO` pinned | `gh` authenticates with the user's own setup; the removed variables would change which repository a nested `git` reads, and a pinned `GH_REPO` stops a fork remote redirecting a merge |
 | Feed distance | One batched `Ref.compare` per repository after each refresh | A GraphQL field cannot read a sibling's value, so the count cannot join the feed query; aliasing one `compare` per PR keeps it to one request, cost 1 |
 | Conflicts | Abort by default; leave and hand off to tmux when a handler is configured | Rostrum has no conflict editor. Either the clone is left as found, or something that can edit is running in a named session with the context gathered |
 | Phone access | `rostrumd`: an HTTPS API on a self-signed certificate the phone pins by fingerprint, and a plain-HTTP page whose pairing half answers only loopback and the tailnet | No CA and no certificate warning anywhere; the page opens in any browser; a pairing code — the key to the clones and the GitHub token — cannot be minted from the shared LAN |
@@ -453,7 +486,7 @@ Each phase leaves a usable application.
 
 ## Status
 
-All five phases are complete and verified against the live API. 1326 tests pass
+All five phases are complete and verified against the live API. 1463 tests pass
 (154 of them in `rostrum-ffi`); clippy is clean across the workspace.
 
 Issues are on the desktop: a tab beside pull requests, an issue pane, and

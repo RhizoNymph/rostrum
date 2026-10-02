@@ -32,27 +32,33 @@ pub fn selected_row(
     let repo_ix = repos.iter().position(|repo| &repo.id == selection.repo())?;
     let repo = RepoIx(repo_ix);
 
-    let target = match selection {
-        Selection::PullRequest { number, .. } => FeedRow::PrRow {
-            repo,
-            pr: PrIx(
+    // Matched on identity alone: a stack member's row also carries its slot,
+    // which says nothing about which pull request it is.
+    match selection {
+        Selection::PullRequest { number, .. } => {
+            let pr = PrIx(
                 repos[repo_ix]
                     .prs
                     .iter()
                     .position(|pr| pr.number == *number)?,
-            ),
-        },
-        Selection::Issue { number, .. } => FeedRow::IssueRow {
-            repo,
-            issue: IssueIx(
-                repos[repo_ix]
-                    .issues
-                    .iter()
-                    .position(|issue| issue.number == *number)?,
-            ),
-        },
-    };
-    feed.rows().iter().position(|row| *row == target)
+            );
+            feed.rows().iter().position(|row| {
+                matches!(row, FeedRow::PrRow { repo: r, pr: p, .. } if *r == repo && *p == pr)
+            })
+        }
+        Selection::Issue { number, .. } => {
+            let target = FeedRow::IssueRow {
+                repo,
+                issue: IssueIx(
+                    repos[repo_ix]
+                        .issues
+                        .iter()
+                        .position(|issue| issue.number == *number)?,
+                ),
+            };
+            feed.rows().iter().position(|row| *row == target)
+        }
+    }
 }
 
 /// Resolve `nav` to the feed row it should land on, or `None` when the feed
@@ -116,6 +122,7 @@ mod tests {
             comment_count: 0,
             checks: None,
             base_divergence: None,
+            is_cross_repository: false,
             pushed_at: None,
         }
     }

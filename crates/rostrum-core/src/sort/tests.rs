@@ -683,7 +683,7 @@ fn pr_numbers(feed: &crate::Feed, repos: &[RepoState]) -> Vec<(String, u32)> {
     feed.rows()
         .iter()
         .filter_map(|row| match *row {
-            FeedRow::PrRow { repo, pr } => {
+            FeedRow::PrRow { repo, pr, .. } => {
                 let state = &repos[repo.0];
                 Some((state.id.to_string(), state.prs[pr.0].number.0))
             }

@@ -2,12 +2,15 @@
 //!
 //! Both halves follow the feed's **item** sort — the one the Sort popover
 //! sets for pull requests and issues — so a repository reads the same in
-//! its own view as in the feed. Unlike the feed, nothing is filtered out:
-//! the view is the whole repository. Pure, so it is tested without a window.
+//! its own view as in the feed. Pull requests are laid out by the feed's own
+//! [`repo_pull_rows`], so a stack sorts as one unit and its members stay
+//! contiguous, bottom first; the first member of each carries the stack's
+//! header. Unlike the feed, nothing is filtered out: the view is the whole
+//! repository. Pure, so it is tested without a window.
 
 use rostrum_core::{
-    IssueIx, ItemSortKey, PrIx, RepoState, Selection, Sort,
-    sort::{order_issues, order_items},
+    FeedRow, FeedStack, IssueIx, ItemSortKey, PrIx, RepoState, Selection, Sort, StackSlot,
+    repo_pull_rows, sort::order_issues,
 };
 
 use super::nav::Position;
@@ -17,6 +20,10 @@ use super::nav::Position;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ListOrder {
     pulls: Vec<PrIx>,
+    /// Per pull request row: its place in a stack, if it is in one.
+    slots: Vec<Option<StackSlot>>,
+    /// Every stack in the list, indexed by the slots' `StackIx`.
+    stacks: Vec<FeedStack>,
     issues: Vec<IssueIx>,
 }
 
@@ -27,11 +34,24 @@ impl ListOrder {
         let Some(repo) = repo else {
             return Self::default();
         };
-        let mut pulls: Vec<PrIx> = (0..repo.prs.len()).map(PrIx).collect();
-        order_items(&repo.prs, &mut pulls, sort);
+        let (rows, stacks) = repo_pull_rows(repo, sort);
+        // The stack header rows fold into their first member's row: one list
+        // row per pull request keeps `j`/`k` and the row index identical.
+        let (pulls, slots) = rows
+            .into_iter()
+            .filter_map(|row| match row {
+                FeedRow::PrRow { pr, stack, .. } => Some((pr, stack)),
+                _ => None,
+            })
+            .unzip();
         let mut issues: Vec<IssueIx> = (0..repo.issues.len()).map(IssueIx).collect();
         order_issues(&repo.issues, &mut issues, sort);
-        Self { pulls, issues }
+        Self {
+            pulls,
+            slots,
+            stacks,
+            issues,
+        }
     }
 
     pub fn pulls(&self) -> usize {
@@ -45,6 +65,19 @@ impl ListOrder {
     /// The pull request shown `row`th in the top list.
     pub fn pull_at(&self, row: usize) -> Option<PrIx> {
         self.pulls.get(row).copied()
+    }
+
+    /// The stack slot of the pull request shown `row`th, if it is a member.
+    pub fn slot_at(&self, row: usize) -> Option<StackSlot> {
+        self.slots.get(row).copied().flatten()
+    }
+
+    /// The stack whose header sits on the `row`th pull request row: the row
+    /// of its first (bottom) member.
+    pub fn header_at(&self, row: usize) -> Option<&FeedStack> {
+        let slot = self.slot_at(row)?;
+        let starts = row == 0 || self.slot_at(row - 1).map(|s| s.stack) != Some(slot.stack);
+        starts.then(|| self.stacks.get(slot.stack.0)).flatten()
     }
 
     /// The issue shown `row`th in the bottom list.
@@ -115,6 +148,7 @@ mod tests {
             comment_count: 0,
             checks: None,
             base_divergence: None,
+            is_cross_repository: false,
             pushed_at: None,
         }
     }
@@ -219,6 +253,30 @@ mod tests {
         assert_eq!(order.position_of(&repo, &other_repo), None);
         assert_eq!(order.position_of(&repo, &closed), None);
         assert_eq!(order.position_of(&repo, &wrong_kind), None);
+    }
+
+    /// A chain (#5 on `main`, #6 on #5's head) stays together, bottom first,
+    /// with the header on its bottom member, wherever the sort files it.
+    #[test]
+    fn a_stack_is_contiguous_with_its_header_on_the_bottom_member() {
+        let mut repo = repo();
+        let mut bottom = pr(5, 1, 1);
+        bottom.head_ref = "a".into();
+        let mut top = pr(6, 40, 40);
+        top.head_ref = "b".into();
+        top.base_ref = "a".into();
+        repo.prs.push(top);
+        repo.prs.push(bottom);
+        let order = ListOrder::new(Some(&repo), Sort::new(ItemSortKey::Created));
+        // Created, newest first: the stack files under its newest member (40).
+        assert_eq!(numbers(&order, &repo).0, vec![5, 6, 2, 3, 1]);
+        let header = order.header_at(0).expect("a header on the bottom member");
+        assert_eq!(header.group.open.len(), 2);
+        assert!(order.header_at(1).is_none());
+        assert!(order.slot_at(1).is_some());
+        assert!(order.slot_at(2).is_none());
+        // Issues are untouched by stacks.
+        assert_eq!(numbers(&order, &repo).1, vec![9, 8, 7]);
     }
 
     #[test]

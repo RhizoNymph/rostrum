@@ -18,6 +18,7 @@ rostrum-github.workspace = true
 rostrum-handoff.workspace = true
 rostrum-local.workspace = true
 rostrum-md.workspace = true
+rostrum-stack.workspace = true
 rostrum-ui.workspace = true
 
 gpui.workspace = true

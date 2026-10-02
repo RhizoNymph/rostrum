@@ -5292,6 +5292,7 @@ dependencies = [
  "rostrum-handoff",
  "rostrum-local",
  "rostrum-md",
+ "rostrum-stack",
  "rostrum-ui",
  "serde",
  "serde_json",
@@ -5452,6 +5453,23 @@ dependencies = [
  "tokio-rustls",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "rostrum-stack"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "futures",
+ "rostrum-config",
+ "rostrum-core",
+ "rostrum-git",
+ "rostrum-handoff",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

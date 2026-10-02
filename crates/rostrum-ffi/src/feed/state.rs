@@ -244,7 +244,10 @@ impl FeedState {
                     }
                     building = Some(Building::new(repo.0));
                 }
-                FeedRow::PrRow { repo, pr } => {
+                // Stack grouping is desktop-only for now: the phone gets the
+                // members in the same contiguous order, without the header.
+                FeedRow::StackHeader { .. } => {}
+                FeedRow::PrRow { repo, pr, .. } => {
                     if let (Some(current), Some(state)) =
                         (building.as_mut(), self.repos.get(repo.0))
                         && let Some(pull) = state.prs.get(pr.0)

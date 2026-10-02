@@ -29,7 +29,13 @@ use crate::{
     sync::{Store, SyncKind},
 };
 
+mod arrange;
 mod sort_menu;
+mod stacks;
+
+use rows::card;
+use stacks::StackUi;
+pub(crate) use stacks::{STACK_INDENT, stack_glyph};
 
 actions!(
     feed,
@@ -121,6 +127,8 @@ pub struct FeedView {
     focus_handle: FocusHandle,
     feed: Rc<Feed>,
     list: ListState,
+    /// Stack selection, confirmations and the trunk input; see [`stacks`].
+    stack_ui: StackUi,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -130,6 +138,7 @@ impl FeedView {
         let list = ListState::new(feed.len(), ListAlignment::Top, px(400.));
         let filter = cx.new(|cx| TextInput::new("Filter…", cx).lines(1, 1));
         let repo_input = cx.new(|cx| TextInput::new("owner/name or a GitHub URL", cx).lines(1, 1));
+        let stack_ui = StackUi::new(cx);
 
         let subscriptions = vec![
             cx.observe(&store, |this, _, cx| this.store_changed(cx)),
@@ -137,6 +146,12 @@ impl FeedView {
                 if matches!(event, InputEvent::Changed) {
                     let query = filter.read(cx).text().to_string();
                     this.set_query(query, cx);
+                }
+            }),
+            // The arrangement re-validates as the trunk is typed.
+            cx.subscribe(&stack_ui.trunk_input, |_, _, event, cx| {
+                if matches!(event, InputEvent::Changed) {
+                    cx.notify();
                 }
             }),
             // Enter in the repo box adds it, so the mouse is optional.
@@ -159,6 +174,7 @@ impl FeedView {
             focus_handle: cx.focus_handle(),
             feed,
             list,
+            stack_ui,
             _subscriptions: subscriptions,
         }
     }
@@ -405,6 +421,11 @@ impl FeedView {
     /// showing whatever was open; `j`/`k` then enter the new tab's list from
     /// its end, since the old selection has no row there.
     fn set_tab(&mut self, tab: FeedTab, cx: &mut Context<Self>) {
+        // Picking for an arrangement toggles pull request rows; the Issues
+        // tab has none, so leaving the tab ends it.
+        if tab == FeedTab::Issues && self.is_picking() {
+            self.stop_picking(cx);
+        }
         self.store.update(cx, |store, cx| store.set_tab(tab, cx));
         self.list.scroll_to(gpui::ListOffset::default());
     }
@@ -756,6 +777,26 @@ impl FeedView {
                         .child(sync_button("sync-pull", SyncKind::Pull, cx))
                         .child(sync_button("sync-merge-base", SyncKind::MergeBase, cx))
                         .child(sync_button("sync-rebase-base", SyncKind::RebaseBase, cx))
+                        // Stacks are pull requests only; on the Issues tab
+                        // there is nothing to arrange.
+                        .when(tab == FeedTab::PullRequests, |el| {
+                            el.child(
+                                Button::new("arrange-start", "Arrange PRs")
+                                    .style(if self.is_picking() {
+                                        ButtonStyle::Primary
+                                    } else {
+                                        ButtonStyle::Subtle
+                                    })
+                                    .tooltip("Pick pull requests of one repository to stack, rebasing them onto each other")
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        if this.is_picking() {
+                                            this.stop_picking(cx)
+                                        } else {
+                                            this.start_picking(cx)
+                                        }
+                                    })),
+                            )
+                        })
                         .child(
                             Checkbox::new("sync-autostash", "Stash local changes", autostash)
                                 .on_toggle(cx.listener(move |this, _, _window, cx| {
@@ -863,6 +904,7 @@ impl Render for FeedView {
             .on_action(cx.listener(Self::previous_tab))
             .child(self.render_tabs(cx))
             .child(self.render_filter_bar(cx))
+            .child(self.render_stack_bar(cx))
             .child(
                 div()
                     .flex_1()
@@ -890,7 +932,7 @@ fn build(store: &Entity<Store>, cx: &App) -> Feed {
 /// built from.
 fn selection_for(repos: &[RepoState], row: FeedRow) -> Option<Selection> {
     match row {
-        FeedRow::PrRow { repo, pr } => {
+        FeedRow::PrRow { repo, pr, .. } => {
             let state = repos.get(repo.0)?;
             Some(Selection::PullRequest {
                 repo: state.id.clone(),
@@ -905,6 +947,7 @@ fn selection_for(repos: &[RepoState], row: FeedRow) -> Option<Selection> {
             })
         }
         FeedRow::RepoHeader { .. }
+        | FeedRow::StackHeader { .. }
         | FeedRow::RepoEmpty { .. }
         | FeedRow::RepoError { .. }
         | FeedRow::RepoLoading { .. }
@@ -961,6 +1004,7 @@ mod tests {
             comment_count: 0,
             checks: None,
             base_divergence: None,
+            is_cross_repository: false,
             pushed_at: None,
         }
     }
@@ -1023,7 +1067,8 @@ mod tests {
                 &repos,
                 FeedRow::PrRow {
                     repo: RepoIx(0),
-                    pr: PrIx(0)
+                    pr: PrIx(0),
+                    stack: None
                 }
             ),
             Some(Selection::PullRequest {

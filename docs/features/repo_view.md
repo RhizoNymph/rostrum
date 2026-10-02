@@ -151,7 +151,11 @@ Siblings are ordered by number. Every pull request appears exactly once.
   title (click selects it and opens the detail); `↑a ↓b` against its base,
   `↓` in the warning colour when behind, `↑? ↓?` when unknown; `draft`; the
   merge chip (`MergeStatus::chip`, coloured and explained exactly as in the
-  feed); `cycle`/`ambiguous` notes.
+  feed); `cycle`/`ambiguous` notes; and, for a member of a stack, a
+  `stack N` chip (a GitHub stack) or a `chain` chip (a chain rostrum
+  detected but GitHub does not know). Membership comes from the same
+  `stack_groups` the feed groups by, so the tree and the feed agree; the
+  nesting itself is the tree's own placement rules, unchanged.
 - **Other bases** heading, and per base a `unknown base` chip and count.
 
 ## Trunk configuration
@@ -188,12 +192,21 @@ places cannot drift apart in what a row says.
 
 `order::ListOrder` holds each list's display order as positions into
 `RepoState::prs` / `RepoState::issues`: every item, unfiltered, ordered by
-the feed's **item** sort (`FeedFilter::sort.items`) with `order_items` /
-`order_issues`. So the view reads in the same order as that repository's
+the feed's **item** sort (`FeedFilter::sort.items`). Pull requests come from
+the core's `repo_pull_rows` — the feed's own layout for one repository — so
+**stacks are contiguous and sort as one unit**, members bottom first; issues
+come from `order_issues` and are never grouped. So the view reads in the same order as that repository's
 run in the feed, and issues sort exactly as on the Issues tab — including
 "pushed", which for an issue means its last update. Row `ix` of a list is
 `order.pull_at(ix)` / `order.issue_at(ix)`; a selection's row is
 `order.position_of(repo, selection)`, which never matches across kinds.
+
+A stack's header is drawn on its bottom member's row rather than as a row
+of its own (`ListOrder::header_at`): "Stack N · k PRs" (or "Stackable chain"),
+the trunk, and the merge rollup. Every member row carries the feed's chain
+glyph and indent (`ListOrder::slot_at`). Keeping one list row per pull
+request keeps `j`/`k` and the display index identical. The stack's actions
+(Merge, Unstack, Make, Arrange) stay in the feed.
 
 `RepoView::store_changed` rebuilds the order on every store change. A change
 in count resets a list; a reorder at the same count `splice`s it in place, so
@@ -216,6 +229,8 @@ unchanged order leaves both lists alone.
   change).
 - Both lists are in the feed's item sort; rows are addressed by display
   position, never by vector index.
+- A stack's members are contiguous in the pull request list, bottom first,
+  and its header appears exactly once, on the first member.
 
 ## Deferred
 
@@ -245,7 +260,7 @@ unchanged order leaves both lists alone.
 | `crates/rostrum/src/repo_view/branches.rs` | `BranchesPane`, the tree's rendering |
 | `crates/rostrum/src/repo_view/trunk_editor.rs` | The trunks popover |
 | `crates/rostrum/src/repo_view/issues.rs` | The issues half's header count and empty states |
-| `crates/rostrum/src/repo_view/order.rs` | `ListOrder`: both lists in the item sort, display row ↔ item, selection lookup |
+| `crates/rostrum/src/repo_view/order.rs` | `ListOrder`: both lists in the item sort, stacks grouped, display row ↔ item, stack slot and header lookup, selection lookup |
 | `crates/rostrum/src/repo_view/nav.rs` | `step`: keyboard movement across both lists |
 | `crates/rostrum/src/feed/rows.rs` | `pr_row_content`, `issue_row_content`: the row bodies shared by the feed and the view |
 | `crates/rostrum/src/main.rs` | `Workspace::open_repo` / `close_repo`, pane switching (`DetailPane`: `PrDetail`, `IssuePane`, new-issue form, or the branch tree when nothing is selected in a repository) |

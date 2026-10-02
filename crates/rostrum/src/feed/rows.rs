@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use gpui::{AnyElement, App, Context, Div, div, prelude::*, px, rems};
 use rostrum_core::{
     Chrome, FeedRow, FeedTab, Issue, IssueIx, MergeStatus, PrIx, PullRequest, RepoIx, RepoState,
-    ReviewDecision, Selection,
+    ReviewDecision, Selection, StackSlot,
 };
 use rostrum_local::LocalResult;
 use rostrum_ui::{
@@ -19,7 +19,10 @@ use rostrum_ui::{
     components::{Chip, DiffStat, Dot, Initial, h_flex, hex_color, v_flex},
 };
 
-use super::{FeedEvent, FeedView, ROW_RADIUS};
+use super::{
+    FeedEvent, FeedView, ROW_RADIUS,
+    stacks::{STACK_INDENT, stack_glyph},
+};
 
 impl FeedView {
     pub(super) fn render_row(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
@@ -33,7 +36,12 @@ impl FeedView {
         match row {
             FeedRow::Spacer { .. } => div().h(px(10.)).into_any_element(),
             FeedRow::RepoHeader { repo } => self.render_repo_header(repo, chrome, cx),
-            FeedRow::PrRow { repo, pr } => self.render_pr_row(repo, pr, chrome, ix, cx),
+            FeedRow::StackHeader { repo, stack } => {
+                self.render_stack_header(repo, stack, chrome, cx)
+            }
+            FeedRow::PrRow { repo, pr, stack } => {
+                self.render_pr_row(repo, pr, stack, chrome, ix, cx)
+            }
             FeedRow::IssueRow { repo, issue } => self.render_issue_row(repo, issue, chrome, ix, cx),
             FeedRow::RepoEmpty { repo } => self.render_notice(
                 repo,
@@ -61,7 +69,7 @@ impl FeedView {
         }
     }
 
-    fn repo_state<'a>(&self, repo: RepoIx, cx: &'a App) -> Option<&'a RepoState> {
+    pub(super) fn repo_state<'a>(&self, repo: RepoIx, cx: &'a App) -> Option<&'a RepoState> {
         self.store.read(cx).state.repos.get(repo.0)
     }
 
@@ -175,10 +183,14 @@ impl FeedView {
             .into_any_element()
     }
 
+    /// A pull request row: the shared body, behind the arrangement's pick
+    /// badge while picking and, for a stack member, the chain glyph and the
+    /// stack's indent.
     fn render_pr_row(
         &mut self,
         repo: RepoIx,
         pr: PrIx,
+        stack: Option<StackSlot>,
         chrome: Chrome,
         ix: usize,
         cx: &mut Context<Self>,
@@ -199,20 +211,58 @@ impl FeedView {
         let sync = self.store.read(cx).sync_result(&state.id, pull.number);
         let theme = cx.theme().clone();
         let content = pr_row_content(pull, sync, ix, &theme);
+        let glyph = stack.map(|slot| stack_glyph(slot.place));
+        // While picking for an arrangement a row is a toggle, not a selection.
+        let pick = self.pick_badge(&state.id, pull.number);
+        let pick_repo = state.id.clone();
+        let pick_number = pull.number;
 
         card(chrome, cx)
             .id(("pr", ix))
             .px_3()
             .py_2()
+            .when(stack.is_some(), |el| el.pl(px(STACK_INDENT)))
             .when(selected, |el| el.bg(theme.surface_selected))
             .hover(|el| el.bg(theme.surface_hover))
             .cursor_pointer()
-            .child(content)
-            .on_click(
-                cx.listener(move |this, _, _window, cx| {
-                    this.select(FeedRow::PrRow { repo, pr }, cx)
-                }),
+            .child(
+                h_flex()
+                    .items_start()
+                    .gap_2()
+                    .when_some(pick, |el, pick| {
+                        el.child(
+                            div()
+                                .w(px(18.))
+                                .text_size(rems(0.72))
+                                .text_color(if pick.is_some() {
+                                    theme.accent
+                                } else {
+                                    theme.text_subtle
+                                })
+                                .child(match pick {
+                                    Some(n) => format!("[{n}]"),
+                                    None => "[ ]".to_string(),
+                                }),
+                        )
+                    })
+                    .when_some(glyph, |el, glyph| {
+                        el.child(
+                            div()
+                                .w(px(10.))
+                                .text_color(theme.accent)
+                                .text_size(rems(0.72))
+                                .child(glyph),
+                        )
+                    })
+                    .child(content.flex_1().min_w_0()),
             )
+            .on_click(cx.listener(move |this, _, _window, cx| {
+                if this.is_picking() {
+                    this.toggle_pick(pick_repo.clone(), pick_number, cx)
+                } else {
+                    this.select(FeedRow::PrRow { repo, pr, stack }, cx)
+                }
+            }))
             .into_any_element()
     }
 
@@ -526,7 +576,7 @@ pub(crate) fn issue_row_content(issue: &Issue, theme: &Theme) -> Div {
 }
 
 /// Draw the portion of the container border this row owns.
-fn card(chrome: Chrome, cx: &App) -> Div {
+pub(super) fn card(chrome: Chrome, cx: &App) -> Div {
     let theme = cx.theme();
 
     if chrome == Chrome::None {

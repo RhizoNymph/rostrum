@@ -25,6 +25,7 @@ mod files;
 mod issues;
 mod repo_meta;
 mod schema;
+mod stacks;
 mod types;
 
 use std::{path::Path, time::Duration};

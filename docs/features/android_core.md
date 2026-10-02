@@ -91,6 +91,9 @@ Key records and enums, by screen:
   and chip, `MergeStatus` and chip, `BaseDivergence { behind, ahead, baseRef,
   fastForwards, summary }` and the `↓N` chip, labels with ARGB colours,
   +/−, `reviewRequested`, `isYours`, head/base refs.
+  Stacks (`docs/features/stacks.md`) are desktop-only for now: the snapshot
+  skips `FeedRow::StackHeader`, so a stack's members arrive contiguous and
+  bottom first but without a header or actions.
 - **Detail**: `PullDetail { header, timeline, threads, checks,
   unresolvedThreads, pendingReview }`. `PullHeader` adds state
   (open/closed/merged), `headSha` (pass back as the expected head), reviewers,

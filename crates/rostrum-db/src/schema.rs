@@ -11,7 +11,11 @@ use crate::error::DbError;
 /// 2: pull requests carry a GraphQL `node_id`, which rows written by version 1
 /// have no value for. Dropping them costs one refresh; keeping them would leave
 /// cached pull requests that cannot be converted to or from draft.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "2";
+///
+/// 3: pull requests carry `is_cross_repository`. Rows written by version 2
+/// would decode with it `false`, so a fork's pull request could be grouped
+/// into a detected stack until the first refresh; and `cache_stack` arrives.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "3";
 
 /// Bumping this requires writing a real migration — draft rows are user work
 /// and are never dropped.
@@ -31,6 +35,7 @@ pub(crate) const CACHE_TABLES: &[&str] = &[
     "cache_issue",
     "cache_issue_detail",
     "cache_repo_meta",
+    "cache_stack",
 ];
 
 const CREATE_META: &str = "\
@@ -122,6 +127,13 @@ CREATE TABLE IF NOT EXISTS cache_repo_meta (
     updated_at TEXT NOT NULL
 )",
     "CREATE INDEX IF NOT EXISTS cache_repo_meta_age ON cache_repo_meta (updated_at)",
+    "\
+CREATE TABLE IF NOT EXISTS cache_stack (
+    repo       TEXT PRIMARY KEY,
+    payload    TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)",
+    "CREATE INDEX IF NOT EXISTS cache_stack_age ON cache_stack (updated_at)",
 ];
 
 /// Bring an open database up to the current schema.

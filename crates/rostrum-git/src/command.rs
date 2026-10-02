@@ -176,12 +176,56 @@ pub fn common_args(root: &Path) -> Vec<String> {
     ]
 }
 
+/// What git may do when it wants a commit message from an editor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Editor {
+    /// `false`: the command fails rather than accept an unreviewed message.
+    Refuse,
+    /// `:`: the message git prepared is accepted exactly as it is.
+    KeepMessage,
+}
+
+impl Editor {
+    fn command(self) -> &'static str {
+        match self {
+            Self::Refuse => "false",
+            Self::KeepMessage => ":",
+        }
+    }
+}
+
 /// Run one `git` invocation to completion, or kill it.
 pub async fn run(
     root: &Path,
     args: &[String],
     kind: CommandKind,
     timeouts: &Timeouts,
+) -> Result<Run, GitError> {
+    run_with(root, args, kind, timeouts, Editor::Refuse).await
+}
+
+/// [`run`], but a commit message git asks an editor for is kept as git
+/// prepared it.
+///
+/// For exactly one caller: continuing a rebase that `rerere` has resolved,
+/// where git wants to confirm the original commit's own message. Everywhere
+/// else an editor prompt is a sign something unexpected is being asked, and
+/// failing is right.
+pub(crate) async fn run_keeping_messages(
+    root: &Path,
+    args: &[String],
+    kind: CommandKind,
+    timeouts: &Timeouts,
+) -> Result<Run, GitError> {
+    run_with(root, args, kind, timeouts, Editor::KeepMessage).await
+}
+
+async fn run_with(
+    root: &Path,
+    args: &[String],
+    kind: CommandKind,
+    timeouts: &Timeouts,
+    editor: Editor,
 ) -> Result<Run, GitError> {
     let mut argv = common_args(root);
     argv.extend_from_slice(args);
@@ -198,6 +242,8 @@ pub async fn run(
     for (name, value) in ENV_FORCED {
         command.env(name, value);
     }
+    // After the forced set, so it is the one value that can differ.
+    command.env("GIT_EDITOR", editor.command());
     // Set separately because it must be present and *empty*: `LANGUAGE` is a
     // list of fallback locales that overrides `LC_ALL` for messages, and
     // unsetting it would let an inherited value through.
@@ -293,6 +339,14 @@ mod tests {
         assert_eq!(forced.get("GIT_EDITOR"), Some(&"false"));
         assert_eq!(forced.get("GIT_SEQUENCE_EDITOR"), Some(&"false"));
         assert_eq!(forced.get("GIT_TERMINAL_PROMPT"), Some(&"0"));
+    }
+
+    /// Only the rerere continuation may accept a message, and it accepts it
+    /// unchanged rather than writing one.
+    #[test]
+    fn the_editor_refuses_unless_told_to_keep_the_message() {
+        assert_eq!(Editor::Refuse.command(), "false");
+        assert_eq!(Editor::KeepMessage.command(), ":");
     }
 
     #[test]

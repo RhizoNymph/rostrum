@@ -20,6 +20,7 @@ rostrum-local = { path = "crates/rostrum-local" }
 rostrum-github = { path = "crates/rostrum-github" }
 rostrum-md = { path = "crates/rostrum-md" }
 rostrum-remote = { path = "crates/rostrum-remote" }
+rostrum-stack = { path = "crates/rostrum-stack" }
 rostrum-ui = { path = "crates/rostrum-ui" }
 
 # --- GPUI -------------------------------------------------------------------

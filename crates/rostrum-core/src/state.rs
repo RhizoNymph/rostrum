@@ -6,6 +6,7 @@ use crate::{
     feed::FeedFilter,
     issue::{Issue, IssueNumber},
     model::{Divergence, PrNumber, PullRequest, RepoId},
+    stack::Stack,
     repo_meta::RepoMeta,
     tabs::FeedTab,
 };
@@ -58,6 +59,10 @@ pub struct RepoState {
     /// Collapsing is per repository, not per tab: it hides the repository's
     /// body on both.
     pub collapsed: bool,
+    /// Stacks GitHub knows about in this repository, from its Stacks API (or
+    /// the cache of it). Detected chains are not stored: they are derived
+    /// from `prs` every time the feed is built.
+    pub stacks: Vec<Stack>,
     /// The repository's own facts — owner, push and creation times, stars —
     /// for sorting repositories. `None` until the first refresh or cache
     /// read supplies them; the sort places unknown values last.
@@ -73,6 +78,7 @@ impl RepoState {
             issues: Vec::new(),
             issues_load: LoadState::Idle,
             collapsed: false,
+            stacks: Vec::new(),
             meta: None,
         }
     }
@@ -250,6 +256,7 @@ mod tests {
                 comment_count: 0,
                 checks: None,
                 base_divergence: None,
+                is_cross_repository: false,
                 pushed_at: None,
             })
             .collect();

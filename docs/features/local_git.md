@@ -14,14 +14,21 @@ Reading and acting on a local clone of a watched repository, by driving the
 - Fetching one ref.
 - Pull (rebase) and merge on the local clone, with or without `--autostash`.
 - Deciding, before a button is drawn, whether an operation could run at all.
+- The primitives behind arranging pull requests into a stack: detached
+  scratch worktrees, a rebase of exactly a pull request's own commits onto
+  another branch (`rerere` on), compare-and-swap branch moves, and the one
+  leased push. See "Stack rewrites" below and `docs/features/stacks.md`.
 
 ## Non-scope
 
-- **Pushing.** Nothing in this crate writes to a remote. A local merge or rebase
-  leaves the clone ahead of `origin`, and the ahead count is what tells the user
-  to push; rostrum never force-pushes a branch.
-- **Continuing a conflicted operation.** There is no `--continue` in this
-  crate. Continuing requires staged resolutions, which requires something that
+- **Pushing, with one exception.** A local merge or rebase leaves the clone
+  ahead of `origin`, and the ahead count is what tells the user to push. The
+  only write to a remote is `Repo::push_with_lease`, used solely by stack
+  arrangement (below): always `--force-with-lease=<ref>:<expected-oid>`, never
+  a bare force.
+- **Continuing a conflicted operation by hand.** The only `--continue` in this
+  crate is the stack rebase's, and only for a stop `rerere` resolved entirely
+  from a recorded resolution. Continuing requires staged resolutions, which requires something that
   can edit; the `conflict_handoff` feature hands the worktree to such a thing,
   and this crate only ever leaves the state in place or aborts it.
 - **Cloning, branch creation, checkout, commit.** The clone is the user's; this
@@ -102,6 +109,35 @@ state means preflight was bypassed, which is what `GitError::Refused` means.
 The cost of `Abort` is that partially-applied commits and `rerere` resolutions
 are discarded; the cost of `Leave` is a worktree the user must finish in a
 terminal if the handler does not. Both are stated in the UI.
+
+## Stack rewrites
+
+Arranging pull requests into a stack rebases each branch onto the one below
+and publishes the result (`docs/features/stacks.md`). Doing that in the
+user's worktrees would move their checkouts under them, so
+`crates/rostrum-git/src/repo/rewrite.rs` works beside them:
+
+| Function | What it runs | Guarantee |
+|---|---|---|
+| `resolve(rev)` | `rev-parse --verify --quiet --end-of-options <rev>^{commit}` | `None` for an absent ref, never a guess |
+| `is_ancestor(a, b)` | `merge-base --is-ancestor` | exit 1 is "no", not an error |
+| `add_scratch_worktree(path, oid)` | `worktree add --detach -- <path> <oid>` | No branch is checked out, so none can move |
+| `rebase_scratch(onto, upstream)` | `-c rerere.enabled=true -c rerere.autoUpdate=true rebase --no-autostash --no-fork-point --empty=drop --no-update-refs --onto <onto> --end-of-options <upstream>` | Refuses (`GitError::NotScratch`) anything but a clean detached HEAD; replays exactly `upstream..HEAD`; continues by itself only when rerere resolved every path and progress is being made; otherwise the `ConflictPolicy` applies |
+| `remove_scratch_worktree(path)` | `worktree remove --force` | Only ever called on a worktree this crate added |
+| `set_branch(branch, oid, expected)` | `update-ref -m "rostrum: stack" --no-deref -- refs/heads/<b> <new> <old>` | A compare-and-swap (`RefExpectation::Absent` or `At(oid)`); refuses (`GitError::CheckedOut`) a branch any worktree has checked out |
+| `push_with_lease(remote, branch, new, expected)` | `-c credential.interactive=false push --porcelain --force-with-lease=refs/heads/<b>:<expected> -- <remote> <new>:refs/heads/<b>` | The only push. One ref; a refused lease is `Ok(PushOutcome::Rejected(PushRejection::StaleLease))`, the remote unchanged |
+
+Continuing a rerere-resolved rebase asks git for an editor to confirm the
+original message. `command::run_keeping_messages` is the one runner variant
+that answers with `GIT_EDITOR=:` (keep the prepared message); every other call
+keeps `GIT_EDITOR=false`.
+
+`push.rs` holds the pure halves: `push_args` (the exact argv, asserted in a
+test to never contain `--force`, a lease without a value, `--no-verify`, or a
+`+` refspec) and `classify_push`, which reads the porcelain line for the one
+ref (`' '`, `'+'`, `'*'`, `'='`, `'!'`) and the rejection reason (`stale info`
+is the failed lease). A push with no line for the ref (authentication, an
+unreachable remote) is a `GitError::Failed` carrying stderr.
 
 ## Worktrees
 
@@ -246,7 +282,10 @@ Live verification is `cargo run -p rostrum-git --example inspect -- <path>
 
 ## Invariants
 
-- No remote is ever written to.
+- No remote is written to except by `Repo::push_with_lease`, which always
+  carries an explicit lease and is called only by stack arrangement.
+- No branch a worktree has checked out is moved by `set_branch`, and every
+  move it makes is a compare-and-swap.
 - A branch name from the GitHub API is validated before it reaches an argument
   vector. A branch called `--upload-pack=...` would otherwise be read as a flag.
 - Every revision handed to git is fully qualified.
@@ -279,6 +318,9 @@ Live verification is `cargo run -p rostrum-git --example inspect -- <path>
 | `crates/rostrum-git/src/repo.rs` | `Repo`, `ConflictPolicy`, worktrees, and `on_conflict` |
 | `crates/rostrum-git/src/repo/describe.rs` | `Repo::conflict_context` — see `conflict_handoff.md` |
 | `crates/rostrum-git/src/worktree.rs` | `WorktreeEntry`, `parse_worktree_list` |
+| `crates/rostrum-git/src/repo/rewrite.rs` | Stack rewrites: `resolve`, `is_ancestor`, `set_branch` + `RefExpectation`, scratch worktrees, `rebase_scratch`, `push_with_lease` |
+| `crates/rostrum-git/src/push.rs` | `push_args`, `classify_push`, `PushOutcome`, `PushRejection` |
+| `crates/rostrum-git/tests/stack_rewrite.rs` | The rewrite primitives against scratch repositories, including a stale lease and a rerere replay |
 | `crates/rostrum-git/src/context.rs` | `ConflictContext` and its parsers — see `conflict_handoff.md` |
 | `crates/rostrum-local/src/jobs.rs` | `run_local_job` — one operation, shared by the detail pane, sync-all, and any other caller; fetches its target first |
 | `crates/rostrum-local/src/state.rs` | `local_state` (worktree, drift from `origin/<head>`, blocker, in-progress, handoff session) and `abort_in_progress` |
