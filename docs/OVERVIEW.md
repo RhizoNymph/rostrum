@@ -361,11 +361,11 @@ Features Index:
       units), stack actions through the paired desktop, pull request and
       issue detail with every issue action, issue creation and editing, and
       "load earlier" paging, a repository's own screen with its branch
-      tree and trunks, diff rows, pending review, desktop pairing and jobs,
-      copying the desktop's config, and background notifications, all
-      render-ready for Compose.
-    entry_points: [crates/rostrum-ffi/src/lib.rs, crates/rostrum-ffi/src/profiles/mod.rs, crates/rostrum-ffi/src/engine/mod.rs, crates/rostrum-ffi/src/issues/mod.rs, crates/rostrum-ffi/src/repo_view/mod.rs, crates/rostrum-ffi/src/stack_actions/mod.rs]
-    depends_on: [repo_feed, pr_detail, diff_review, diff_overview, author_filter, github_sync, remote_protocol, feed_sort, issues, stacks, repo_view]
+      tree and trunks, the CI grid with logs and re-runs, diff rows, pending
+      review, desktop pairing and jobs, sharing settings with the desktop
+      both ways, and background notifications, all render-ready for Compose.
+    entry_points: [crates/rostrum-ffi/src/lib.rs, crates/rostrum-ffi/src/profiles/mod.rs, crates/rostrum-ffi/src/engine/mod.rs, crates/rostrum-ffi/src/issues/mod.rs, crates/rostrum-ffi/src/repo_view/mod.rs, crates/rostrum-ffi/src/stack_actions/mod.rs, crates/rostrum-ffi/src/ci/mod.rs, crates/rostrum-ffi/src/remote/push.rs]
+    depends_on: [repo_feed, pr_detail, diff_review, diff_overview, author_filter, github_sync, remote_protocol, feed_sort, issues, stacks, repo_view, ci_grid]
     doc: docs/features/android_core.md
   android_build:
     description: Gradle project, cargo-ndk + UniFFI pipeline, signing, and APK publishing for the Android app.

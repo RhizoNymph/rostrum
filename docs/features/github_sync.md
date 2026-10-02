@@ -410,6 +410,15 @@ recorded versions before writing, and a deferred transaction would fail
 outright (`SQLITE_BUSY_SNAPSHOT`) if a previous session's last writes
 committed in between, where an immediate one waits for the lock.
 
+`Db::open` creates and migrates the file on a connection of its own before
+the pool exists, then opens the pool lazily and takes its first connection
+before closing the setup one (closing a WAL database's last connection
+would checkpoint it). Creating the file and switching it to WAL `fsync`,
+and an `fsync` has no upper bound on a busy disk: done through the pool, a
+slow disk surfaced as `PoolTimedOut` after the pool's 30 s acquire timeout
+though nothing was wrong. The acquire timeout now only measures contention
+between the store's own callers.
+
 Config is separate and human-editable: `~/.config/rostrum/config.json` holds the
 repo list, poll intervals, clone paths, and the feed's standing preferences —
 `hide_empty_repos`, `hide_drafts`, `authors`, `include_involved`, `autostash`.

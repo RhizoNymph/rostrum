@@ -40,6 +40,13 @@ each.
   check (`IssueEditor`) and an explicit overwrite; "load earlier" on issue
   and pull request conversations, the merged pages cached with their
   cursors.
+- The CI grid (`docs/features/ci_grid.md`): every open pull request's
+  checks in the feed's order, timing labels against now with a tick hint,
+  job logs parsed, another app's check output, and re-runs with their
+  optimistic flip and typed refusals.
+- Sharing settings with the paired desktop both ways: copying its shareable
+  settings (now with sorts, trunks and issues per repository) and pushing
+  this phone's, guarded by the desktop's revision.
 - A repository's own screen (`docs/features/repo_view.md`): its pull
   requests (stacks grouped) and issues unfiltered in the item sort, its
   facts, its branch tree with ahead/behind, and its trunk setting.
@@ -89,7 +96,7 @@ Kotlin names are camelCase; every call that touches state or I/O is
 | profiles | `ProfileRegistry.open(rootDir)` (not suspend), `profiles()`, `activeProfile()`, `setActiveProfile(id)`, `renameProfile(id, label)`, `setProfileLogin(id, login?)` (not suspend); `core(id) → RostrumCore`, `createTokenProfile(label)`, `pairDesktopWithLink(uri, deviceName) → ProfilePairing`, `pairDesktopManual(host, port, fingerprint, code, deviceName) → ProfilePairing`, `removeProfile(id)`; `parsePairingLink(uri)` (not suspend) and `probeDesktop(host, port)` for the Pair screen before any profile exists — the same code as the core's |
 | lifecycle | `RostrumCore.open(dataDir)`, `warnings()` |
 | session | `setGithubToken(token?) → GitHubStatus`, `githubStatus()`, `viewer() → UserRef` |
-| settings | `settings()`, `addRepo(input) → "owner/name"`, `removeRepo(repo) → Boolean`, `setRefreshInterval(s)`, `setPrsPerRepo(n)`, `setNotifications(newPullRequests, reviewRequests)`, `setAutostash(b)` — setters return `Settings` |
+| settings | `settings()`, `addRepo(input) → "owner/name"`, `removeRepo(repo) → Boolean`, `setRefreshInterval(s)`, `setPrsPerRepo(n)`, `setIssuesPerRepo(n)`, `setNotifications(newPullRequests, reviewRequests)`, `setAutostash(b)` — setters return `Settings` |
 | feed | `cachedFeed()`, `refreshFeed()`, `refreshRepo(repo)`, `setQuery(q)`, `setFilter(FeedPreferences)`, `toggleAuthor(login)`, `clearFilter()` (keeps the sort), `toggleCollapsed(repo)`, `setFeedTab(FeedTab)` — all return `FeedSnapshot`; `authorRoster(limit?) → AuthorRoster` (the active tab's authors), `setFeedObserver(FeedObserver?)` |
 | sort | `sortSettings() → SortSettings`; `setRepoSort(RepoSortKey, SortDirection?)`, `setItemSort(ItemSortKey, SortDirection?)` → `FeedSnapshot` (no direction: a new key starts at its default, the same key keeps its direction) |
 | issues | `issueDetail(repo, n) → IssueDetail`, `cachedIssueDetail(repo, n) → IssueDetail?`, `loadEarlierIssue(repo, n) → IssueDetail`, `editIssue(repo, n, title, body, baseUpdatedAt, overwrite) → IssueDetail` (throws `EditConflict(title, body, updatedAt)`), `commentOnIssue(repo, n, body)`, `closeIssue(repo, n, CloseIssueAs)`, `reopenIssue(repo, n)`, `addIssueLabel(repo, n, label)`, `removeIssueLabel(repo, n, label)`, `assignableUsers(repo) → List<UserRef>`, `addIssueAssignee(repo, n, login)`, `removeIssueAssignee(repo, n, login)`, `createIssue(repo, title, body, labels, assignees) → UInt` (the new number); labels to offer come from `repositoryLabels(repo)` |
@@ -98,7 +105,8 @@ Kotlin names are camelCase; every call that touches state or I/O is
 | detail | `pullDetail(repo, n)`, `cachedPullDetail(repo, n)`, `loadEarlierPull(repo, n) → PullDetail`, `pullHeader(repo, n)`, `repositoryLabels(repo)`, `addLabel`, `removeLabel`, `addComment`, `replyToThread(repo, n, threadId, body)`, `merge(repo, n, method, title?, message?, expectedHeadSha)`, `closePullRequest`, `reopenPullRequest`, `setDraft(repo, n, draft)`, `updateBranch(repo, n, method, expectedHeadOid)` |
 | files | `filesOverview(repo, n) → FilesOverview`, `fileDiff(repo, n, fileIndex) → FileDiff` |
 | review | `pendingReview`, `addDraft(repo, n, anchor, rangeStart?, body)`, `editDraft(…, draftId, body)`, `removeDraft(…, draftId)`, `discardDrafts` — all return `PendingReview`; `submitReview(repo, n, event, body, includeDrafts)` |
-| remote | `parsePairingLink(uri)` (not suspend), `pairWithLink(uri, deviceName)`, `probeDesktop(host, port)`, `pairManual(host, port, fingerprint, code, deviceName)`, `setRemote(endpoint, deviceToken)`, `clearRemote()`, `remoteStatus()`, `machineInfo()`, `localStatus(repo, n)`, `runLocalJob(repo, n, op, autostash)`, `abortLocal(repo, n)`, `startSyncAll(op, autostash)`, `syncAllStatus()`, `handoffs()`, `refreshGithubTokenFromDesktop()`, `unpair()`, `desktopConfig() → DesktopConfigPreview`, `copyDesktopConfig() → Settings` |
+| remote | `parsePairingLink(uri)` (not suspend), `pairWithLink(uri, deviceName)`, `probeDesktop(host, port)`, `pairManual(host, port, fingerprint, code, deviceName)`, `setRemote(endpoint, deviceToken)`, `clearRemote()`, `remoteStatus()`, `machineInfo()`, `localStatus(repo, n)`, `runLocalJob(repo, n, op, autostash)`, `abortLocal(repo, n)`, `startSyncAll(op, autostash)`, `syncAllStatus()`, `handoffs()`, `refreshGithubTokenFromDesktop()`, `unpair()`, `desktopConfig() → DesktopConfigPreview`, `copyDesktopConfig() → Settings`, `pushConfigToDesktop(base) → ConfigPushResult` |
+| ci | `ciGrid(CiGridFilter) → CiGrid` (no network), `refreshCi(filter)`, `refreshCiRepo(repo, filter)` → `CiGrid`, `jobLog(repo, jobId, full) → CiJobLog`, `checkOutput(repo, checkRunId) → CiCheckOutput`, `rerunTargets(repo, pr, CiCheckKey) → CiRerunChoice`, `rerun(repo, CiRerun)` |
 | notifications | `checkNotifications() → List<NotificationEvent>`, `markNotificationsSeen()` |
 | logging | top-level `installLogSink(LogSink, LogLevel)` |
 | markdown | top-level `renderMarkdown(source, repo) → List<MdBlock>`: the composer's Preview, rendered exactly as the timeline will show it |
@@ -186,11 +194,30 @@ Key records and enums, by screen:
 - **Review**: `PendingReview { drafts: [ReviewDraft { id, anchor, body,
   location }], draftedAgainst?, headSha, stale }`, `CommentAnchor { path,
   line, side }`, `ReviewEvent`.
-- **Copying the desktop's config**: `DesktopConfigPreview { machine, repos,
+- **Sharing config with the desktop**: `DesktopConfigPreview { machine, repos,
   added, removed, prsPerRepo, hideDrafts, hideEmptyRepos, authors,
-  includeInvolved, autostash, changesAnything }` — `repos` is the desktop's
-  list in its order, `added` what the phone lacks, `removed` what copying
-  drops.
+  includeInvolved, autostash, changesAnything, revision, issuesPerRepo?,
+  copyChanges, pushChanges }` — `repos` is the desktop's list in its order,
+  `added` what the phone lacks, `removed` what copying drops; `revision` is
+  what a push names; `copyChanges`/`pushChanges` are `[ConfigChange { field:
+  ConfigField, label, before, after }]` for each direction. The last four
+  default, so earlier constructors compile. `ConfigPushResult` =
+  `Applied(desktop) | Changed(desktop)`. `Settings` gains `issuesPerRepo`
+  (default 25).
+- **CI**: `CiGrid { sections: [CiSection { repo, columns: [CiColumn { key:
+  CiCheckKey { workflow?, name }, label }], rows: [CiRow { number, title,
+  headSha, rollup: CiRollup, cells: [CiCell?], stack: CiStackPlace?, fetched,
+  truncated }], load, hidden }], lines: [CiLine], ticks, anyRunning }`;
+  `CiCell { status: CiStatus, statusLabel, role, timingLabel?, durationLabel?,
+  ticks, producer, detailsUrl?, source: CiSource }`, `CiSource` =
+  `Actions(jobId, runId, runAttempt) | App(checkRunId, app) | Status`;
+  `CiJobLog { lines: [CiLogLine { number, text, kind: CiLineKind }], groups,
+  steps, firstError?, failingStep?, collapsed, dropped, truncated }`;
+  `CiCheckOutput { title?, summary, text: [MdBlock], annotations:
+  [CiAnnotation] }`; `CiRerun` = `Job(jobId) | FailedJobs(runId) |
+  AllJobs(runId) | Suite(suiteId)`; `CiRerunChoice` = `Available(options:
+  [CiRerunOption { rerun, label, confirmPrompt }]) | Unavailable(reason:
+  CiNotRerunnable, message)`.
 - **Remote**: `PairingPreview`, `DesktopProbe`, `PairingResult { machine,
   endpoint, deviceId, deviceToken, github? }`, `RemoteStatus`, `MachineInfo`,
   `LocalStatus = NotConfigured | NotCheckedOut | CheckedOut(LocalBranch)`,
@@ -205,7 +232,7 @@ Errors are one sealed class, `RostrumException`: `NotSignedIn`,
 `GitHubApi(status?, reason)`, `Network`, `UnknownPullRequest`,
 `DraftsStale(draftedAgainst, head)`, `EditConflict(title, body, updatedAt)`, `NotPaired`, `DeviceRevoked`,
 `DesktopUnreachable`, `CertificateMismatch(host)`, `DesktopTimeout`,
-`IncompatibleDesktop`, `RemoteApi(code, reason)`, `RewriteNotConfirmed(branches, reason)`, `RemoteProtocol`,
+`IncompatibleDesktop`, `RemoteApi(code, reason)` (codes include `CONFIG_CHANGED`, `REWRITE_NOT_CONFIRMED`, `BUSY`), `CiNoPermission(reason)`, `CiNotRerunnable(reason)`, `CiNotFound`, `RewriteNotConfirmed(branches, reason)`, `RemoteProtocol`,
 `InvalidRepo`, `DuplicateRepo`, `InvalidInput(reason)`, `Storage`, `Internal`.
 `describe()` gives a sentence. No variant has a field named `message`: it
 would collide with `Throwable.message` in the generated class.
@@ -243,6 +270,12 @@ Compose UI ──suspend call──▶ UniFFI scaffolding (async_runtime = "toki
   time; `Actor::call` returns the closure's result over a oneshot. Closures
   never await, so no call holds the state across a network or disk
   operation. A panicking closure fails only its own call.
+- **Settings writes off the actor.** `config.json` is written atomically
+  with an `fsync`, which can take tens of seconds on a saturated disk, so it
+  never runs inside an actor closure. `RostrumCore::change_config`
+  (`engine/config_write.rs`) plans the edit in the actor, writes it on the
+  blocking pool, then applies it in the actor only if the write succeeded;
+  an async lock held from plan to apply serialises settings changes.
 - **Ordered writes.** SQLite writes are queued from inside actor closures
   onto the single `engine::writer` task, so they land in the order the state
   changed. Draft and seen-set writes carry an acknowledgement the method
@@ -423,12 +456,12 @@ pull requests on the next launch.
   known pull request; sync-all builds one `PrRef` per open pull request in
   the feed whose repository `machineInfo` lists a clone for.
 
-### Copying the desktop's config
+### Sharing the config with the desktop
 
-The desktop serves the shareable part of its `config.json`
-(`rostrum_remote::DesktopConfig` on `/api/v1/config`): repositories in its
-order, pull requests per repository, the four feed preferences, and
-autostash. Clone paths and the conflict handler describe the desktop and are
+The desktop serves the shareable part of its `config.json` with a revision
+(`rostrum_remote::RevisedConfig` on `/api/v1/config`): repositories in its
+order, pull requests and issues per repository, the four feed preferences,
+autostash, both sorts and the trunks. Clone paths and the conflict handler describe the desktop and are
 not sent; the refresh interval and notification switches are each device's
 own and are not copied; the search box is never touched.
 
@@ -453,9 +486,42 @@ own and are not copied; the search box is never touched.
   from the new preferences while keeping the query; and publishes, so the
   observer sees the new feed. It returns the new `Settings`; Kotlin runs
   `refreshFeed` next.
-- Both return `NotPaired` without a desktop and map the client's failures
+- The preview also carries the desktop's `revision` and
+  `rostrum_remote::diff` in both directions between the desktop's settings
+  and `remote::config::shareable(phone)`: `copyChanges` (desktop over phone)
+  and `pushChanges` (phone over desktop). Copying now also takes the
+  desktop's issues per repository (clamped), sorts and trunks when it sends
+  them.
+- `pushConfigToDesktop(base)` sends `shareable(phone)` with `base` (blank is
+  `InvalidInput`). `Applied` and `Changed` both carry a fresh preview of the
+  desktop's settings now; on `Changed` nothing was written and
+  `pushChanges` is the new difference to show before retrying with the new
+  revision. The generic code mapping reports `CONFIG_CHANGED`.
+- All three return `NotPaired` without a desktop and map the client's failures
   like every other desktop call (`DeviceRevoked`, `DesktopUnreachable`,
   `CertificateMismatch`, …).
+
+### CI grid
+
+- Checks are fetched only on `refreshCi`/`refreshCiRepo` (one `ci_checks`
+  request per repository, four at a time; a failure stays in its section, a
+  401 fails the call), never with the feed or the notification check, and
+  held in `CoreState::ci` (`rostrum_core::ci::CiChecks`).
+- `ciGrid` runs `build_grid` over the feed's repositories, filter and stack
+  grouping (collapse ignored) and converts it with `Timing::of(entry, now)`.
+  `ticks` says some cell's label changes every second (Kotlin rebuilds once
+  a second while visible); `anyRunning` says re-fetching every 15 s is
+  worthwhile.
+- `jobLog` keeps the raw text of recent logs (`CoreState::job_logs`), so
+  `full = true` re-parses without a request; parsing (`parse_log`, last
+  20 000 lines unless full) runs on the blocking pool. `checkOutput` renders
+  the output's markdown like the timeline.
+- `rerunTargets` applies `rerun_targets` to the held checks. `rerun` flips
+  the covered cells to queued (`mark_requeued`), sends the request, and
+  re-fetches the repository 4 s later on success (a weak actor handle, so it
+  dies with the core) or at once on a refusal, which puts the old result
+  back. `RerunError` maps to `CiNoPermission`, `CiNotRerunnable`,
+  `CiNotFound`, or the usual GitHub errors.
 
 ### Notifications
 
@@ -602,6 +668,13 @@ the data directory for every secret that passed through.
 | `src/profiles/store.rs` | `profiles.json`: records, atomic save/load, ordering, ids | `RegistryFile`, `ProfileRecord`, `new_id` |
 | `src/logging.rs` | tracing → Kotlin | `LogSink`, `LogRecord`, `install_log_sink` |
 | `tests/profiles.rs` | Registry persistence, ordering, switching, isolation, removal, and pairing into profiles against a TLS stand-in | — |
+| `src/engine/config_write.rs` | Settings changes planned in the actor, written off it | `ConfigWrites`, `RostrumCore::change_config` |
+| `src/remote/push.rs` | Pushing the phone's shareable settings with a revision | `ConfigPushResult` |
+| `src/ci/types.rs` | CI records | `CiGrid`, `CiCell`, `CiJobLog`, `CiCheckOutput`, `CiRerun`, `CiRerunChoice`, … |
+| `src/ci/convert.rs` | Core grid, timing, logs, output and re-runs → records | `grid`, `cell`, `job_log`, `check_output`, `rerun_choice` |
+| `src/ci/mod.rs` | Fetching checks, the grid, logs, output, re-runs | — |
+| `tests/ci_grid.rs` | The grid, timing and tick hint, logs, output, re-run eligibility, optimistic flips and typed refusals against the GitHub stand-in | — |
+| `tests/config_push.rs` | Preview with revision and both diffs, push applied, push refused on a changed desktop, copying sorts/trunks/issues against a TLS stand-in | — |
 | `tests/remote_pairing.rs` | Pairing, every desktop call, and copying the desktop's config against a TLS stand-in | — |
 | `tests/github_flows.rs` | Refresh, probes, notifications, mutations against a GitHub stand-in | — |
 | `tests/stack_actions.rs` | Local checks, every stack action, `RewriteNotConfirmed`, busy, polling and the refresh after a job against the TLS and GitHub stand-ins | — |
@@ -662,7 +735,11 @@ against the library `cargo test` builds and checks the surface.
   before the call returns; a book holds drafts for one head; a stale book is
   neither shown in the diff, extended, nor submitted.
 - **Settings in memory match settings on disk.** A setter writes the file
-  first and applies the change only if the write succeeded.
+  first and applies the change only if the write succeeded; the write never
+  runs on the actor.
+- **A push never overwrites what the user did not see.** It names the
+  revision previewed; a changed desktop answers `Changed` and nothing is
+  written.
 - **An older fetch never overwrites a newer one**, per repository.
 - **One request per host.** Desktop calls go through `RemoteClient`, which
   moves to another address only when one cannot be connected to, and never
