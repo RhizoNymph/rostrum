@@ -83,11 +83,9 @@ fn repo(name: &str) -> RepoState {
     let id: crate::RepoId = name.parse().expect("valid repo id");
     let owner = id.owner().to_string();
     RepoState {
-        prs: Vec::new(),
         load: LoadState::Loaded { at: at(0) },
-        collapsed: false,
         meta: Some(meta(&owner)),
-        id,
+        ..RepoState::new(id)
     }
 }
 
@@ -876,3 +874,6 @@ fn flattening_as_listed_keeps_the_listed_order() {
         )
     );
 }
+
+/// The item sort applied to issues.
+mod issues;

@@ -6,21 +6,26 @@
 pub mod arrivals;
 pub mod authors;
 pub mod feed;
+pub mod issue;
 pub mod model;
 pub mod probe;
 pub mod repo_meta;
 pub mod review;
 pub mod sort;
 pub mod state;
+pub mod tabs;
 pub mod timeline;
 
 #[cfg(test)]
 pub(crate) mod test_support;
 
 pub use arrivals::{Arrival, ArrivalKind, Baseline};
-pub use authors::{AuthorEntry, VisibleAuthors, roster};
-pub use feed::{Chrome, Feed, FeedFilter, FeedRow, PrIx, RepoIx};
-pub use feed::{flatten, flatten_in};
+pub use authors::{AuthorEntry, VisibleAuthors, issue_roster, roster};
+pub use feed::{Chrome, Feed, FeedFilter, FeedRow, IssueIx, PrIx, RepoIx};
+pub use feed::{flatten, flatten_in, flatten_tab, flatten_tab_in};
+pub use issue::{
+    CloseReason, EmptyTitle, Issue, IssueDetail, IssueNumber, IssueState, IssueTitle, Milestone,
+};
 pub use model::{
     CheckState, Divergence, Label, LoginKey, MergeStateStatus, MergeStatus, Mergeable, NodeId,
     PrNumber, PullRequest, PullState, Relation, RepoId, ReviewDecision, Side, User,
@@ -35,6 +40,7 @@ pub use state::{
     AppState, LoadState, RepoState, Selection, apply_divergences, carry_forward_divergence,
     divergence_query,
 };
+pub use tabs::{FeedTab, TabCounts, tab_counts};
 pub use timeline::{
     CheckRun, CommentId, Conversation, EventKind, ReviewId, ReviewState, ReviewThread,
     ThreadComment, ThreadId, TimelineItem,

@@ -8,7 +8,8 @@ use std::{
 };
 
 use rostrum_core::{
-    FeedFilter, FeedSort, ItemSortKey, LoginKey, RepoId, RepoSortKey, Sort, model::ParseRepoIdError,
+    FeedFilter, FeedSort, FeedTab, ItemSortKey, LoginKey, RepoId, RepoSortKey, Sort,
+    model::ParseRepoIdError,
 };
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 
@@ -21,6 +22,14 @@ pub struct Config {
     pub refresh_secs: u64,
     /// Maximum open PRs fetched per repository.
     pub prs_per_repo: u32,
+    /// Maximum open issues fetched per repository.
+    pub issues_per_repo: u32,
+    /// Which list the feed shows: pull requests or issues. A standing
+    /// preference like the filter's toggles, so it is restored on launch.
+    /// Read leniently: a tab this build does not know falls back to pull
+    /// requests rather than discarding the whole file.
+    #[serde(deserialize_with = "lenient_tab")]
+    pub feed_tab: FeedTab,
     /// Post a desktop notification when a refresh turns up a pull request that
     /// was not there before. Off by default: the feed already shows arrivals,
     /// and interrupting the desktop should be a deliberate opt-in.
@@ -140,6 +149,8 @@ impl Default for Config {
             ],
             refresh_secs: 60,
             prs_per_repo: 25,
+            issues_per_repo: 25,
+            feed_tab: FeedTab::PullRequests,
             notifications: false,
             notify_review_requests: false,
             hide_empty_repos: true,
@@ -388,6 +399,10 @@ impl Config {
     }
 }
 
+fn lenient_tab<'de, D: Deserializer<'de>>(deserializer: D) -> Result<FeedTab, D::Error> {
+    lenient(deserializer, FeedTab::default)
+}
+
 /// Expand a leading `~` against the home directory.
 ///
 /// Config is hand-edited, and `~/Code/thing` is what a person writes. Nothing
@@ -461,11 +476,15 @@ mod tests {
             include_involved: true,
             authors: BTreeSet::from([LoginKey::new("alice"), LoginKey::new("bob")]),
             notifications: true,
+            feed_tab: FeedTab::Issues,
+            issues_per_repo: 40,
             ..Default::default()
         };
 
         let loaded = temp.round_trip(&saved);
 
+        assert_eq!(loaded.feed_tab, FeedTab::Issues);
+        assert_eq!(loaded.issues_per_repo, 40);
         assert!(!loaded.hide_empty_repos);
         assert!(loaded.autostash);
         assert!(loaded.hide_drafts);
@@ -792,6 +811,53 @@ mod tests {
         assert!(loaded.notify_review_requests);
     }
 
+    // --- feed tab -----------------------------------------------------------
+
+    /// The selected tab is restored on launch, through the same file and the
+    /// same door startup uses.
+    #[test]
+    fn the_selected_tab_survives_a_round_trip() {
+        let temp = TempConfig::new("tab");
+        for tab in FeedTab::ALL {
+            let saved = Config {
+                feed_tab: tab,
+                ..Default::default()
+            };
+            assert_eq!(temp.round_trip(&saved).feed_tab, tab);
+        }
+    }
+
+    #[test]
+    fn the_tab_is_written_in_snake_case() {
+        let config = Config {
+            feed_tab: FeedTab::Issues,
+            ..Default::default()
+        };
+        let text = serde_json::to_string(&config).expect("serialises");
+        assert!(text.contains(r#""feed_tab":"issues""#), "{text}");
+    }
+
+    /// A config written before tabs existed opens on pull requests, which is
+    /// what the feed showed then.
+    #[test]
+    fn a_config_from_before_tabs_opens_on_pull_requests() {
+        let config: Config =
+            serde_json::from_str(r#"{ "repos": ["a/b"] }"#).expect("older config should parse");
+        assert_eq!(config.feed_tab, FeedTab::PullRequests);
+        assert_eq!(config.issues_per_repo, 25);
+    }
+
+    /// A tab name this build does not know must not cost the user their whole
+    /// config — only the tab, which falls back to the default.
+    #[test]
+    fn an_unknown_tab_falls_back_without_losing_the_rest() {
+        let config: Config =
+            serde_json::from_str(r#"{ "repos": ["x/y"], "feed_tab": "discussions" }"#)
+                .expect("config should still parse");
+        assert_eq!(config.feed_tab, FeedTab::PullRequests);
+        assert_eq!(config.repos, vec!["x/y".to_string()]);
+    }
+
     // --- feed sort ----------------------------------------------------------
 
     fn sorted(repos: Sort<RepoSortKey>, items: Sort<ItemSortKey>) -> FeedFilter {
@@ -907,5 +973,26 @@ mod tests {
                 .expect("config should still parse");
         assert_eq!(half.repo_sort, Sort::new(RepoSortKey::Pushed));
         assert_eq!(half.item_sort, Sort::new(ItemSortKey::Author));
+    }
+
+    /// The sort and the tab are separate settings in one file; saving one
+    /// must not reset the other.
+    #[test]
+    fn the_sort_and_the_tab_survive_a_restart_together() {
+        let temp = TempConfig::new("sort-and-tab");
+        let filter = sorted(
+            Sort::with_direction(RepoSortKey::Name, SortDirection::Descending),
+            Sort::new(ItemSortKey::Updated),
+        );
+
+        let mut config = Config {
+            feed_tab: FeedTab::Issues,
+            ..Default::default()
+        };
+        config.absorb_filter(&filter);
+        let restored = temp.round_trip(&config);
+
+        assert_eq!(restored.feed_tab, FeedTab::Issues);
+        assert_eq!(restored.feed_filter().sort, filter.sort);
     }
 }

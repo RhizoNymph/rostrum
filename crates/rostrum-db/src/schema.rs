@@ -28,6 +28,8 @@ pub(crate) const CACHE_TABLES: &[&str] = &[
     "cache_pull_request",
     "cache_conversation",
     "cache_http",
+    "cache_issue",
+    "cache_issue_detail",
     "cache_repo_meta",
 ];
 
@@ -60,6 +62,10 @@ CREATE TABLE IF NOT EXISTS notification_baseline (
 )";
 
 /// Statements recreating the cache from nothing. Safe to run repeatedly.
+///
+/// Every statement is `IF NOT EXISTS` and runs on every open, so a table
+/// added here appears in an existing database without a schema bump — the
+/// issue tables arrived that way, leaving the cached pull requests alone.
 const CREATE_CACHE: &[&str] = &[
     "\
 CREATE TABLE IF NOT EXISTS cache_pull_request (
@@ -88,6 +94,25 @@ CREATE TABLE IF NOT EXISTS cache_http (
     updated_at TEXT NOT NULL
 )",
     "CREATE INDEX IF NOT EXISTS cache_http_age ON cache_http (updated_at)",
+    "\
+CREATE TABLE IF NOT EXISTS cache_issue (
+    repo       TEXT    NOT NULL,
+    number     INTEGER NOT NULL,
+    ordinal    INTEGER NOT NULL,
+    payload    TEXT    NOT NULL,
+    updated_at TEXT    NOT NULL,
+    PRIMARY KEY (repo, number)
+)",
+    "CREATE INDEX IF NOT EXISTS cache_issue_age ON cache_issue (updated_at)",
+    "\
+CREATE TABLE IF NOT EXISTS cache_issue_detail (
+    repo       TEXT    NOT NULL,
+    number     INTEGER NOT NULL,
+    payload    TEXT    NOT NULL,
+    updated_at TEXT    NOT NULL,
+    PRIMARY KEY (repo, number)
+)",
+    "CREATE INDEX IF NOT EXISTS cache_issue_detail_age ON cache_issue_detail (updated_at)",
     // Added without a version bump: `IF NOT EXISTS` creates it on the next
     // open of an existing database, and nothing already cached is invalid.
     "\

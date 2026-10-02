@@ -265,7 +265,9 @@ impl FeedState {
                         .to_string();
                     set_body(&mut building, RepoBody::Failed { reason });
                 }
-                FeedRow::Spacer { .. } => {}
+                // `flatten` builds the pull request tab only; the phone has
+                // no issue list yet.
+                FeedRow::Spacer { .. } | FeedRow::IssueRow { .. } => {}
             }
         }
         if let Some(done) = building.take() {

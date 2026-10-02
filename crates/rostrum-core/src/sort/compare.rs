@@ -9,7 +9,7 @@
 //!   "fewest", and flipping the direction should not drag the not-yet-loaded
 //!   to the top.
 //! - **Ties are deterministic.** Equal keys fall back to the repository's
-//!   name then owner, or the pull request's number, always ascending, so two
+//!   name then owner, or the item's number, always ascending, so two
 //!   refreshes carrying the same data never reshuffle the rows under the
 //!   cursor.
 //! - **Text ignores case.** GitHub logins and repository names are
@@ -21,7 +21,8 @@ use chrono::{DateTime, Utc};
 
 use super::{ItemSortKey, KeyKind, RepoSortKey, Sort, SortDirection, SortKey};
 use crate::{
-    feed::{PrIx, RepoIx},
+    feed::{IssueIx, PrIx, RepoIx},
+    issue::Issue,
     model::PullRequest,
     state::RepoState,
 };
@@ -77,6 +78,7 @@ pub fn repo_sort_value(repo: &RepoState, key: RepoSortKey) -> Option<SortValue> 
             .prs
             .iter()
             .map(|pr| pr.updated_at)
+            .chain(repo.issues.iter().map(|issue| issue.updated_at))
             .max()
             .or_else(|| meta.map(|meta| meta.updated_at))
             .map(SortValue::Time),
@@ -119,6 +121,36 @@ pub fn order_repos(repos: &[RepoState], sort: Sort<RepoSortKey>) -> Vec<RepoIx> 
 
 // --- items --------------------------------------------------------------
 
+/// Something the item sort orders: a pull request or an issue.
+///
+/// The item comparisons are written once over this trait, so both tabs —
+/// and a stack of pull requests filed as one — follow the same rules.
+trait SortItem {
+    fn sort_value(&self, key: ItemSortKey) -> Option<SortValue>;
+    /// The tie-break: the item's number within its repository.
+    fn tie_number(&self) -> u32;
+}
+
+impl SortItem for PullRequest {
+    fn sort_value(&self, key: ItemSortKey) -> Option<SortValue> {
+        item_sort_value(self, key)
+    }
+
+    fn tie_number(&self) -> u32 {
+        self.number.0
+    }
+}
+
+impl SortItem for Issue {
+    fn sort_value(&self, key: ItemSortKey) -> Option<SortValue> {
+        issue_sort_value(self, key)
+    }
+
+    fn tie_number(&self) -> u32 {
+        self.number.0
+    }
+}
+
 /// `pr`'s value for `key`, or `None` when it is not known.
 pub fn item_sort_value(pr: &PullRequest, key: ItemSortKey) -> Option<SortValue> {
     match key {
@@ -130,6 +162,25 @@ pub fn item_sort_value(pr: &PullRequest, key: ItemSortKey) -> Option<SortValue> 
             .as_ref()
             .map(|author| SortValue::Text(TextKey::new(&author.login))),
         ItemSortKey::Title => Some(SortValue::Text(TextKey::new(&pr.title))),
+    }
+}
+
+/// `issue`'s value for `key`, or `None` when it is not known.
+///
+/// Issues have no branch, so nothing is ever pushed to one:
+/// [`ItemSortKey::Pushed`] falls back to the issue's `updatedAt`, the
+/// nearest thing to "last saw work". Falling back rather than reporting
+/// unknown keeps a "pushed" sort useful on the Issues tab instead of
+/// degrading every issue to the number tie-break.
+pub fn issue_sort_value(issue: &Issue, key: ItemSortKey) -> Option<SortValue> {
+    match key {
+        ItemSortKey::Pushed | ItemSortKey::Updated => Some(SortValue::Time(issue.updated_at)),
+        ItemSortKey::Created => Some(SortValue::Time(issue.created_at)),
+        ItemSortKey::Author => issue
+            .author
+            .as_ref()
+            .map(|author| SortValue::Text(TextKey::new(&author.login))),
+        ItemSortKey::Title => Some(SortValue::Text(TextKey::new(&issue.title))),
     }
 }
 
@@ -152,14 +203,20 @@ pub fn sort_key_for_group(
     key: ItemSortKey,
     direction: SortDirection,
 ) -> Option<SortValue> {
+    group_value(members, key, direction)
+}
+
+fn group_value<T: SortItem>(
+    members: &[&T],
+    key: ItemSortKey,
+    direction: SortDirection,
+) -> Option<SortValue> {
     match key.kind() {
         // No item key counts anything today; were one added, it would be
         // filed by the bottom member like text until decided otherwise.
-        KeyKind::Text | KeyKind::Count => members
-            .first()
-            .and_then(|bottom| item_sort_value(bottom, key)),
+        KeyKind::Text | KeyKind::Count => members.first().and_then(|bottom| bottom.sort_value(key)),
         KeyKind::Time => {
-            let known = members.iter().filter_map(|pr| item_sort_value(pr, key));
+            let known = members.iter().filter_map(|item| item.sort_value(key));
             match direction {
                 SortDirection::Descending => known.max(),
                 SortDirection::Ascending => known.min(),
@@ -171,20 +228,36 @@ pub fn sort_key_for_group(
 /// How two groups are ordered under `sort`, ties broken by their bottom
 /// members' numbers.
 pub fn compare_groups(a: &[&PullRequest], b: &[&PullRequest], sort: Sort<ItemSortKey>) -> Ordering {
-    let value = |group| sort_key_for_group(group, sort.key(), sort.direction());
+    compare_item_groups(a, b, sort)
+}
+
+fn compare_item_groups<T: SortItem>(a: &[&T], b: &[&T], sort: Sort<ItemSortKey>) -> Ordering {
+    let value = |group| group_value(group, sort.key(), sort.direction());
     compare_values(value(a).as_ref(), value(b).as_ref(), sort.direction()).then_with(|| {
-        let bottom = |group: &[&PullRequest]| group.first().map(|pr| pr.number);
+        let bottom = |group: &[&T]| group.first().map(|item| item.tie_number());
         bottom(a).cmp(&bottom(b))
     })
 }
 
 /// How two pull requests are ordered under `sort`, ties broken by number.
 pub fn compare_items(a: &PullRequest, b: &PullRequest, sort: Sort<ItemSortKey>) -> Ordering {
-    compare_groups(&[a], &[b], sort)
+    compare_item_groups(&[a], &[b], sort)
+}
+
+/// How two issues are ordered under `sort`, ties broken by number — the
+/// same rules as [`compare_items`], over [`issue_sort_value`].
+pub fn compare_issues(a: &Issue, b: &Issue, sort: Sort<ItemSortKey>) -> Ordering {
+    compare_item_groups(&[a], &[b], sort)
 }
 
 /// Reorder `indices` — positions in `prs`, typically the ones the filter let
 /// through — into display order. Only permutes; never adds or drops.
 pub fn order_items(prs: &[PullRequest], indices: &mut [PrIx], sort: Sort<ItemSortKey>) {
     indices.sort_by(|a, b| compare_items(&prs[a.0], &prs[b.0], sort));
+}
+
+/// [`order_items`] for issues: reorder positions in `issues` into display
+/// order under the same item sort.
+pub fn order_issues(issues: &[Issue], indices: &mut [IssueIx], sort: Sort<ItemSortKey>) {
+    indices.sort_by(|a, b| compare_issues(&issues[a.0], &issues[b.0], sort));
 }

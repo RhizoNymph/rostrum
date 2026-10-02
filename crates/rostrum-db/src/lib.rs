@@ -22,6 +22,7 @@ mod cache;
 mod drafts;
 mod error;
 mod files;
+mod issues;
 mod repo_meta;
 mod schema;
 mod types;

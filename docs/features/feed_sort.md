@@ -1,7 +1,7 @@
 # Feature: feed_sort
 
-Ordering the feed: which repository container comes first, and which pull
-request comes first inside each one. Two independent sorts, each a key and a
+Ordering the feed: which repository container comes first, and which item —
+pull request or issue, by tab — comes first inside each one. Two independent sorts, each a key and a
 direction, chosen from a **Sort** popover in the feed header and remembered in
 `config.json`.
 
@@ -11,7 +11,8 @@ direction, chosen from a **Sort** popover in the feed header and remembered in
 - The comparisons, as pure functions in `rostrum-core`, including the
   aggregation hook for a group of pull requests that sorts as one unit (a
   stack).
-- Applying both sorts in `flatten`.
+- Applying both sorts in `flatten_tab`, on both the Pull requests and the
+  Issues tab: one item sort serves both lists.
 - The GraphQL fields the keys need, and caching the repository-level ones.
 - Persisting both sorts through `feed_filter`/`absorb_filter`.
 - The desktop's Sort button and popover.
@@ -25,8 +26,8 @@ direction, chosen from a **Sort** popover in the feed header and remembered in
   ignores the persisted sort until it has a control of its own. It does
   receive repository metadata, so turning sorting on there is a call-site
   change.
-- Issues. `ItemSortKey` is named for items rather than pull requests so issues
-  can join without a rename, but only pull requests exist today.
+- A separate sort per tab. Issues and pull requests share the one item sort;
+  the tab never changes the order setting, only which list it applies to.
 - Filtering. The sort never hides anything; see `author_filter` and
   `repo_feed`.
 
@@ -101,14 +102,24 @@ supplies it. `PullRequest::pushed_at: Option<DateTime<Utc>>`.
 | Repos | Owner | `RepoMeta::owner.login`, or the owner half of the `RepoId` before metadata arrives |
 | Repos | Name | the name half of the `RepoId` |
 | Repos | Stars | `RepoMeta::stars` |
-| Items | Pushed | `PullRequest::pushed_at`, see below |
-| Items | Updated | `PullRequest::updated_at` — GitHub bumps it on pushes, comments and reviews |
-| Items | Created | `PullRequest::created_at` |
+| Items | Pushed | `PullRequest::pushed_at`, see below; for an issue, `Issue::updated_at` |
+| Items | Updated | `updated_at` — GitHub bumps it on pushes, comments and reviews |
+| Items | Created | `created_at` |
 | Items | Author | the author's login |
 | Items | Title | the title |
 
-Repository "updated" uses **all** open items, not the filtered ones, so the
-repository order does not shift as a search is typed.
+Repository "updated" uses **all** open items — pull requests and issues, on
+either tab — not the filtered ones, so the repository order does not shift as
+a search is typed or the tab is switched.
+
+### "Pushed" on an issue
+
+An issue has no branch, so nothing is ever pushed to it.
+`issue_sort_value(issue, ItemSortKey::Pushed)` returns the issue's
+`updatedAt` instead, so "pushed" orders the Issues tab exactly as "updated"
+does. The alternative — treating it as unknown — would sink every issue to
+the number tie-break and make the default-looking sort look broken on that
+tab. The popover's **pushed** button says so in its tooltip.
 
 ### Where "pushed" comes from for a pull request
 
@@ -142,18 +153,24 @@ same `committedDate` and no push time, so they add cost without information.
 
 `crates/rostrum-core/src/sort/compare.rs`, all pure:
 
-1. `repo_sort_value(repo, key)` / `item_sort_value(pr, key)` →
-   `Option<SortValue>`, where `SortValue` is `Time`, `Text(TextKey)` or
+1. `repo_sort_value(repo, key)` / `item_sort_value(pr, key)` /
+   `issue_sort_value(issue, key)` → `Option<SortValue>`, where `SortValue` is `Time`, `Text(TextKey)` or
    `Count`. `TextKey` is the trimmed, lower-cased form.
 2. `compare_values` orders two values in a direction with **unknowns last in
    both directions**.
 3. `compare_repos` breaks ties by repository name, then owner (both
-   case-folded), then the exact `RepoId`. `compare_items` breaks ties by
-   number. Tie-breaks always run ascending, whatever the direction.
+   case-folded), then the exact `RepoId`. `compare_items` and
+   `compare_issues` break ties by number. Tie-breaks always run ascending, whatever the direction.
 4. `order_repos(repos, sort) -> Vec<RepoIx>` and
-   `order_items(prs, &mut [PrIx], sort)` produce display order with a stable
-   sort; `order_items` only permutes the indices it is handed (the ones the
-   filter let through).
+   `order_items(prs, &mut [PrIx], sort)` / `order_issues(issues, &mut
+   [IssueIx], sort)` produce display order with a stable sort; the item
+   orders only permute the indices they are handed (the ones the filter let
+   through).
+
+Internally the item comparisons are written once, over a private
+`SortItem` trait implemented by `PullRequest` and `Issue` (its value for a key,
+and its number for ties), so the two tabs cannot drift apart. The public
+pull-request functions keep their concrete signatures.
 
 ### Groups (stacks)
 
@@ -173,10 +190,12 @@ groups of one, so lone items and stacks cannot be ordered by different rules.
 
 ### Flattening
 
-`flatten(repos, filter)` is `flatten_in(repos, filter,
-FeedOrder::Sorted(filter.sort))`. `flatten_in` walks repositories in
-`order_repos` order and, inside each, orders the filtered `PrIx`s with
-`order_items`. Indices remain positional — a `RepoIx` still indexes
+All four entry points end in `flatten_tab_in(repos, filter, tab, order)`:
+`flatten` is the Pull requests tab sorted by `filter.sort`, `flatten_in` the
+Pull requests tab in an explicit order, and `flatten_tab` either tab sorted.
+`flatten_tab_in` walks repositories in `order_repos` order and, inside each,
+orders the filtered `PrIx`s with `order_items` or `IssueIx`s with
+`order_issues`. Indices remain positional — a `RepoIx` still indexes
 `AppState.repos` — so sorting changes row order and nothing else: selection,
 navigation and chrome are untouched. `FeedOrder::AsListed` skips both sorts;
 the Android core uses it.
@@ -244,7 +263,9 @@ and **repos**, labelled with both sorts — `Sort: pushed ↓ · created ↓`
 the third `HeaderPopover` variant, so at most one header popover is open, and
 it is anchored like the others: top-left on the button's centre.
 
-Two sections, **Repositories** and **Pull requests**. Each lists `K::ALL` as
+Two sections, **Repositories** and **Pull requests & issues** — one item
+sort serves both tabs, so the label names both rather than following the
+active tab. Each lists `K::ALL` as
 buttons, the current key `Primary`, and a direction button naming the current
 direction (`Newest first ⇅`) that reverses it. Clicks call
 `Store::{choose,reverse}_{repo,item}_sort`, which go through `edit_filter`,
@@ -270,7 +291,10 @@ closes it first, like the other two.
 7. **Choosing a different key resets the direction; choosing the same key
    does not.**
 8. **`feed_filter` and `absorb_filter` cover both sorts**, and an unreadable
-   sort never costs the rest of the config.
+   sort never costs the rest of the config. The feed tab (`feed_tab`) is a
+   separate field in the same file; saving either leaves the other intact.
+10. **Both tabs use the same item sort**, and "pushed" on an issue is its
+    "updated".
 9. **Clearing the filter keeps the sort.**
 
 ## Files
@@ -278,10 +302,11 @@ closes it first, like the other two.
 | File | Role |
 |---|---|
 | `crates/rostrum-core/src/sort/mod.rs` | `SortDirection`, `KeyKind`, `SortKey`, `RepoSortKey`, `ItemSortKey`, `Sort`, `FeedSort`, `FeedOrder` |
-| `crates/rostrum-core/src/sort/compare.rs` | `SortValue`, `TextKey`, `repo_sort_value`, `item_sort_value`, `compare_repos`, `compare_items`, `sort_key_for_group`, `compare_groups`, `order_repos`, `order_items` |
+| `crates/rostrum-core/src/sort/compare.rs` | `SortValue`, `TextKey`, `repo_sort_value`, `item_sort_value`, `issue_sort_value`, `compare_repos`, `compare_items`, `compare_issues`, `sort_key_for_group`, `compare_groups`, `order_repos`, `order_items`, `order_issues` |
 | `crates/rostrum-core/src/sort/tests.rs` | Every key both ways, defaults, resets, ties, unknowns, groups, flatten, serde |
+| `crates/rostrum-core/src/sort/tests/issues.rs` | The item sort over issues, "pushed" falling back to "updated", the Issues tab under both sorts |
 | `crates/rostrum-core/src/repo_meta.rs` | `RepoMeta`, `RepoOwner`, `OwnerKind` |
-| `crates/rostrum-core/src/feed.rs` | `FeedFilter::{sort, cleared}`, `flatten`, `flatten_in` |
+| `crates/rostrum-core/src/feed.rs` | `FeedFilter::{sort, cleared}`, `flatten`, `flatten_in`, `flatten_tab`, `flatten_tab_in` |
 | `crates/rostrum-core/src/state.rs` | `RepoState::meta` |
 | `crates/rostrum-core/src/model.rs` | `PullRequest::pushed_at` |
 | `crates/rostrum-github/src/graphql.rs` | Query fields; `RepositoryNode::meta`, `PrNode::timeline_items`, `CommitNode::committed_date` |
@@ -289,7 +314,7 @@ closes it first, like the other two.
 | `crates/rostrum-github/src/fixtures/feed_*.json` | Live captures of the feed query |
 | `crates/rostrum-github/src/client.rs` | `RepoPullRequests::meta` |
 | `crates/rostrum-db/src/repo_meta.rs` | `Db::{save_repo_meta, load_repo_meta}` |
-| `crates/rostrum-config/src/lib.rs` | `repo_sort`, `item_sort`, lenient decoding |
-| `crates/rostrum/src/sync.rs` | Applying and caching `meta`; `Store::{choose,reverse}_{repo,item}_sort` |
+| `crates/rostrum-config/src/lib.rs` | `repo_sort`, `item_sort`, lenient decoding (shared with `feed_tab`) |
+| `crates/rostrum/src/sync/mod.rs` | Applying and caching `meta`; `Store::{choose,reverse}_{repo,item}_sort` |
 | `crates/rostrum/src/feed/sort_menu.rs` | The Sort button and popover |
 | `crates/rostrum-ffi/src/feed/state.rs` | `Fetched::meta`; the Android snapshot's `FeedOrder::AsListed` |

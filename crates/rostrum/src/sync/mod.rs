@@ -5,6 +5,8 @@
 //! handle and re-wraps the join handle as a `gpui::Task` (cancelled on drop).
 //! Results are applied back on the main thread through `entity.update`.
 
+mod issues;
+
 use std::{
     collections::{BTreeMap, HashMap},
     path::PathBuf,
@@ -15,9 +17,10 @@ use chrono::Utc;
 use gpui::{Context, Task};
 use gpui_tokio::Tokio;
 use rostrum_core::{
-    AppState, AuthorEntry, Divergence, FeedFilter, ItemSortKey, LoadState, LoginKey,
-    MergeProbeBudget, PrNumber, PullRequest, RepoId, RepoMeta, RepoSortKey, RepoState, User,
-    apply_divergences, carry_forward_divergence, divergence_query, needs_merge_probe, roster,
+    AppState, AuthorEntry, Divergence, FeedFilter, FeedTab, Issue, ItemSortKey, LoadState,
+    LoginKey, MergeProbeBudget, PrNumber, PullRequest, RepoId, RepoMeta, RepoSortKey, RepoState,
+    User, apply_divergences, carry_forward_divergence, divergence_query, issue_roster,
+    needs_merge_probe, roster,
 };
 use rostrum_db::Db;
 use rostrum_git::{Autostash, BranchName};
@@ -141,9 +144,10 @@ fn summarise<'a>(results: impl Iterator<Item = &'a LocalResult>) -> SyncSummary 
 }
 
 /// One repository's worth of the local cache, read at startup.
-struct CachedRepo {
-    id: RepoId,
+struct Cached {
+    repo: RepoId,
     prs: Vec<PullRequest>,
+    issues: Vec<Issue>,
     meta: Option<RepoMeta>,
 }
 
@@ -156,6 +160,10 @@ pub struct Store {
     /// In-flight refresh per repository. Presence here is the overlap guard: a
     /// slow request can never stack up behind a fast timer.
     pending: HashMap<RepoId, Task<()>>,
+    /// In-flight issue refresh per repository, guarded the same way and kept
+    /// apart from `pending` so a merge probe's pull request refresh never
+    /// waits on, or cancels, an issue fetch.
+    pending_issues: HashMap<RepoId, Task<()>>,
     /// Held so the poll loop is not dropped (dropping a `Task` cancels it).
     poll: Option<Task<()>>,
     /// Follow-up refreshes chasing a merge state GitHub has not finished
@@ -195,6 +203,7 @@ impl Store {
 
         let mut state = AppState::with_repos(repo_ids);
         state.filter = config.feed_filter();
+        state.tab = config.feed_tab;
 
         let mut store = Self {
             config,
@@ -203,6 +212,7 @@ impl Store {
             warnings,
             client: None,
             pending: HashMap::new(),
+            pending_issues: HashMap::new(),
             poll: None,
             merge_probes: HashMap::new(),
             merge_probe_attempts: HashMap::new(),
@@ -241,11 +251,17 @@ impl Store {
             let opened = Tokio::spawn(&*cx, async move {
                 let db = Db::open(&path).await?;
                 let mut cached = Vec::new();
-                for id in repos {
-                    let prs = db.load_pull_requests(&id).await?;
-                    let meta = db.load_repo_meta(&id).await?;
-                    if !prs.is_empty() || meta.is_some() {
-                        cached.push(CachedRepo { id, prs, meta });
+                for repo in repos {
+                    let prs = db.load_pull_requests(&repo).await?;
+                    let issues = db.load_issues(&repo).await?;
+                    let meta = db.load_repo_meta(&repo).await?;
+                    if !prs.is_empty() || !issues.is_empty() || meta.is_some() {
+                        cached.push(Cached {
+                            repo,
+                            prs,
+                            issues,
+                            meta,
+                        });
                     }
                 }
                 Ok::<_, rostrum_db::DbError>((db, cached))
@@ -265,18 +281,29 @@ impl Store {
         }));
     }
 
-    fn hydrate(&mut self, db: Arc<Db>, cached: Vec<CachedRepo>, cx: &mut Context<Self>) {
+    fn hydrate(&mut self, db: Arc<Db>, cached: Vec<Cached>, cx: &mut Context<Self>) {
         self.db = Some(db);
 
-        for CachedRepo { id, prs, meta } in cached {
+        for Cached {
+            repo: id,
+            prs,
+            issues,
+            meta,
+        } in cached
+        {
             let Some(repo) = self.state.repo_mut(&id) else {
                 continue;
             };
             // Never clobber data that already arrived from the network: the
-            // cache is only ever used to fill a gap.
+            // cache is only ever used to fill a gap — per list, since the two
+            // arrive separately.
             if repo.prs.is_empty() && !prs.is_empty() {
-                tracing::debug!(repo = %id, count = prs.len(), "restored from cache");
+                tracing::debug!(repo = %id, count = prs.len(), "restored pull requests from cache");
                 repo.prs = prs;
+            }
+            if repo.issues.is_empty() && !issues.is_empty() {
+                tracing::debug!(repo = %id, count = issues.len(), "restored issues from cache");
+                repo.issues = issues;
             }
             if repo.meta.is_none() && meta.is_some() {
                 tracing::debug!(repo = %id, "restored repository metadata from cache");
@@ -296,7 +323,8 @@ impl Store {
         // sorts, so the list does not jump around between launches.
         self.state.repos.sort_by(|a, b| a.id.cmp(&b.id));
         self.persist_config();
-        self.refresh_repo(id, cx);
+        self.refresh_repo(id.clone(), cx);
+        self.refresh_issues(id, cx);
         cx.notify();
         Ok(())
     }
@@ -313,12 +341,13 @@ impl Store {
             .state
             .selection
             .as_ref()
-            .is_some_and(|selection| &selection.repo == id)
+            .is_some_and(|selection| selection.repo() == id)
         {
             self.state.selection = None;
         }
         // Dropping the in-flight tasks cancels their requests.
         self.pending.remove(id);
+        self.pending_issues.remove(id);
         self.divergence_probes.remove(id);
         // A verdict for a repository that is no longer listed has no row to
         // sit on, and would resurface if the repo were re-added.
@@ -404,9 +433,14 @@ impl Store {
         cx.notify();
     }
 
-    /// The people the author filter can be pointed at, viewer first.
+    /// The people the author filter can be pointed at, viewer first: the
+    /// authors of whichever list the active tab shows.
     pub fn authors(&self) -> Vec<AuthorEntry> {
-        roster(
+        let build = match self.state.tab {
+            FeedTab::PullRequests => roster,
+            FeedTab::Issues => issue_roster,
+        };
+        build(
             &self.state.repos,
             self.viewer.as_ref(),
             &self.state.filter.authors,
@@ -443,7 +477,7 @@ impl Store {
     }
 
     pub fn is_refreshing(&self) -> bool {
-        !self.pending.is_empty()
+        !self.pending.is_empty() || !self.pending_issues.is_empty()
     }
 
     /// The authenticated client, once auth has resolved.
@@ -663,7 +697,8 @@ impl Store {
             .map(|repo| repo.id.clone())
             .collect();
         for id in ids {
-            self.refresh_repo(id, cx);
+            self.refresh_repo(id.clone(), cx);
+            self.refresh_issues(id, cx);
         }
     }
 

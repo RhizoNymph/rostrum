@@ -117,6 +117,11 @@ have matched. This is why `AuthorNode.login` is `Option<String>`. Both
 connections are capped at ten — two bounded lists, no extra round trips. See
 `docs/features/author_filter.md`.
 
+Open issues are a second document per repository in the same cycle,
+`OPEN_ISSUES`, with its own overlap guard (`pending_issues`) and its own
+`LoadState`; a selected issue's detail is `ISSUE_DETAIL`. Both are described
+in `docs/features/issues.md`.
+
 The repository's `pushedAt`/`createdAt`/`updatedAt`/`stargazerCount`/`owner`,
 each pull request's head `committedDate`, and its newest force push exist for
 the feed's sorts: they decode into `RepoPullRequests::meta` and
@@ -183,6 +188,9 @@ decodes leniently: an unknown value is absent, not a failed conversation.
 | Reply in thread | `POST /repos/{o}/{r}/pulls/{n}/comments/{id}/replies` |
 | Merge | `PUT /repos/{o}/{r}/pulls/{n}/merge` — `MergePullRequest`: method, optional title/message, optional expected head `sha` |
 | Close | `PATCH /repos/{o}/{r}/pulls/{n}` |
+| Issue comment, close/reopen, labels, assignees | `IssueMutation::call` — `POST …/issues/{n}/comments`, `PATCH …/issues/{n}` with `state`/`state_reason`, `POST`/`DELETE …/issues/{n}/labels`, `POST`/`DELETE …/issues/{n}/assignees` |
+| Create issue | `POST /repos/{o}/{r}/issues` — `CreateIssue` |
+| Assignable users | `GET /repos/{o}/{r}/assignees` (paginated) |
 | Convert to draft | GraphQL `convertPullRequestToDraft` — no REST equivalent |
 | Ready for review | GraphQL `markPullRequestReadyForReview` — no REST equivalent |
 | Update from base | GraphQL `updatePullRequestBranch` — REST cannot rebase |
@@ -331,7 +339,7 @@ SQLite via `sqlx`, at `~/.local/share/rostrum/cache.db`. The crate draws a hard
 line between two kinds of data, and the distinction is load-bearing:
 
 - **Cache** (`cache_pull_request`, `cache_repo_meta`, `cache_conversation`,
-  `cache_http`) — copies
+  `cache_http`, `cache_issue`, `cache_issue_detail`) — copies
   of things GitHub already knows. Disposable. A schema-version mismatch drops
   and recreates these tables; corrupt JSON in a row is logged, deleted, and
   treated as a miss.
@@ -430,7 +438,10 @@ Two rules that matter in practice:
 | `crates/rostrum-github/src/error.rs` | `GitHubError` |
 | `crates/rostrum-github/src/rate_limit.rs` | Budget accounting, backoff |
 | `crates/rostrum-github/src/cache.rs` | SQLite schema, ETag storage |
-| `crates/rostrum/src/sync.rs` | `SyncEngine` entity, poll loop, reconciliation |
+| `crates/rostrum/src/sync/mod.rs` | `SyncEngine` entity, poll loop, reconciliation |
+| `crates/rostrum/src/sync/issues.rs` | Issue refresh in the same poll cycle, its overlap guard and cache write |
+| `crates/rostrum-github/src/issues/` | Issue documents, REST requests, client methods — see `docs/features/issues.md` |
+| `crates/rostrum-db/src/issues.rs` | Issue lists and issue details cached per repository |
 | `crates/rostrum-core/src/probe.rs` | `MergeProbeBudget`, `needs_merge_probe` |
 | `crates/rostrum-db/src/files.rs` | Changed files cached per head sha |
 | `crates/rostrum-db/src/baseline.rs` | The notification seen set |

@@ -7,7 +7,7 @@
 //! view, where row counts genuinely run to thousands, does virtualize.
 
 use chrono::{DateTime, Utc};
-use gpui::{AnyElement, Context, div, prelude::*, px, rems};
+use gpui::{AnyElement, App, Context, div, prelude::*, px, rems};
 use rostrum_core::{Conversation, ReviewState, ReviewThread, ThreadComment, TimelineItem, User};
 use rostrum_ui::{
     ActiveTheme, Theme,
@@ -59,6 +59,58 @@ fn render_item(
     theme: &Theme,
     cx: &Context<PrDetail>,
 ) -> AnyElement {
+    let TimelineItem::Review {
+        author,
+        state,
+        body,
+        created_at,
+        thread_ids,
+        ..
+    } = item
+    else {
+        return render_plain_item(item, ix, owner, repo, theme, cx);
+    };
+
+    let (label, color) = review_state_chip(*state, theme);
+    let threads: Vec<&ReviewThread> = thread_ids
+        .iter()
+        .filter_map(|id| conversation.thread(id))
+        .collect();
+
+    v_flex()
+        .gap_2()
+        .child(card(
+            theme,
+            author.as_ref(),
+            *created_at,
+            Some(label),
+            Some(color),
+            body,
+            ix,
+            owner,
+            repo,
+            cx,
+        ))
+        .children(threads.into_iter().enumerate().map(|(tx, thread)| {
+            render_thread(detail, thread, ix * 1000 + tx, owner, repo, theme, cx)
+        }))
+        .into_any_element()
+}
+
+/// The description, a comment, or an event: every timeline item that needs
+/// nothing from the pane it sits in. Issues have only these, so the issue
+/// pane renders its timeline through here too and the two read identically.
+///
+/// A review has threads and reply composers that belong to the pull request
+/// pane; it falls back to a plain card here, which no caller relies on.
+pub(crate) fn render_plain_item(
+    item: &TimelineItem,
+    ix: usize,
+    owner: &str,
+    repo: &str,
+    theme: &Theme,
+    cx: &App,
+) -> AnyElement {
     match item {
         TimelineItem::Body {
             author,
@@ -81,6 +133,12 @@ fn render_item(
             body,
             created_at,
             ..
+        }
+        | TimelineItem::Review {
+            author,
+            body,
+            created_at,
+            ..
         } => card(
             theme,
             author.as_ref(),
@@ -93,39 +151,6 @@ fn render_item(
             repo,
             cx,
         ),
-        TimelineItem::Review {
-            author,
-            state,
-            body,
-            created_at,
-            thread_ids,
-            ..
-        } => {
-            let (label, color) = review_state_chip(*state, theme);
-            let threads: Vec<&ReviewThread> = thread_ids
-                .iter()
-                .filter_map(|id| conversation.thread(id))
-                .collect();
-
-            v_flex()
-                .gap_2()
-                .child(card(
-                    theme,
-                    author.as_ref(),
-                    *created_at,
-                    Some(label),
-                    Some(color),
-                    body,
-                    ix,
-                    owner,
-                    repo,
-                    cx,
-                ))
-                .children(threads.into_iter().enumerate().map(|(tx, thread)| {
-                    render_thread(detail, thread, ix * 1000 + tx, owner, repo, theme, cx)
-                }))
-                .into_any_element()
-        }
         TimelineItem::Event {
             kind,
             actor,
@@ -133,13 +158,14 @@ fn render_item(
         } => h_flex()
             .gap_2()
             .pl_2()
+            .flex_wrap()
             .text_size(rems(0.74))
             .text_color(theme.text_subtle)
             .when_some(actor.as_ref(), |el, user| {
                 el.child(Initial::new(user.login.clone()))
                     .child(user.login.clone())
             })
-            .child(event_text(kind))
+            .child(kind.describe())
             .child(relative_time(*created_at))
             .into_any_element(),
     }
@@ -156,7 +182,7 @@ fn card(
     id_seed: usize,
     owner: &str,
     repo: &str,
-    cx: &Context<PrDetail>,
+    cx: &App,
 ) -> AnyElement {
     let login = author.map(|a| a.login.clone());
 
@@ -356,25 +382,7 @@ fn review_state_chip(state: ReviewState, theme: &Theme) -> (&'static str, gpui::
     }
 }
 
-fn event_text(kind: &rostrum_core::EventKind) -> String {
-    use rostrum_core::EventKind as E;
-    match kind {
-        E::Merged => "merged this".into(),
-        E::Closed => "closed this".into(),
-        E::Reopened => "reopened this".into(),
-        E::ReadyForReview => "marked ready for review".into(),
-        E::ConvertedToDraft => "converted to draft".into(),
-        E::HeadRefForcePushed => "force-pushed".into(),
-        E::ReviewRequested { reviewer } => format!("requested a review from {reviewer}"),
-        E::Assigned { assignee } => format!("assigned {assignee}"),
-        E::Labeled { name } => format!("added the {name} label"),
-        E::Unlabeled { name } => format!("removed the {name} label"),
-        E::Renamed { from, to } => format!("renamed this from “{from}” to “{to}”"),
-        E::Other(kind) => kind.clone(),
-    }
-}
-
-fn centered(message: impl Into<String>, color: gpui::Hsla) -> impl IntoElement {
+pub(crate) fn centered(message: impl Into<String>, color: gpui::Hsla) -> impl IntoElement {
     div()
         .size_full()
         .flex()

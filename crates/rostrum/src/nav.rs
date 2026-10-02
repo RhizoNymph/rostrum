@@ -5,7 +5,7 @@
 //! store's identity-based [`Selection`] to a row index at the moment it fires
 //! rather than caching one.
 
-use rostrum_core::{Feed, FeedRow, PrIx, RepoIx, RepoState, Selection};
+use rostrum_core::{Feed, FeedRow, IssueIx, PrIx, RepoIx, RepoState, Selection};
 
 /// A navigation request from the keyboard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,23 +19,38 @@ pub enum Nav {
 /// Locate the row the current selection occupies.
 ///
 /// Returns `None` when nothing is selected, when the selected repository is
-/// gone, when the selected pull request has closed, or when the active filter
-/// or a collapsed repository has hidden its row.
+/// gone, when the selected item has closed, when the active filter or a
+/// collapsed repository has hidden its row, or when it belongs to the other
+/// tab — a feed holds one kind of row, so a pull request selection has no row
+/// in the Issues feed and navigation there starts afresh.
 pub fn selected_row(
     feed: &Feed,
     repos: &[RepoState],
     selection: Option<&Selection>,
 ) -> Option<usize> {
     let selection = selection?;
-    let repo_ix = repos.iter().position(|repo| repo.id == selection.repo)?;
-    let pr_ix = repos[repo_ix]
-        .prs
-        .iter()
-        .position(|pr| pr.number == selection.pr)?;
+    let repo_ix = repos.iter().position(|repo| &repo.id == selection.repo())?;
+    let repo = RepoIx(repo_ix);
 
-    let target = FeedRow::PrRow {
-        repo: RepoIx(repo_ix),
-        pr: PrIx(pr_ix),
+    let target = match selection {
+        Selection::PullRequest { number, .. } => FeedRow::PrRow {
+            repo,
+            pr: PrIx(
+                repos[repo_ix]
+                    .prs
+                    .iter()
+                    .position(|pr| pr.number == *number)?,
+            ),
+        },
+        Selection::Issue { number, .. } => FeedRow::IssueRow {
+            repo,
+            issue: IssueIx(
+                repos[repo_ix]
+                    .issues
+                    .iter()
+                    .position(|issue| issue.number == *number)?,
+            ),
+        },
     };
     feed.rows().iter().position(|row| *row == target)
 }
@@ -43,20 +58,21 @@ pub fn selected_row(
 /// Resolve `nav` to the feed row it should land on, or `None` when the feed
 /// holds no pull requests to land on at all.
 ///
-/// Only `PrRow`s are navigable; headers, notices and spacers are skipped.
+/// Only item rows — pull requests or issues, whichever the feed holds — are
+/// navigable; headers, notices and spacers are skipped.
 /// Movement deliberately does not wrap — `Next` at the last pull request and
 /// `Previous` at the first stay put, so holding a key cannot silently teleport
 /// the selection across the feed. With no live selection (`current` is `None`,
 /// which includes a selection whose row has vanished) `Next` and `First` land
 /// on the first pull request, `Previous` and `Last` on the last.
 pub fn navigate(feed: &Feed, current: Option<usize>, nav: Nav) -> Option<usize> {
-    let is_pr = |ix: &usize| matches!(feed.row(*ix), Some(FeedRow::PrRow { .. }));
+    let is_item = |ix: &usize| feed.row(*ix).is_some_and(|row| row.is_item());
 
     match (nav, current) {
-        (Nav::First, _) | (Nav::Next, None) => (0..feed.len()).find(is_pr),
-        (Nav::Last, _) | (Nav::Previous, None) => (0..feed.len()).rev().find(is_pr),
-        (Nav::Next, Some(ix)) => ((ix + 1)..feed.len()).find(is_pr).or(Some(ix)),
-        (Nav::Previous, Some(ix)) => (0..ix).rev().find(is_pr).or(Some(ix)),
+        (Nav::First, _) | (Nav::Next, None) => (0..feed.len()).find(is_item),
+        (Nav::Last, _) | (Nav::Previous, None) => (0..feed.len()).rev().find(is_item),
+        (Nav::Next, Some(ix)) => ((ix + 1)..feed.len()).find(is_item).or(Some(ix)),
+        (Nav::Previous, Some(ix)) => (0..ix).rev().find(is_item).or(Some(ix)),
     }
 }
 
@@ -65,8 +81,8 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use rostrum_core::{
-        FeedFilter, LoadState, MergeStateStatus, Mergeable, NodeId, PrNumber, PullRequest, RepoId,
-        RepoState, flatten,
+        FeedFilter, FeedTab, Issue, IssueNumber, IssueState, LoadState, MergeStateStatus,
+        Mergeable, NodeId, PrNumber, PullRequest, RepoId, RepoState, flatten, flatten_tab,
     };
 
     /// One fixed instant for every fixture: the feed sorts by creation time,
@@ -106,18 +122,48 @@ mod tests {
 
     fn repo(name: &str, numbers: &[u32]) -> RepoState {
         RepoState {
-            id: name.parse::<RepoId>().expect("valid repo id"),
             prs: numbers.iter().copied().map(pr).collect(),
             load: LoadState::Loaded { at: Utc::now() },
-            collapsed: false,
-            meta: None,
+            ..RepoState::new(name.parse::<RepoId>().expect("valid repo id"))
+        }
+    }
+
+    fn issue(number: u32) -> Issue {
+        Issue {
+            number: IssueNumber(number),
+            node_id: NodeId(format!("I_{number}")),
+            title: format!("Issue {number}"),
+            url: String::new(),
+            state: IssueState::Open,
+            created_at: fixed_time(),
+            updated_at: fixed_time(),
+            author: None,
+            assignees: Vec::new(),
+            labels: Vec::new(),
+            comment_count: 0,
+            milestone: None,
+        }
+    }
+
+    fn with_issues(name: &str, prs: &[u32], issues: &[u32]) -> RepoState {
+        RepoState {
+            issues: issues.iter().copied().map(issue).collect(),
+            issues_load: LoadState::Loaded { at: Utc::now() },
+            ..repo(name, prs)
         }
     }
 
     fn selection(repo: &str, number: u32) -> Selection {
-        Selection {
+        Selection::PullRequest {
             repo: repo.parse().expect("valid repo id"),
-            pr: PrNumber(number),
+            number: PrNumber(number),
+        }
+    }
+
+    fn issue_selection(repo: &str, number: u32) -> Selection {
+        Selection::Issue {
+            repo: repo.parse().expect("valid repo id"),
+            number: IssueNumber(number),
         }
     }
 
@@ -276,5 +322,60 @@ mod tests {
             selected_row(&feed, &repos, Some(&selection("a/b", 2))),
             Some(1)
         );
+    }
+
+    // --- the Issues tab -------------------------------------------------------
+
+    /// Two repos of two issues each, with pull requests that must not count.
+    fn two_repos_of_issues() -> (Vec<RepoState>, Feed) {
+        let repos = vec![
+            with_issues("a/b", &[1], &[10, 11]),
+            with_issues("c/d", &[2], &[12, 13]),
+        ];
+        let feed = flatten_tab(&repos, &FeedFilter::default(), FeedTab::Issues);
+        (repos, feed)
+    }
+
+    #[test]
+    fn an_issue_selection_resolves_to_its_row_on_the_issues_tab() {
+        let (repos, feed) = two_repos_of_issues();
+        assert_eq!(
+            selected_row(&feed, &repos, Some(&issue_selection("c/d", 12))),
+            Some(5)
+        );
+        assert_eq!(
+            selected_row(&feed, &repos, Some(&issue_selection("c/d", 99))),
+            None
+        );
+    }
+
+    /// `j`/`k` stay within the active tab: a selection from the other tab has
+    /// no row here, so movement enters this tab's list from its end.
+    #[test]
+    fn a_selection_from_the_other_tab_has_no_row() {
+        let (repos, issues) = two_repos_of_issues();
+        assert_eq!(
+            selected_row(&issues, &repos, Some(&selection("a/b", 1))),
+            None
+        );
+        let prs = flatten(&repos, &FeedFilter::default());
+        assert_eq!(
+            selected_row(&prs, &repos, Some(&issue_selection("a/b", 10))),
+            None
+        );
+        assert_eq!(navigate(&issues, None, Nav::Next), Some(1));
+    }
+
+    #[test]
+    fn navigation_walks_issue_rows_across_repos_without_wrapping() {
+        let (_, feed) = two_repos_of_issues();
+        // header, issue, issue, spacer, header, issue, issue, spacer
+        assert_eq!(navigate(&feed, Some(1), Nav::Next), Some(2));
+        assert_eq!(navigate(&feed, Some(2), Nav::Next), Some(5));
+        assert_eq!(navigate(&feed, Some(5), Nav::Previous), Some(2));
+        assert_eq!(navigate(&feed, Some(6), Nav::Next), Some(6));
+        assert_eq!(navigate(&feed, Some(1), Nav::Previous), Some(1));
+        assert_eq!(navigate(&feed, None, Nav::Last), Some(6));
+        assert_eq!(navigate(&feed, Some(6), Nav::First), Some(1));
     }
 }

@@ -9,8 +9,8 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use rostrum_core::{
-    CheckRun, CheckState, CommentId, Conversation, EventKind, PullState, ReviewId, ReviewState,
-    ReviewThread, Side, ThreadComment, ThreadId, TimelineItem,
+    CheckRun, CheckState, CloseReason, CommentId, Conversation, EventKind, PullState, ReviewId,
+    ReviewState, ReviewThread, Side, ThreadComment, ThreadId, TimelineItem,
 };
 use serde::Deserialize;
 
@@ -240,6 +240,40 @@ pub struct TimelineEventNode {
     pub current_title: Option<String>,
     pub requested_reviewer: Option<ActorRef>,
     pub assignee: Option<ActorRef>,
+    /// `ClosedEvent.stateReason`, selected by the issue query only. Absent
+    /// for pull requests, whose close events keep reading "closed this".
+    #[serde(default, deserialize_with = "lenient_close_reason")]
+    pub state_reason: Option<CloseReason>,
+    /// `CrossReferencedEvent.source`: the issue or pull request that
+    /// mentioned this one.
+    pub source: Option<ReferenceSource>,
+}
+
+/// The `Issue` or `PullRequest` behind a cross-reference.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReferenceSource {
+    pub number: Option<u32>,
+    #[serde(default)]
+    pub title: String,
+    pub repository: Option<ReferenceRepository>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReferenceRepository {
+    pub name_with_owner: String,
+}
+
+impl ReferenceSource {
+    /// `owner/name#number`, or `#number` when the repository was withheld.
+    fn describe(&self) -> String {
+        let number = self.number.map(|n| format!("#{n}")).unwrap_or_default();
+        match &self.repository {
+            Some(repository) => format!("{}{number}", repository.name_with_owner),
+            None => number,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -341,11 +375,14 @@ impl CheckContextNode {
 impl TimelineEventNode {
     /// `None` when the event carries no timestamp, since an item with no
     /// position on the timeline cannot be placed.
-    fn into_domain(self) -> Option<TimelineItem> {
+    pub(crate) fn into_domain(self) -> Option<TimelineItem> {
         let created_at = self.created_at?;
         let kind = match self.typename.as_str() {
             "MergedEvent" => EventKind::Merged,
-            "ClosedEvent" => EventKind::Closed,
+            "ClosedEvent" => match self.state_reason {
+                Some(reason) => EventKind::ClosedAs(reason),
+                None => EventKind::Closed,
+            },
             "ReopenedEvent" => EventKind::Reopened,
             "ReadyForReviewEvent" => EventKind::ReadyForReview,
             "ConvertToDraftEvent" => EventKind::ConvertedToDraft,
@@ -375,6 +412,23 @@ impl TimelineEventNode {
                     .and_then(ActorRef::display)
                     .unwrap_or_default()
                     .to_string(),
+            },
+            "UnassignedEvent" => EventKind::Unassigned {
+                assignee: self
+                    .assignee
+                    .as_ref()
+                    .and_then(ActorRef::display)
+                    .unwrap_or_default()
+                    .to_string(),
+            },
+            "CrossReferencedEvent" => match &self.source {
+                Some(source) => EventKind::CrossReferenced {
+                    source: source.describe(),
+                    title: source.title.clone(),
+                },
+                // A source the viewer may not see: still an event, with
+                // nothing to name.
+                None => EventKind::Other("CrossReferencedEvent".into()),
             },
             other => EventKind::Other(other.to_string()),
         };
@@ -506,6 +560,27 @@ impl ConversationNode {
         };
         conversation.sort();
         conversation
+    }
+}
+
+/// Decode a close reason, treating a value this build does not know as
+/// absent so a reason GitHub adds later degrades to a plain "closed".
+pub(crate) fn lenient_close_reason<'de, D>(deserializer: D) -> Result<Option<CloseReason>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<String>::deserialize(deserializer)?;
+    Ok(raw.as_deref().and_then(close_reason))
+}
+
+/// GitHub's `IssueClosedStateReason` spelling, or `None` for anything else —
+/// including `REOPENED`, which GitHub reports as the reason of an open issue.
+pub(crate) fn close_reason(raw: &str) -> Option<CloseReason> {
+    match raw {
+        "COMPLETED" => Some(CloseReason::Completed),
+        "NOT_PLANNED" => Some(CloseReason::NotPlanned),
+        "DUPLICATE" => Some(CloseReason::Duplicate),
+        _ => None,
     }
 }
 

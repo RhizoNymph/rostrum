@@ -4,8 +4,10 @@ use chrono::{DateTime, Utc};
 
 use crate::{
     feed::FeedFilter,
+    issue::{Issue, IssueNumber},
     model::{Divergence, PrNumber, PullRequest, RepoId},
     repo_meta::RepoMeta,
+    tabs::FeedTab,
 };
 
 /// Per-repository fetch status.
@@ -45,7 +47,16 @@ impl LoadState {
 pub struct RepoState {
     pub id: RepoId,
     pub prs: Vec<PullRequest>,
+    /// Fetch status of `prs`.
     pub load: LoadState,
+    /// Open issues, most recently updated first.
+    pub issues: Vec<Issue>,
+    /// Fetch status of `issues`, separate from `load` because the two lists
+    /// are separate requests: one can fail while the other succeeds, and each
+    /// tab must report its own.
+    pub issues_load: LoadState,
+    /// Collapsing is per repository, not per tab: it hides the repository's
+    /// body on both.
     pub collapsed: bool,
     /// The repository's own facts — owner, push and creation times, stars —
     /// for sorting repositories. `None` until the first refresh or cache
@@ -59,24 +70,49 @@ impl RepoState {
             id,
             prs: Vec::new(),
             load: LoadState::Idle,
+            issues: Vec::new(),
+            issues_load: LoadState::Idle,
             collapsed: false,
             meta: None,
         }
     }
 }
 
-/// Selection is stored by identity, never by feed index — indices are
-/// positional and invalidated by every refresh.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Selection {
-    pub repo: RepoId,
-    pub pr: PrNumber,
+/// What the detail pane is showing.
+///
+/// Stored by identity, never by feed index — indices are positional and
+/// invalidated by every refresh. The kind is part of the identity: a pull
+/// request and an issue never share a number within a repository, but which
+/// pane opens, and which endpoints it talks to, depends on knowing which one
+/// was picked rather than looking the number up in both lists.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Selection {
+    PullRequest { repo: RepoId, number: PrNumber },
+    Issue { repo: RepoId, number: IssueNumber },
+}
+
+impl Selection {
+    pub fn repo(&self) -> &RepoId {
+        match self {
+            Self::PullRequest { repo, .. } | Self::Issue { repo, .. } => repo,
+        }
+    }
+
+    /// The feed tab this selection lives on.
+    pub fn tab(&self) -> FeedTab {
+        match self {
+            Self::PullRequest { .. } => FeedTab::PullRequests,
+            Self::Issue { .. } => FeedTab::Issues,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct AppState {
     pub repos: Vec<RepoState>,
     pub filter: FeedFilter,
+    /// Which list the feed shows. Persisted, like the filter's preferences.
+    pub tab: FeedTab,
     pub selection: Option<Selection>,
 }
 
@@ -99,14 +135,31 @@ impl AppState {
     /// Resolve the current selection to a live pull request, if it still exists.
     /// Returns `None` when the PR was merged or closed out from under us.
     pub fn selected_pr(&self) -> Option<(&RepoState, &PullRequest)> {
-        let selection = self.selection.as_ref()?;
-        let repo = self.repo(&selection.repo)?;
-        let pr = repo.prs.iter().find(|p| p.number == selection.pr)?;
+        let Some(Selection::PullRequest { repo, number }) = self.selection.as_ref() else {
+            return None;
+        };
+        let repo = self.repo(repo)?;
+        let pr = repo.prs.iter().find(|p| p.number == *number)?;
         Some((repo, pr))
+    }
+
+    /// The issue counterpart of [`AppState::selected_pr`]: `None` when nothing
+    /// is selected, a pull request is, or the issue has left the open list.
+    pub fn selected_issue(&self) -> Option<(&RepoState, &Issue)> {
+        let Some(Selection::Issue { repo, number }) = self.selection.as_ref() else {
+            return None;
+        };
+        let repo = self.repo(repo)?;
+        let issue = repo.issues.iter().find(|i| i.number == *number)?;
+        Some((repo, issue))
     }
 
     pub fn total_open_prs(&self) -> usize {
         self.repos.iter().map(|r| r.prs.len()).sum()
+    }
+
+    pub fn total_open_issues(&self) -> usize {
+        self.repos.iter().map(|r| r.issues.len()).sum()
     }
 }
 
@@ -208,9 +261,9 @@ mod tests {
     fn resolves_selection_to_live_pr() {
         let state = AppState {
             repos: vec![repo_with("a/b", &[1, 2])],
-            selection: Some(Selection {
+            selection: Some(Selection::PullRequest {
                 repo: "a/b".parse().expect("valid repo id"),
-                pr: PrNumber(2),
+                number: PrNumber(2),
             }),
             ..Default::default()
         };
@@ -224,13 +277,111 @@ mod tests {
     fn selection_of_vanished_pr_resolves_to_none() {
         let state = AppState {
             repos: vec![repo_with("a/b", &[1])],
-            selection: Some(Selection {
+            selection: Some(Selection::PullRequest {
                 repo: "a/b".parse().expect("valid repo id"),
-                pr: PrNumber(99),
+                number: PrNumber(99),
             }),
             ..Default::default()
         };
         assert!(state.selected_pr().is_none());
+    }
+
+    fn with_issues(id: &str, prs: &[u32], issues: &[u32]) -> RepoState {
+        let mut state = repo_with(id, prs);
+        state.issues = issues
+            .iter()
+            .copied()
+            .map(crate::test_support::issue)
+            .collect();
+        state.issues_load = LoadState::Loaded { at: Utc::now() };
+        state
+    }
+
+    #[test]
+    fn resolves_an_issue_selection_to_the_live_issue() {
+        let state = AppState {
+            repos: vec![with_issues("a/b", &[1], &[5, 6])],
+            selection: Some(Selection::Issue {
+                repo: "a/b".parse().expect("valid repo id"),
+                number: IssueNumber(6),
+            }),
+            ..Default::default()
+        };
+        let (repo, issue) = state.selected_issue().expect("selection should resolve");
+        assert_eq!(repo.id.to_string(), "a/b");
+        assert_eq!(issue.number, IssueNumber(6));
+        assert!(state.selected_pr().is_none());
+    }
+
+    /// The kind is part of the identity: an issue selection never resolves to
+    /// a pull request with the same number, nor the other way round.
+    #[test]
+    fn a_selection_resolves_only_against_its_own_kind() {
+        let repos = vec![with_issues("a/b", &[3], &[3])];
+        let issue = AppState {
+            repos: repos.clone(),
+            selection: Some(Selection::Issue {
+                repo: "a/b".parse().expect("valid repo id"),
+                number: IssueNumber(3),
+            }),
+            ..Default::default()
+        };
+        assert!(issue.selected_pr().is_none());
+        assert!(issue.selected_issue().is_some());
+
+        let pr = AppState {
+            repos,
+            selection: Some(Selection::PullRequest {
+                repo: "a/b".parse().expect("valid repo id"),
+                number: PrNumber(3),
+            }),
+            ..Default::default()
+        };
+        assert!(pr.selected_issue().is_none());
+        assert!(pr.selected_pr().is_some());
+    }
+
+    #[test]
+    fn a_closed_issue_resolves_to_none() {
+        let state = AppState {
+            repos: vec![with_issues("a/b", &[], &[1])],
+            selection: Some(Selection::Issue {
+                repo: "a/b".parse().expect("valid repo id"),
+                number: IssueNumber(2),
+            }),
+            ..Default::default()
+        };
+        assert!(state.selected_issue().is_none());
+    }
+
+    #[test]
+    fn a_selection_knows_its_repo_and_tab() {
+        let repo: RepoId = "a/b".parse().expect("valid repo id");
+        let pr = Selection::PullRequest {
+            repo: repo.clone(),
+            number: PrNumber(1),
+        };
+        let issue = Selection::Issue {
+            repo: repo.clone(),
+            number: IssueNumber(1),
+        };
+        assert_eq!(pr.repo(), &repo);
+        assert_eq!(issue.repo(), &repo);
+        assert_eq!(pr.tab(), FeedTab::PullRequests);
+        assert_eq!(issue.tab(), FeedTab::Issues);
+        assert_ne!(pr, issue);
+    }
+
+    #[test]
+    fn counts_open_issues_across_repos() {
+        let state = AppState {
+            repos: vec![
+                with_issues("a/b", &[], &[1, 2]),
+                with_issues("c/d", &[], &[3]),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(state.total_open_issues(), 3);
     }
 
     /// The carry matches by number so a reordered refresh keeps each count

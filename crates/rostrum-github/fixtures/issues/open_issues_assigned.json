@@ -1,0 +1,294 @@
+{
+ "data": {
+  "rateLimit": {
+   "cost": 1,
+   "remaining": 4984,
+   "resetAt": "2026-10-01T17:22:01Z"
+  },
+  "repository": {
+   "issues": {
+    "nodes": [
+     {
+      "id": "I_kwDOAAsO6M8AAAABUbMDJw",
+      "number": 163616,
+      "title": "Failure to run PGO instrumentation on Rust 1.99.0",
+      "url": "https://github.com/rust-lang/rust/issues/163616",
+      "state": "OPEN",
+      "stateReason": null,
+      "createdAt": "2026-10-01T16:34:46Z",
+      "updatedAt": "2026-10-01T16:45:27Z",
+      "author": {
+       "login": "davidhewitt",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/1939362?u=b4b48981c3a097daaad16c4c5417aa7a3e5e32d9&v=4"
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "labels": {
+       "nodes": [
+        {
+         "name": "regression-from-stable-to-stable",
+         "color": "e4008a"
+        },
+        {
+         "name": "C-bug",
+         "color": "f5f1fd"
+        },
+        {
+         "name": "I-prioritize",
+         "color": "e10c02"
+        },
+        {
+         "name": "needs-triage",
+         "color": "f28907"
+        }
+       ]
+      },
+      "comments": {
+       "totalCount": 1
+      },
+      "milestone": null
+     },
+     {
+      "id": "I_kwDOAAsO6M8AAAABUSAZ4A",
+      "number": 163577,
+      "title": "Compile error for `x86_64-unknown-motor` target",
+      "url": "https://github.com/rust-lang/rust/issues/163577",
+      "state": "OPEN",
+      "stateReason": null,
+      "createdAt": "2026-10-01T02:41:00Z",
+      "updatedAt": "2026-10-01T16:41:04Z",
+      "author": {
+       "login": "Wyvern",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/32942?u=cb0326f1079f06e26dc8e5f1953d57b2d3aa90ba&v=4"
+      },
+      "assignees": {
+       "nodes": [
+        {
+         "login": "maxdexh",
+         "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+        }
+       ]
+      },
+      "labels": {
+       "nodes": [
+        {
+         "name": "T-libs",
+         "color": "bfd4f2"
+        },
+        {
+         "name": "O-motor-os",
+         "color": "6e6ec0"
+        }
+       ]
+      },
+      "comments": {
+       "totalCount": 4
+      },
+      "milestone": null
+     },
+     {
+      "id": "I_kwDOAAsO6M8AAAABUbIVhA",
+      "number": 163614,
+      "title": "Regression in Rust 1.99 when compiling for uefi target",
+      "url": "https://github.com/rust-lang/rust/issues/163614",
+      "state": "OPEN",
+      "stateReason": null,
+      "createdAt": "2026-10-01T16:30:16Z",
+      "updatedAt": "2026-10-01T16:37:44Z",
+      "author": {
+       "login": "mathisbot",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/134849385?v=4"
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "labels": {
+       "nodes": [
+        {
+         "name": "regression-from-stable-to-stable",
+         "color": "e4008a"
+        },
+        {
+         "name": "C-bug",
+         "color": "f5f1fd"
+        },
+        {
+         "name": "I-prioritize",
+         "color": "e10c02"
+        },
+        {
+         "name": "needs-triage",
+         "color": "f28907"
+        }
+       ]
+      },
+      "comments": {
+       "totalCount": 0
+      },
+      "milestone": null
+     },
+     {
+      "id": "I_kwDOAAsO6M8AAAABMBOC2Q",
+      "number": 160793,
+      "title": "Inappropriate `panic!`s in `Thread::new` on certain unix platforms",
+      "url": "https://github.com/rust-lang/rust/issues/160793",
+      "state": "OPEN",
+      "stateReason": null,
+      "createdAt": "2026-08-09T08:11:23Z",
+      "updatedAt": "2026-10-01T16:21:50Z",
+      "author": {
+       "login": "maxdexh",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "labels": {
+       "nodes": [
+        {
+         "name": "P-high",
+         "color": "eb6420"
+        },
+        {
+         "name": "I-unsound",
+         "color": "e11d21"
+        },
+        {
+         "name": "C-bug",
+         "color": "f5f1fd"
+        },
+        {
+         "name": "T-libs",
+         "color": "bfd4f2"
+        },
+        {
+         "name": "O-unix",
+         "color": "6e6ec0"
+        },
+        {
+         "name": "A-thread",
+         "color": "f7e101"
+        },
+        {
+         "name": "I-memleak",
+         "color": "e10c02"
+        },
+        {
+         "name": "A-global-allocator-reentry",
+         "color": "f7e101"
+        }
+       ]
+      },
+      "comments": {
+       "totalCount": 7
+      },
+      "milestone": null
+     },
+     {
+      "id": "I_kwDOAAsO6M8AAAABMBbgHg",
+      "number": 160794,
+      "title": "`thread::current` may indirectly call `Arc::new_uninit_in(System)` which may call an untrusted alloc error hook",
+      "url": "https://github.com/rust-lang/rust/issues/160794",
+      "state": "OPEN",
+      "stateReason": null,
+      "createdAt": "2026-08-09T09:12:57Z",
+      "updatedAt": "2026-10-01T16:21:23Z",
+      "author": {
+       "login": "maxdexh",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "labels": {
+       "nodes": [
+        {
+         "name": "A-allocators",
+         "color": "f7e101"
+        },
+        {
+         "name": "I-unsound",
+         "color": "e11d21"
+        },
+        {
+         "name": "C-bug",
+         "color": "f5f1fd"
+        },
+        {
+         "name": "requires-nightly",
+         "color": "76dcde"
+        },
+        {
+         "name": "T-libs",
+         "color": "bfd4f2"
+        },
+        {
+         "name": "A-thread",
+         "color": "f7e101"
+        },
+        {
+         "name": "A-global-allocator-reentry",
+         "color": "f7e101"
+        }
+       ]
+      },
+      "comments": {
+       "totalCount": 2
+      },
+      "milestone": null
+     },
+     {
+      "id": "I_kwDOAAsO6M8AAAABMIBxqQ",
+      "number": 160837,
+      "title": "More global allocator reentrancy issues in `park` and `unpark`",
+      "url": "https://github.com/rust-lang/rust/issues/160837",
+      "state": "OPEN",
+      "stateReason": null,
+      "createdAt": "2026-08-10T09:33:54Z",
+      "updatedAt": "2026-10-01T16:20:33Z",
+      "author": {
+       "login": "maxdexh",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+      },
+      "assignees": {
+       "nodes": []
+      },
+      "labels": {
+       "nodes": [
+        {
+         "name": "P-high",
+         "color": "eb6420"
+        },
+        {
+         "name": "I-unsound",
+         "color": "e11d21"
+        },
+        {
+         "name": "C-bug",
+         "color": "f5f1fd"
+        },
+        {
+         "name": "T-libs",
+         "color": "bfd4f2"
+        },
+        {
+         "name": "A-thread",
+         "color": "f7e101"
+        },
+        {
+         "name": "A-global-allocator-reentry",
+         "color": "f7e101"
+        }
+       ]
+      },
+      "comments": {
+       "totalCount": 5
+      },
+      "milestone": null
+     }
+    ]
+   }
+  }
+ }
+}

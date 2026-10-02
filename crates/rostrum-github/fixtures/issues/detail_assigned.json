@@ -1,0 +1,163 @@
+{
+ "data": {
+  "rateLimit": {
+   "cost": 1,
+   "remaining": 4981,
+   "resetAt": "2026-10-01T17:22:01Z"
+  },
+  "repository": {
+   "issue": {
+    "id": "I_kwDOAAsO6M8AAAABUSAZ4A",
+    "number": 163577,
+    "title": "Compile error for `x86_64-unknown-motor` target",
+    "url": "https://github.com/rust-lang/rust/issues/163577",
+    "state": "OPEN",
+    "stateReason": null,
+    "body": "rustc 1.101.0-nightly (21b707e3f 2026-09-30)\nbuild with `-Zbuild-std`\ntarget: `x86_64-unknown-motor`\n```\nerror[: unresolved imports `super::motor::SplitPathsRef`, `super::motor::split_paths_ref`\n   ╭▸ /rustc/21b707e3f97e0b522ebd2f277a862339625ad83f/library/std/src/sys/paths/mod.rs:20:45\n   │\n20 │                 JoinPathsError, SplitPaths, SplitPathsRef, chdir, current_exe, getcwd, home_dir,\n   │                                             ━━━━━━━━━━━━━ no `SplitPathsRef` in `sys::paths::motor`\n21 │                 join_paths, split_paths, split_paths_ref, temp_dir,\n   │                                          ━━━━━━━━━━━━━━━ no `split_paths_ref` in `sys::paths::motor`\n   │\n   ╰ help: consider importing one of these structs instead:\n           crate::env::SplitPathsRef\n           crate::sys::paths::unsupported::SplitPathsRef\nhelp: a similar name exists in the module\n   ╭╴\n20 -                 JoinPathsError, SplitPaths, SplitPathsRef, chdir, current_exe, getcwd, home_dir,\n20 +                 JoinPathsError, SplitPaths, SplitPaths, chdir, current_exe, getcwd, home_dir,\n   ╰╴\nhelp: a similar name exists in the module\n   ╭╴\n21 -                 join_paths, split_paths, split_paths_ref, temp_dir,\n21 +                 join_paths, split_paths, split_paths, temp_dir,\n   ╰╴\n\nFor more information about this error, try `rustc --explain E0432`.\nerror: could not compile `std` (lib) due to 1 previous error\n\n```\n\n<!-- TRIAGEBOT_START -->\n\n<!-- TRIAGEBOT_ASSIGN_START -->\n\n<!-- TRIAGEBOT_ASSIGN_END -->\n<!-- TRIAGEBOT_END -->",
+    "createdAt": "2026-10-01T02:41:00Z",
+    "updatedAt": "2026-10-01T16:41:04Z",
+    "author": {
+     "login": "Wyvern",
+     "avatarUrl": "https://avatars.githubusercontent.com/u/32942?u=cb0326f1079f06e26dc8e5f1953d57b2d3aa90ba&v=4"
+    },
+    "assignees": {
+     "nodes": [
+      {
+       "login": "maxdexh",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+      }
+     ]
+    },
+    "labels": {
+     "nodes": [
+      {
+       "name": "T-libs",
+       "color": "bfd4f2"
+      },
+      {
+       "name": "O-motor-os",
+       "color": "6e6ec0"
+      }
+     ]
+    },
+    "milestone": null,
+    "comments": {
+     "totalCount": 4,
+     "nodes": [
+      {
+       "id": "IC_kwDOAAsO6M8AAAABYVFEUQ",
+       "body": "the breakage is fresh: https://does-it-build.noratrieb.dev/target?target=x86_64-unknown-motor\n\n@lasiotus",
+       "createdAt": "2026-10-01T08:27:39Z",
+       "author": {
+        "login": "Noratrieb",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/48135649?u=f47185e959d8ac7ec628af62c40ed782e9d6485b&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABYWvzbg",
+       "body": "@rustbot claim",
+       "createdAt": "2026-10-01T10:22:06Z",
+       "author": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABYc-WRg",
+       "body": "> the breakage is fresh: https://does-it-build.noratrieb.dev/target?target=x86_64-unknown-motor\n> \n> [@lasiotus](https://github.com/lasiotus)\n\nNora - thank for tagging me! @maxdexh seems to be on top of this - thanks, Max!\n\nI guess someone changed stdlib to require SplitPathsRef without making sure all targets build successfully...",
+       "createdAt": "2026-10-01T16:38:38Z",
+       "author": {
+        "login": "lasiotus",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/114310923?u=047b20b33c15151fe5b691c57c57826da788d3c0&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABYdA-SQ",
+       "body": "We don't have a good way to check all t3 targets /shrug",
+       "createdAt": "2026-10-01T16:41:04Z",
+       "author": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       }
+      }
+     ]
+    },
+    "timelineItems": {
+     "nodes": [
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-10-01T02:41:03Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "label": {
+        "name": "needs-triage"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-10-01T07:02:28Z",
+       "actor": {
+        "login": "bjorn3",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/17426603?u=49b540d49bf921da2b125c78105148ec66f40e75&v=4"
+       },
+       "label": {
+        "name": "O-motor-os"
+       }
+      },
+      {
+       "__typename": "UnlabeledEvent",
+       "createdAt": "2026-10-01T08:27:57Z",
+       "actor": {
+        "login": "Noratrieb",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/48135649?u=f47185e959d8ac7ec628af62c40ed782e9d6485b&v=4"
+       },
+       "label": {
+        "name": "needs-triage"
+       }
+      },
+      {
+       "__typename": "LabeledEvent",
+       "createdAt": "2026-10-01T08:27:57Z",
+       "actor": {
+        "login": "Noratrieb",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/48135649?u=f47185e959d8ac7ec628af62c40ed782e9d6485b&v=4"
+       },
+       "label": {
+        "name": "T-libs"
+       }
+      },
+      {
+       "__typename": "AssignedEvent",
+       "createdAt": "2026-10-01T10:22:10Z",
+       "actor": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       },
+       "assignee": {
+        "login": "maxdexh"
+       }
+      },
+      {
+       "__typename": "CrossReferencedEvent",
+       "createdAt": "2026-10-01T10:46:52Z",
+       "actor": {
+        "login": "maxdexh",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/211709136?u=a1050f7c5ead9104c24216794532b993b0e17c09&v=4"
+       },
+       "source": {
+        "__typename": "PullRequest",
+        "number": 163597,
+        "title": "Add `SplitPathsRef` implementation for motor to make std build",
+        "repository": {
+         "nameWithOwner": "rust-lang/rust"
+        }
+       }
+      }
+     ]
+    }
+   }
+  }
+ }
+}
