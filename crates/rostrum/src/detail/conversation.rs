@@ -41,6 +41,15 @@ pub fn render(detail: &PrDetail, cx: &Context<PrDetail>) -> AnyElement {
         .child(
             v_flex()
                 .gap_3()
+                .when_some(
+                    load_earlier_button(conversation, detail.earlier_loading),
+                    |el, button| {
+                        el.child(
+                            button
+                                .on_click(PrDetail::on_click(cx, |this, cx| this.load_earlier(cx))),
+                        )
+                    },
+                )
                 .children(conversation.items.iter().enumerate().map(|(ix, item)| {
                     render_item(detail, conversation, item, ix, &owner, &repo, &theme, cx)
                 })),
@@ -380,6 +389,24 @@ fn review_state_chip(state: ReviewState, theme: &Theme) -> (&'static str, gpui::
         ReviewState::Dismissed => ("dismissed", theme.text_subtle),
         ReviewState::Pending => ("pending", theme.warning),
     }
+}
+
+/// "Load earlier (N more)" at the top of a timeline with older entries, or
+/// nothing when every page is held. The caller attaches the click.
+pub(crate) fn load_earlier_button(conversation: &Conversation, loading: bool) -> Option<Button> {
+    if !conversation.has_earlier() {
+        return None;
+    }
+    let label = if loading {
+        "Loading earlier…".to_string()
+    } else {
+        format!("Load earlier ({} more)", conversation.earlier_remaining())
+    };
+    Some(
+        Button::new("load-earlier", label)
+            .disabled(loading)
+            .tooltip("Fetch the previous page of comments, reviews and events"),
+    )
 }
 
 pub(crate) fn centered(message: impl Into<String>, color: gpui::Hsla) -> impl IntoElement {

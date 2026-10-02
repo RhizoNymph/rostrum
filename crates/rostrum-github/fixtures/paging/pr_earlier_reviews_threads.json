@@ -1,0 +1,271 @@
+{
+ "data": {
+  "rateLimit": {
+   "cost": 1,
+   "remaining": 4993,
+   "resetAt": "2026-10-01T20:04:20Z"
+  },
+  "repository": {
+   "pullRequest": {
+    "state": "OPEN",
+    "body": "<!-- homu-ignore:start -->\r\n*[View all comments](https://triagebot.infra.rust-lang.org/gh-comments/rust-lang/rust/pull/162858)*\r\n<!-- homu-ignore:end -->\r\n\r\nOption 3 as proposed by @RalfJung here: https://github.com/rust-lang/rust/pull/162478#issuecomment-5588419578\r\n\r\nThis adds the following types to `VaArgSafe`:\r\n\r\n* Reference equivalents to the same pointers (it's still unsafe to get `next_arg`)\r\n* `NonNull<T>` (for similar reasons)\r\n* `Option<NonNull<T>>` (since it's ABI-compatible)\r\n* `NonZero<T>` (since it's ABI-compatible)\r\n* `Option<NonZero<T>>` (since it's ABI-compatible)\r\n\r\nAdditionally, as part of implementing this in the compiler, `NonZero` is promoted from a diagnostic item to a lang item. I'm under the impression this is fine since we're already doing a lang FCP (and none of the lang folks have chimed in yet) but it's worth mentioning.\r\n\r\nAlso have a Zulip thread for the compiler impl: [#t-compiler/help > &#96;VaArgSafe&#96; change + random &#96;Ty&#96; questions @ 💬](https://rust-lang.zulipchat.com/#narrow/channel/182449-t-compiler.2Fhelp/topic/.60VaArgSafe.60.20change.20.2B.20random.20.60Ty.60.20questions/near/625226562)",
+    "createdAt": "2026-09-16T17:09:27Z",
+    "author": {
+     "login": "clarfonthey",
+     "avatarUrl": "https://avatars.githubusercontent.com/u/15850505?u=064c10efd2d57ae0bb9d53c6d97ea0a8e550c2a6&v=4"
+    },
+    "reviews": {
+     "totalCount": 42,
+     "pageInfo": {
+      "startCursor": "Y3Vyc29yOnYyOpO0MjAyNi0wOS0yMFQyMDoyNjoxM1q0MjAyNi0wOS0yMFQyMDoyMjo1MFrPAAAAATmeUg0=",
+      "hasPreviousPage": true
+     },
+     "nodes": [
+      {
+       "id": "PRR_kwDOAAsO6M8AAAABOZ5SDQ",
+       "body": "",
+       "state": "COMMENTED",
+       "createdAt": "2026-09-20T20:22:50Z",
+       "author": {
+        "login": "Mark-Simulacrum",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/5047365?v=4"
+       }
+      },
+      {
+       "id": "PRR_kwDOAAsO6M8AAAABOc_awA",
+       "body": "",
+       "state": "COMMENTED",
+       "createdAt": "2026-09-21T09:17:17Z",
+       "author": {
+        "login": "Darksonn",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/928074?u=34b16e2e7d89c10be8992a845915ab8af13f5570&v=4"
+       }
+      },
+      {
+       "id": "PRR_kwDOAAsO6M8AAAABQML_AQ",
+       "body": "",
+       "state": "COMMENTED",
+       "createdAt": "2026-10-01T15:23:32Z",
+       "author": {
+        "login": "clarfonthey",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/15850505?u=064c10efd2d57ae0bb9d53c6d97ea0a8e550c2a6&v=4"
+       }
+      }
+     ]
+    },
+    "reviewThreads": {
+     "totalCount": 22,
+     "pageInfo": {
+      "startCursor": "Y3Vyc29yOnYyOpK0MjAyNi0wOS0yMFQxNjo1MDo1MVrOpCnjwA==",
+      "hasPreviousPage": true
+     },
+     "nodes": [
+      {
+       "id": "PRRT_kwDOAAsO6M6kKePA",
+       "path": "compiler/rustc_const_eval/src/interpret/intrinsics.rs",
+       "line": 1031,
+       "originalLine": 1031,
+       "diffSide": "RIGHT",
+       "isResolved": false,
+       "isOutdated": false,
+       "comments": {
+        "nodes": [
+         {
+          "id": "PRRC_kwDOAAsO6M7x2CEk",
+          "databaseId": 4057473316,
+          "body": "```suggestion\n                    // `usize` or `isize`, which have the same ABI as their same-layout counterparts.\n```",
+          "createdAt": "2026-09-20T16:50:51Z",
+          "author": {
+           "login": "RalfJung",
+           "avatarUrl": "https://avatars.githubusercontent.com/u/330628?u=562ead6e5c8da9a02015f73a9aefdb6c82d4e2cf&v=4"
+          },
+          "pullRequestReview": {
+           "id": "PRR_kwDOAAsO6M8AAAABOZYi1g"
+          }
+         }
+        ]
+       }
+      },
+      {
+       "id": "PRRT_kwDOAAsO6M6kKeRl",
+       "path": "compiler/rustc_const_eval/src/interpret/intrinsics.rs",
+       "line": 1035,
+       "originalLine": 1035,
+       "diffSide": "RIGHT",
+       "isResolved": false,
+       "isOutdated": false,
+       "comments": {
+        "nodes": [
+         {
+          "id": "PRRC_kwDOAAsO6M7x2CIM",
+          "databaseId": 4057473548,
+          "body": "```suggestion\n                    // the sign but not the size of the integer type, which is fine.\n```",
+          "createdAt": "2026-09-20T16:50:57Z",
+          "author": {
+           "login": "RalfJung",
+           "avatarUrl": "https://avatars.githubusercontent.com/u/330628?u=562ead6e5c8da9a02015f73a9aefdb6c82d4e2cf&v=4"
+          },
+          "pullRequestReview": {
+           "id": "PRR_kwDOAAsO6M8AAAABOZYi1g"
+          }
+         }
+        ]
+       }
+      },
+      {
+       "id": "PRRT_kwDOAAsO6M6kKeeS",
+       "path": "compiler/rustc_const_eval/src/interpret/intrinsics.rs",
+       "line": 941,
+       "originalLine": 941,
+       "diffSide": "LEFT",
+       "isResolved": false,
+       "isOutdated": false,
+       "comments": {
+        "nodes": [
+         {
+          "id": "PRRC_kwDOAAsO6M7x2CYj",
+          "databaseId": 4057474595,
+          "body": "The fallback arm still exists, you just reordered it wrt the comment?",
+          "createdAt": "2026-09-20T16:51:19Z",
+          "author": {
+           "login": "RalfJung",
+           "avatarUrl": "https://avatars.githubusercontent.com/u/330628?u=562ead6e5c8da9a02015f73a9aefdb6c82d4e2cf&v=4"
+          },
+          "pullRequestReview": {
+           "id": "PRR_kwDOAAsO6M8AAAABOZYi1g"
+          }
+         },
+         {
+          "id": "PRRC_kwDOAAsO6M7x2HdA",
+          "databaseId": 4057495360,
+          "body": "Yeah, fair. I guess that my thought process was that the branch was covering more before, but, not really.",
+          "createdAt": "2026-09-20T17:00:33Z",
+          "author": {
+           "login": "clarfonthey",
+           "avatarUrl": "https://avatars.githubusercontent.com/u/15850505?u=064c10efd2d57ae0bb9d53c6d97ea0a8e550c2a6&v=4"
+          },
+          "pullRequestReview": {
+           "id": "PRR_kwDOAAsO6M8AAAABOZafmw"
+          }
+         }
+        ]
+       }
+      }
+     ]
+    },
+    "commits": {
+     "nodes": [
+      {
+       "commit": {
+        "statusCheckRollup": {
+         "contexts": {
+          "nodes": [
+           {
+            "__typename": "CheckRun",
+            "name": "Calculate job matrix",
+            "conclusion": "SUCCESS",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441649391"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "Run zizmor",
+            "conclusion": "SUCCESS",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727392/job/110441649777"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-aarch64-gnu-llvm-21-1",
+            "conclusion": "FAILURE",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441952934"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-aarch64-gnu-llvm-21-2",
+            "conclusion": "CANCELLED",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441953703"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-pr-check-1",
+            "conclusion": "CANCELLED",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441953214"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-pr-check-2",
+            "conclusion": "CANCELLED",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441953070"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-tidy",
+            "conclusion": "SUCCESS",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441953024"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-x86_64-gnu-gcc",
+            "conclusion": "CANCELLED",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441953146"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-x86_64-gnu-gcc-core-tests",
+            "conclusion": "SUCCESS",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441953306"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-x86_64-gnu-llvm-21",
+            "conclusion": "CANCELLED",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441953134"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-x86_64-gnu-miri",
+            "conclusion": "CANCELLED",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441953213"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-x86_64-gnu-next-trait-solver-polonius",
+            "conclusion": "CANCELLED",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441953059"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-x86_64-gnu-tools",
+            "conclusion": "CANCELLED",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441953077"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "publish toolstate",
+            "conclusion": "SKIPPED",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110459908416"
+           }
+          ]
+         }
+        }
+       }
+      }
+     ]
+    }
+   }
+  }
+ }
+}

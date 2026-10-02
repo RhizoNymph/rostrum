@@ -146,6 +146,14 @@ Overview:
     patches. Patches are parsed into `DiffRow`s carrying old/new line numbers;
     those line numbers are what inline comments are anchored to when submitted.
 
+    Conversations (pull request and issue) are fetched newest page first; each
+    long connection carries a cursor and total in `Conversation.paging`, "Load
+    earlier" merges the previous page through `rostrum-core`'s pure
+    `merge_earlier`, a reload keeps loaded pages via `refreshed_by`, and the
+    merged set is what gets cached. Editing an issue's title and description
+    re-reads the issue before the REST PATCH and stops at a conflict when
+    someone else changed either since the editor opened.
+
     Opening a repository's view (`o`, or its header's name) switches the
     workspace's `Screen` to that repository without touching the feed entity,
     so the feed's scroll survives the round trip. A `RepoBranches` entity
@@ -488,11 +496,11 @@ Each phase leaves a usable application.
 
 ## Status
 
-All five phases are complete and verified against the live API. 1463 tests pass
+All five phases are complete and verified against the live API. 1497 tests pass
 (154 of them in `rostrum-ffi`); clippy is clean across the workspace.
 
-Issues are on the desktop: a tab beside pull requests, an issue pane, and
-issue creation; see `docs/features/issues.md`. The phone does not show them
+Issues are on the desktop: a tab beside pull requests, an issue pane with
+title and description editing, and issue creation; see `docs/features/issues.md`. The phone does not show them
 yet.
 
 The Android app's core, `rostrum-ffi`, exposes the same feed, detail, diff,
@@ -515,6 +523,10 @@ Deliberately not built:
   a plain merge. The Android core offers all three.
 - **Resolving review threads.** Threads render with their resolved state; there
   is no button to resolve one.
-- **Editing or deleting your own comments.**
-- **Pagination beyond the first 100** comments, reviews, or threads on a single
-  pull request.
+- **Editing or deleting your own comments.** (An issue's own title and
+  description can be edited.)
+- **Paging inside a review thread.** A thread's comments are capped at its
+  first 50; the threads themselves, and every other long connection of a pull
+  request or issue, are paged.
+- **Paging on the phone.** The Android core caches and decodes the paged
+  conversation, but offers no "load earlier" yet.

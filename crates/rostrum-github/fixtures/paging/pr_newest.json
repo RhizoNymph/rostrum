@@ -1,0 +1,372 @@
+{
+ "data": {
+  "rateLimit": {
+   "cost": 1,
+   "remaining": 4999,
+   "resetAt": "2026-10-01T20:08:39Z"
+  },
+  "repository": {
+   "pullRequest": {
+    "state": "OPEN",
+    "body": "<!-- homu-ignore:start -->\r\n*[View all comments](https://triagebot.infra.rust-lang.org/gh-comments/rust-lang/rust/pull/162858)*\r\n<!-- homu-ignore:end -->\r\n\r\nOption 3 as proposed by @RalfJung here: https://github.com/rust-lang/rust/pull/162478#issuecomment-5588419578\r\n\r\nThis adds the following types to `VaArgSafe`:\r\n\r\n* Reference equivalents to the same pointers (it's still unsafe to get `next_arg`)\r\n* `NonNull<T>` (for similar reasons)\r\n* `Option<NonNull<T>>` (since it's ABI-compatible)\r\n* `NonZero<T>` (since it's ABI-compatible)\r\n* `Option<NonZero<T>>` (since it's ABI-compatible)\r\n\r\nAdditionally, as part of implementing this in the compiler, `NonZero` is promoted from a diagnostic item to a lang item. I'm under the impression this is fine since we're already doing a lang FCP (and none of the lang folks have chimed in yet) but it's worth mentioning.\r\n\r\nAlso have a Zulip thread for the compiler impl: [#t-compiler/help > &#96;VaArgSafe&#96; change + random &#96;Ty&#96; questions @ 💬](https://rust-lang.zulipchat.com/#narrow/channel/182449-t-compiler.2Fhelp/topic/.60VaArgSafe.60.20change.20.2B.20random.20.60Ty.60.20questions/near/625226562)",
+    "createdAt": "2026-09-16T17:09:27Z",
+    "author": {
+     "login": "clarfonthey",
+     "avatarUrl": "https://avatars.githubusercontent.com/u/15850505?u=064c10efd2d57ae0bb9d53c6d97ea0a8e550c2a6&v=4"
+    },
+    "comments": {
+     "totalCount": 40,
+     "pageInfo": {
+      "startCursor": "Y3Vyc29yOnYyOpHPAAAAAWGxiFU=",
+      "hasPreviousPage": true
+     },
+     "nodes": [
+      {
+       "id": "IC_kwDOAAsO6M8AAAABYbGIVQ",
+       "body": "Took a bit to get back to it, but I've also managed to replicate the test failures on aarch64 locally via qemu, so, I will try and get those fixed up before the FCP is over.",
+       "createdAt": "2026-10-01T14:53:27Z",
+       "author": {
+        "login": "clarfonthey",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/15850505?u=064c10efd2d57ae0bb9d53c6d97ea0a8e550c2a6&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABYbnB2w",
+       "body": "This PR was rebased onto a different main commit. Here's a [range-diff](https://triagebot.infra.rust-lang.org/gh-range-diff/rust-lang/rust/fc7358c9223bbf6b30741438fc8588dad7e4671c..3f842a8a4afe64686e0a23634ad85e797d589f62/837b18aae097503892d7aab6c7ddce332a991a21..6bf1fd9acf3e1798d0999828a156aa92ac139944) highlighting what actually changed.\n\n*Rebasing is a normal part of keeping PRs up to date, so no action is needed—this note is just to help reviewers.*",
+       "createdAt": "2026-10-01T15:22:21Z",
+       "author": {
+        "login": "rustbot",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/47979223?u=8e3da52dfa4b8cfeb822acd82600ee339d4637bd&v=4"
+       }
+      },
+      {
+       "id": "IC_kwDOAAsO6M8AAAABYcdPCA",
+       "body": "\nThe job **`test-aarch64-gnu-llvm-21-1`** failed! Check out the build log: [(web)](https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441952934) [(plain enhanced)](https://triage.rust-lang.org/gha-logs/rust-lang/rust/110441952934) [(plain)](https://github.com/rust-lang/rust/commit/6bf1fd9acf3e1798d0999828a156aa92ac139944/checks/110441952934/logs)\n\n<details><summary><i>Click to see the possible cause of the failure (guessed by this bot)</i></summary>\n\n```plain\nfailures:\n\n---- [ui] tests/ui/c-variadic/roundtrip.rs stdout ----\n\nerror: test did not exit with success! code=None so test would pass with `run-crash`\nstatus: signal: 6 (SIGABRT) (core dumped)\ncommand: cd \"/checkout/obj/build/aarch64-unknown-linux-gnu/test/ui/c-variadic/roundtrip\" && RUSTC=\"/checkout/obj/build/aarch64-unknown-linux-gnu/stage2/bin/rustc\" RUST_TEST_THREADS=\"4\" \"/checkout/obj/build/aarch64-unknown-linux-gnu/test/ui/c-variadic/roundtrip/a\"\nstdout: none\n--- stderr -------------------------------\n\nthread 'main' (39982) panicked at /checkout/tests/ui/c-variadic/roundtrip.rs:46:5:\nassertion `left == right` failed\n  left: 4294967295\n right: 2863311530\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\nthread 'main' (39982) panicked at library/core/src/panicking.rs:225:5:\npanic in a function that cannot unwind\nstack backtrace:\n   0:     0xff7620d80a24 - <<std[59a3bdd7462de377]::sys::backtrace::BacktraceLock>::print::DisplayBacktrace as core[5c3e66e7637219eb]::fmt::Display>::fmt\n   1:     0xff7620dd2c40 - core[5c3e66e7637219eb]::fmt::write\n   2:     0xff7620d95394 - <std[59a3bdd7462de377]::sys::stdio::unix::Stderr as core[5c3e66e7637219eb]::io::write::Write>::write_fmt\n   3:     0xff7620d46e28 - std[59a3bdd7462de377]::panicking::default_hook::{closure#0}\n   4:     0xff7620d6ee60 - std[59a3bdd7462de377]::panicking::default_hook\n   5:     0xff7620d6f2cc - std[59a3bdd7462de377]::panicking::panic_with_hook\n   6:     0xff7620d46f24 - std[59a3bdd7462de377]::panicking::panic_handler::{closure#0}\n   7:     0xff7620d384dc - std[59a3bdd7462de377]::sys::backtrace::__rust_end_short_backtrace::<std[59a3bdd7462de377]::panicking::panic_handler::{closure#0}, !>\n   8:     0xff7620d48d0c - __rustc[8e996a3929f6d2a7]::rust_begin_unwind\n   9:     0xff7620d29090 - core[5c3e66e7637219eb]::panicking::panic_nounwind_fmt\n  10:     0xff7620d28fac - core[5c3e66e7637219eb]::panicking::panic_nounwind\n  11:     0xff7620d29170 - core[5c3e66e7637219eb]::panicking::panic_cannot_unwind\n  12:     0xab4b4d8a29d8 - roundtrip[2ae0f7d716a9c1b5]::non_const_variadic::<core[5c3e66e7637219eb]::option::Option<core[5c3e66e7637219eb]::num::nonzero::NonZero<i32>>>\n  13:     0xab4b4d8a33e4 - roundtrip[2ae0f7d716a9c1b5]::main\n  14:     0xab4b4d8a3350 - std[59a3bdd7462de377]::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>\n  15:     0xab4b4d8a3368 - std[59a3bdd7462de377]::rt::lang_start::<()>::{closure#0}\n  16:     0xff7620d6d344 - std[59a3bdd7462de377]::rt::lang_start_internal\n  17:     0xab4b4d8a5460 - main\n  18:     0xff7620af259c - <unknown>\n  19:     0xff7620af267c - __libc_start_main\n  20:     0xab4b4d8a24f0 - _start\n  21:                0x0 - <unknown>\nthread caused non-unwinding panic. aborting.\n---\n\n978    |\n979    = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`\n980 \n- error[E0080]: constructing invalid value of type [u8; 24]: at [8], encountered a pointer, but expected an integer\n+ error[E0080]: constructing invalid value of type [u8; 32]: at [0], encountered a pointer, but expected an integer\n982   --> $DIR/c-variadic-fail.rs:202:22\n983    |\n984 LL |             let ap = helper(1, 2, 3);\n\n\nThe actual stderr differed from the expected stderr\nTo update references, rerun the tests and pass the `--bless` flag\nTo only update this specific test, also pass `--test-args consts/const-eval/c-variadic-fail.rs`\n\nerror: 1 errors occurred comparing output.\nstatus: exit status: 1\ncommand: env -u RUSTC_LOG_COLOR RUSTC_ICE=\"0\" RUST_BACKTRACE=\"short\" \"/checkout/obj/build/aarch64-unknown-linux-gnu/stage2/bin/rustc\" \"/checkout/tests/ui/consts/const-eval/c-variadic-fail.rs\" \"-Zsimulate-remapped-rust-src-base=/rustc/FAKE_PREFIX\" \"-Ztranslate-remapped-path-to-local-path=no\" \"-Z\" \"ignore-directory-in-diagnostics-source-blocks=/cargo\" \"-Z\" \"ignore-directory-in-diagnostics-source-blocks=/checkout/vendor\" \"--sysroot\" \"/checkout/obj/build/aarch64-unknown-linux-gnu/stage2\" \"--target=aarch64-unknown-linux-gnu\" \"--check-cfg\" \"cfg(test,FALSE)\" \"--error-format\" \"json\" \"--json\" \"future-incompat\" \"-Ccodegen-units=1\" \"-Zui-testing\" \"-Zdeduplicate-diagnostics=no\" \"-Zwrite-long-types-to-disk=no\" \"-Cstrip=debuginfo\" \"-C\" \"prefer-dynamic\" \"--out-dir\" \"/checkout/obj/build/aarch64-unknown-linux-gnu/test/ui/consts/const-eval/c-variadic-fail\" \"-Znext-solver=coherence\" \"-A\" \"unused\" \"-W\" \"unused_attributes\" \"-A\" \"internal_features\" \"-A\" \"incomplete_features\" \"-A\" \"unused_parens\" \"-A\" \"unused_braces\" \"-Crpath\" \"-Cdebuginfo=0\" \"-Lnative=/checkout/obj/build/aarch64-unknown-linux-gnu/native/rust-test-helpers\" \"-Zextra-const-ub-checks\"\nstdout: none\n--- stderr -------------------------------\nerror[E0080]: more C-variadic arguments read than were passed\n##[error]  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:30:13\n   |\nLL |     const { read_n::<1>() }\n   |             ^^^^^^^^^^^^^ evaluation of `read_too_many::{constant#2}` failed inside this call\n   |\nnote: inside `read_n::<1>`\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:18:17\n   |\nLL |         let _ = ap.next_arg::<i32>();\n   |                 ^^^^^^^^^^^^^^^^^^^^\nnote: inside `VaList::<'_>::next_arg::<i32>`\n  --> /rustc/FAKE_PREFIX/library/core/src/ffi/va_list.rs:544:17\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:30:5\n   |\nLL |     const { read_n::<1>() }\n   |     ^^^^^^^^^^^^^^^^^^^^^^^\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:30:5\n   |\nLL |     const { read_n::<1>() }\n   |     ^^^^^^^^^^^^^^^^^^^^^^^\n   |\n   = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`\n\nerror[E0080]: more C-variadic arguments read than were passed\n##[error]  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:34:13\n   |\nLL |     const { read_n::<2>(1) }\n   |             ^^^^^^^^^^^^^^ evaluation of `read_too_many::{constant#3}` failed inside this call\n   |\nnote: inside `read_n::<2>`\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:18:17\n   |\nLL |         let _ = ap.next_arg::<i32>();\n   |                 ^^^^^^^^^^^^^^^^^^^^\nnote: inside `VaList::<'_>::next_arg::<i32>`\n  --> /rustc/FAKE_PREFIX/library/core/src/ffi/va_list.rs:544:17\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:34:5\n   |\nLL |     const { read_n::<2>(1) }\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:34:5\n   |\nLL |     const { read_n::<2>(1) }\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^\n   |\n   = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`\n\nerror[E0080]: va_arg value mismatch: value `-1_i32` cannot be represented by type `u32`\n##[error]  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:74:13\n   |\nLL |     const { read_as::<u32>(-1i32) };\n   |             ^^^^^^^^^^^^^^^^^^^^^ evaluation of `read_cast_numeric::{constant#12}` failed inside this call\n   |\nnote: inside `read_as::<u32>`\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:39:5\n   |\nLL |     ap.next_arg::<T>()\n   |     ^^^^^^^^^^^^^^^^^^\nnote: inside `VaList::<'_>::next_arg::<u32>`\n  --> /rustc/FAKE_PREFIX/library/core/src/ffi/va_list.rs:544:17\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:74:5\n   |\nLL |     const { read_as::<u32>(-1i32) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:74:5\n   |\nLL |     const { read_as::<u32>(-1i32) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n   |\n   = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`\n\nerror[E0080]: va_arg value mismatch: value `-2147483648_i32` cannot be represented by type `u32`\n##[error]  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:76:13\n   |\nLL |     const { read_as::<u32>(i32::MIN) };\n   |             ^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `read_cast_numeric::{constant#13}` failed inside this call\n   |\nnote: inside `read_as::<u32>`\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:39:5\n   |\nLL |     ap.next_arg::<T>()\n   |     ^^^^^^^^^^^^^^^^^^\nnote: inside `VaList::<'_>::next_arg::<u32>`\n  --> /rustc/FAKE_PREFIX/library/core/src/ffi/va_list.rs:544:17\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:76:5\n   |\nLL |     const { read_as::<u32>(i32::MIN) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:76:5\n   |\nLL |     const { read_as::<u32>(i32::MIN) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n   |\n   = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`\n\nerror[E0080]: va_arg value mismatch: value `4294967295_u32` cannot be represented by type `i32`\n##[error]  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:78:13\n   |\nLL |     const { read_as::<i32>(u32::MAX) };\n   |             ^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `read_cast_numeric::{constant#14}` failed inside this call\n   |\nnote: inside `read_as::<i32>`\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:39:5\n   |\nLL |     ap.next_arg::<T>()\n   |     ^^^^^^^^^^^^^^^^^^\nnote: inside `VaList::<'_>::next_arg::<i32>`\n  --> /rustc/FAKE_PREFIX/library/core/src/ffi/va_list.rs:544:17\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:78:5\n   |\nLL |     const { read_as::<i32>(u32::MAX) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:78:5\n   |\nLL |     const { read_as::<i32>(u32::MAX) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n   |\n   = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`\n\nerror[E0080]: va_arg value mismatch: value `2147483648_u32` cannot be represented by type `i32`\n##[error]  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:80:13\n   |\nLL |     const { read_as::<i32>(i32::MAX as u32 + 1) };\n   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `read_cast_numeric::{constant#15}` failed inside this call\n   |\nnote: inside `read_as::<i32>`\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:39:5\n   |\nLL |     ap.next_arg::<T>()\n   |     ^^^^^^^^^^^^^^^^^^\nnote: inside `VaList::<'_>::next_arg::<i32>`\n  --> /rustc/FAKE_PREFIX/library/core/src/ffi/va_list.rs:544:17\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:80:5\n   |\nLL |     const { read_as::<i32>(i32::MAX as u32 + 1) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:80:5\n   |\nLL |     const { read_as::<i32>(i32::MAX as u32 + 1) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n   |\n   = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`\n\nerror[E0080]: va_arg value mismatch: value `18446744073709551615_u64` cannot be represented by type `i64`\n##[error]  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:82:13\n   |\nLL |     const { read_as::<i64>(u64::MAX) };\n   |             ^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `read_cast_numeric::{constant#16}` failed inside this call\n   |\nnote: inside `read_as::<i64>`\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:39:5\n   |\nLL |     ap.next_arg::<T>()\n   |     ^^^^^^^^^^^^^^^^^^\nnote: inside `VaList::<'_>::next_arg::<i64>`\n  --> /rustc/FAKE_PREFIX/library/core/src/ffi/va_list.rs:544:17\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:82:5\n   |\nLL |     const { read_as::<i64>(u64::MAX) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:82:5\n   |\nLL |     const { read_as::<i64>(u64::MAX) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n   |\n   = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`\n\nerror[E0080]: va_arg value mismatch: value `9223372036854775808_u64` cannot be represented by type `i64`\n##[error]  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:84:13\n   |\nLL |     const { read_as::<i64>(i64::MAX as u64 + 1) };\n   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `read_cast_numeric::{constant#17}` failed inside this call\n   |\nnote: inside `read_as::<i64>`\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:39:5\n   |\nLL |     ap.next_arg::<T>()\n   |     ^^^^^^^^^^^^^^^^^^\nnote: inside `VaList::<'_>::next_arg::<i64>`\n  --> /rustc/FAKE_PREFIX/library/core/src/ffi/va_list.rs:544:17\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:84:5\n   |\nLL |     const { read_as::<i64>(i64::MAX as u64 + 1) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:84:5\n   |\nLL |     const { read_as::<i64>(i64::MAX as u64 + 1) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n   |\n   = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`\n\nerror[E0080]: va_arg type mismatch: requested `i32` is incompatible with next argument of type `u64`\n##[error]  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:87:13\n   |\nLL |     const { read_as::<i32>(1u64) };\n   |             ^^^^^^^^^^^^^^^^^^^^ evaluation of `read_cast_numeric::{constant#18}` failed inside this call\n   |\nnote: inside `read_as::<i32>`\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:39:5\n   |\nLL |     ap.next_arg::<T>()\n   |     ^^^^^^^^^^^^^^^^^^\nnote: inside `VaList::<'_>::next_arg::<i32>`\n  --> /rustc/FAKE_PREFIX/library/core/src/ffi/va_list.rs:544:17\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:87:5\n   |\nLL |     const { read_as::<i32>(1u64) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:87:5\n   |\nLL |     const { read_as::<i32>(1u64) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n   |\n   = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`\n\nerror[E0080]: va_arg type mismatch: requested `f64` is incompatible with next argument of type `i32`\n##[error]  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:90:13\n   |\nLL |     const { read_as::<f64>(1i32) };\n   |             ^^^^^^^^^^^^^^^^^^^^ evaluation of `read_cast_numeric::{constant#19}` failed inside this call\n   |\nnote: inside `read_as::<f64>`\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:39:5\n   |\nLL |     ap.next_arg::<T>()\n   |     ^^^^^^^^^^^^^^^^^^\nnote: inside `VaList::<'_>::next_arg::<f64>`\n  --> /rustc/FAKE_PREFIX/library/core/src/ffi/va_list.rs:544:17\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:90:5\n   |\nLL |     const { read_as::<f64>(1i32) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:90:5\n   |\nLL |     const { read_as::<f64>(1i32) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n   |\n   = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`\n\nerror[E0080]: va_arg type mismatch: requested `*const u16` is incompatible with next argument of type `*const c_void`\n##[error]  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:113:13\n   |\nLL |     const { read_as::<*const u16>(ptr::dangling::<c_void>()) };\n   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `read_cast_pointer::{constant#12}` failed inside this call\n   |\nnote: inside `read_as::<*const u16>`\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:39:5\n   |\nLL |     ap.next_arg::<T>()\n   |     ^^^^^^^^^^^^^^^^^^\nnote: inside `VaList::<'_>::next_arg::<*const u16>`\n  --> /rustc/FAKE_PREFIX/library/core/src/ffi/va_list.rs:544:17\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:113:5\n   |\nLL |     const { read_as::<*const u16>(ptr::dangling::<c_void>()) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:113:5\n   |\nLL |     const { read_as::<*const u16>(ptr::dangling::<c_void>()) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n   |\n   = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`\n\nerror[E0080]: va_arg type mismatch: requested `*const c_void` is incompatible with next argument of type `*const u16`\n##[error]  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:115:13\n   |\nLL |     const { read_as::<*const c_void>(ptr::dangling::<u16>()) };\n   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `read_cast_pointer::{constant#13}` failed inside this call\n   |\nnote: inside `read_as::<*const c_void>`\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:39:5\n   |\nLL |     ap.next_arg::<T>()\n   |     ^^^^^^^^^^^^^^^^^^\nnote: inside `VaList::<'_>::next_arg::<*const c_void>`\n  --> /rustc/FAKE_PREFIX/library/core/src/ffi/va_list.rs:544:17\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:115:5\n   |\nLL |     const { read_as::<*const c_void>(ptr::dangling::<u16>()) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:115:5\n   |\nLL |     const { read_as::<*const c_void>(ptr::dangling::<u16>()) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n   |\n   = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`\n\nerror[E0080]: va_arg type mismatch: requested `*const u16` is incompatible with next argument of type `*const i32`\n##[error]  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:117:13\n   |\nLL |     const { read_as::<*const u16>(ptr::dangling::<i32>()) };\n   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `read_cast_pointer::{constant#14}` failed inside this call\n   |\nnote: inside `read_as::<*const u16>`\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:39:5\n   |\nLL |     ap.next_arg::<T>()\n   |     ^^^^^^^^^^^^^^^^^^\nnote: inside `VaList::<'_>::next_arg::<*const u16>`\n  --> /rustc/FAKE_PREFIX/library/core/src/ffi/va_list.rs:544:17\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:117:5\n   |\nLL |     const { read_as::<*const u16>(ptr::dangling::<i32>()) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:117:5\n   |\nLL |     const { read_as::<*const u16>(ptr::dangling::<i32>()) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n   |\n   = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`\n\nerror[E0080]: va_arg type mismatch: requested `*const u8` is incompatible with next argument of type `usize`\n##[error]  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:120:13\n   |\nLL |     const { read_as::<*const u8>(1usize) };\n   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `read_cast_pointer::{constant#15}` failed inside this call\n   |\nnote: inside `read_as::<*const u8>`\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:39:5\n   |\nLL |     ap.next_arg::<T>()\n   |     ^^^^^^^^^^^^^^^^^^\nnote: inside `VaList::<'_>::next_arg::<*const u8>`\n  --> /rustc/FAKE_PREFIX/library/core/src/ffi/va_list.rs:544:17\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:120:5\n   |\nLL |     const { read_as::<*const u8>(1usize) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:120:5\n   |\nLL |     const { read_as::<*const u8>(1usize) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n   |\n   = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`\n\nerror[E0080]: constructing invalid value of type NonNull<c_void>: at .pointer, encountered 0, but expected something greater or equal to 1\n##[error]  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:125:13\n   |\nLL |     const { read_as::<NonNull<c_void>>(ptr::null::<c_void>()) };\n   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `read_cast_null::{constant#0}` failed inside this call\n   |\nnote: inside `read_as::<NonNull<c_void>>`\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:39:5\n   |\nLL |     ap.next_arg::<T>()\n   |     ^^^^^^^^^^^^^^^^^^\nnote: inside `VaList::<'_>::next_arg::<NonNull<c_void>>`\n  --> /rustc/FAKE_PREFIX/library/core/src/ffi/va_list.rs:544:17\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:125:5\n   |\nLL |     const { read_as::<NonNull<c_void>>(ptr::null::<c_void>()) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:125:5\n   |\nLL |     const { read_as::<NonNull<c_void>>(ptr::null::<c_void>()) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n   |\n   = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`\n\nerror[E0080]: constructing invalid value of type NonNull<c_void>: at .pointer, encountered 0, but expected something greater or equal to 1\n##[error]  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:127:13\n   |\nLL |     const { read_as::<NonNull<c_void>>(ptr::null_mut::<c_void>()) };\n   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `read_cast_null::{constant#1}` failed inside this call\n   |\nnote: inside `read_as::<NonNull<c_void>>`\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:39:5\n   |\nLL |     ap.next_arg::<T>()\n   |     ^^^^^^^^^^^^^^^^^^\nnote: inside `VaList::<'_>::next_arg::<NonNull<c_void>>`\n  --> /rustc/FAKE_PREFIX/library/core/src/ffi/va_list.rs:544:17\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:127:5\n   |\nLL |     const { read_as::<NonNull<c_void>>(ptr::null_mut::<c_void>()) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:127:5\n   |\nLL |     const { read_as::<NonNull<c_void>>(ptr::null_mut::<c_void>()) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n   |\n   = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`\n\nerror[E0080]: constructing invalid value of type NonNull<c_void>: at .pointer, encountered 0, but expected something greater or equal to 1\n##[error]  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:129:13\n   |\nLL |     const { read_as::<NonNull<c_void>>(None::<NonNull<c_void>>) };\n   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `read_cast_null::{constant#2}` failed inside this call\n   |\nnote: inside `read_as::<NonNull<c_void>>`\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:39:5\n   |\nLL |     ap.next_arg::<T>()\n   |     ^^^^^^^^^^^^^^^^^^\nnote: inside `VaList::<'_>::next_arg::<NonNull<c_void>>`\n  --> /rustc/FAKE_PREFIX/library/core/src/ffi/va_list.rs:544:17\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:129:5\n   |\nLL |     const { read_as::<NonNull<c_void>>(None::<NonNull<c_void>>) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nnote: erroneous constant encountered\n  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:129:5\n   |\nLL |     const { read_as::<NonNull<c_void>>(None::<NonNull<c_void>>) };\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n   |\n   = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`\n\nerror[E0080]: constructing invalid value of type NonNull<c_void>: at .pointer, encountered 0, but expected something greater or equal to 1\n##[error]  --> /checkout/tests/ui/consts/const-eval/c-variadic-fail.rs:131:13\n   |\nLL |     const { read_as::<NonNull<c_void>>(None::<NonNull<c_void>>) };\n---\n\n---- [ui] tests/ui/consts/const-eval/c-variadic-fail.rs stdout end ----\n---- [ui] tests/ui/consts/const-eval/c-variadic.rs stdout ----\n\nerror: test did not exit with success! code=None so test would pass with `run-crash`\nstatus: signal: 11 (SIGSEGV) (core dumped)\ncommand: cd \"/checkout/obj/build/aarch64-unknown-linux-gnu/test/ui/consts/const-eval/c-variadic\" && RUSTC=\"/checkout/obj/build/aarch64-unknown-linux-gnu/stage2/bin/rustc\" RUST_TEST_THREADS=\"4\" \"/checkout/obj/build/aarch64-unknown-linux-gnu/test/ui/consts/const-eval/c-variadic/a\"\nstdout: none\nstderr: none\n\n---- [ui] tests/ui/consts/const-eval/c-variadic.rs stdout end ----\n\n```\n\n</details>\n",
+       "createdAt": "2026-10-01T16:08:01Z",
+       "author": {
+        "login": "rust-log-analyzer",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/68648060?u=5800488b3a43878989d2df5c0eead5c90ce18593&v=4"
+       }
+      }
+     ]
+    },
+    "reviews": {
+     "totalCount": 42,
+     "pageInfo": {
+      "startCursor": "Y3Vyc29yOnYyOpO0MjAyNi0xMC0wMVQxNTo0MTo1OFq0MjAyNi0xMC0wMVQxNTo0MTo1OFrPAAAAAUDHEKw=",
+      "hasPreviousPage": true
+     },
+     "nodes": [
+      {
+       "id": "PRR_kwDOAAsO6M8AAAABQMcQrA",
+       "body": "",
+       "state": "COMMENTED",
+       "createdAt": "2026-10-01T15:41:58Z",
+       "author": {
+        "login": "folkertdev",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/7949978?v=4"
+       }
+      },
+      {
+       "id": "PRR_kwDOAAsO6M8AAAABQMkQNA",
+       "body": "",
+       "state": "COMMENTED",
+       "createdAt": "2026-10-01T15:51:41Z",
+       "author": {
+        "login": "clarfonthey",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/15850505?u=064c10efd2d57ae0bb9d53c6d97ea0a8e550c2a6&v=4"
+       }
+      },
+      {
+       "id": "PRR_kwDOAAsO6M8AAAABQMoyhg",
+       "body": "",
+       "state": "COMMENTED",
+       "createdAt": "2026-10-01T15:56:50Z",
+       "author": {
+        "login": "folkertdev",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/7949978?v=4"
+       }
+      }
+     ]
+    },
+    "reviewThreads": {
+     "totalCount": 22,
+     "pageInfo": {
+      "startCursor": "Y3Vyc29yOnYyOpK0MjAyNi0wOS0yMFQyMDoyMjo1MFrOpC8gJw==",
+      "hasPreviousPage": true
+     },
+     "nodes": [
+      {
+       "id": "PRRT_kwDOAAsO6M6kLyAn",
+       "path": "library/core/src/ffi/va_list.rs",
+       "line": 284,
+       "originalLine": 284,
+       "diffSide": "RIGHT",
+       "isResolved": false,
+       "isOutdated": true,
+       "comments": {
+        "nodes": [
+         {
+          "id": "PRRC_kwDOAAsO6M7x4AD7",
+          "databaseId": 4057989371,
+          "body": "We should probably expand this with the new types we guarantee impls for.\n\n*[View changes since the review](https://triagebot.infra.rust-lang.org/gh-changes-since/rust-lang/rust/162858/12c4d3f34dcb4715784d2fa0e8443853e0592194..3f842a8a4afe64686e0a23634ad85e797d589f62)*",
+          "createdAt": "2026-09-20T20:22:50Z",
+          "author": {
+           "login": "Mark-Simulacrum",
+           "avatarUrl": "https://avatars.githubusercontent.com/u/5047365?v=4"
+          },
+          "pullRequestReview": {
+           "id": "PRR_kwDOAAsO6M8AAAABOZ5SDQ"
+          }
+         }
+        ]
+       }
+      },
+      {
+       "id": "PRRT_kwDOAAsO6M6kSyWc",
+       "path": "tests/ui/c-variadic/roundtrip.rs",
+       "line": 1,
+       "originalLine": 1,
+       "diffSide": "RIGHT",
+       "isResolved": false,
+       "isOutdated": false,
+       "comments": {
+        "nodes": [
+         {
+          "id": "PRRC_kwDOAAsO6M7yCcDf",
+          "databaseId": 4060725471,
+          "body": "Please add tests for the cases with breakage shared in https://github.com/rust-lang/rust/pull/162858#issuecomment-5708259199 and https://github.com/rust-lang/rust/pull/162858#issuecomment-5709308547.\n\n*[View changes since the review](https://triagebot.infra.rust-lang.org/gh-changes-since/rust-lang/rust/162858/12c4d3f34dcb4715784d2fa0e8443853e0592194..3f842a8a4afe64686e0a23634ad85e797d589f62)*",
+          "createdAt": "2026-09-21T09:17:17Z",
+          "author": {
+           "login": "Darksonn",
+           "avatarUrl": "https://avatars.githubusercontent.com/u/928074?u=34b16e2e7d89c10be8992a845915ab8af13f5570&v=4"
+          },
+          "pullRequestReview": {
+           "id": "PRR_kwDOAAsO6M8AAAABOc_awA"
+          }
+         }
+        ]
+       }
+      },
+      {
+       "id": "PRRT_kwDOAAsO6M6oAsPw",
+       "path": "tests/ui/c-variadic/roundtrip.rs",
+       "line": 46,
+       "originalLine": 46,
+       "diffSide": "RIGHT",
+       "isResolved": false,
+       "isOutdated": false,
+       "comments": {
+        "nodes": [
+         {
+          "id": "PRRC_kwDOAAsO6M73yY9_",
+          "databaseId": 4157181823,
+          "body": "This line is returning `0xFFFF_FFFFu32` instead of `0xAAAA_AAAAu32` and I genuinely have no idea. This isn't even the hard part of the code, and it works in const context, just not at runtime, so, definitely some ABI shenanigans.\n\n*[View changes since the review](https://triagebot.infra.rust-lang.org/gh-changes-since/rust-lang/rust/162858/837b18aae097503892d7aab6c7ddce332a991a21..6bf1fd9acf3e1798d0999828a156aa92ac139944)*",
+          "createdAt": "2026-10-01T15:23:32Z",
+          "author": {
+           "login": "clarfonthey",
+           "avatarUrl": "https://avatars.githubusercontent.com/u/15850505?u=064c10efd2d57ae0bb9d53c6d97ea0a8e550c2a6&v=4"
+          },
+          "pullRequestReview": {
+           "id": "PRR_kwDOAAsO6M8AAAABQML_AQ"
+          }
+         },
+         {
+          "id": "PRRC_kwDOAAsO6M73zLhG",
+          "databaseId": 4157388870,
+          "body": "For which input type? ",
+          "createdAt": "2026-10-01T15:41:58Z",
+          "author": {
+           "login": "folkertdev",
+           "avatarUrl": "https://avatars.githubusercontent.com/u/7949978?v=4"
+          },
+          "pullRequestReview": {
+           "id": "PRR_kwDOAAsO6M8AAAABQMcQrA"
+          }
+         },
+         {
+          "id": "PRRC_kwDOAAsO6M73zkml",
+          "databaseId": 4157491621,
+          "body": "On Zulip: [#t-compiler/help > &#96;VaArgSafe&#96; change + random &#96;Ty&#96; questions @ 💬](https://rust-lang.zulipchat.com/#narrow/channel/182449-t-compiler.2Fhelp/topic/.60VaArgSafe.60.20change.20.2B.20random.20.60Ty.60.20questions/near/628414056)\r\n\r\nThis is definitely the -1 for `NonZero<i32>`, but, the previous argument was *supposed* to be that type, and it's 0, which is definitely not right.",
+          "createdAt": "2026-10-01T15:51:41Z",
+          "author": {
+           "login": "clarfonthey",
+           "avatarUrl": "https://avatars.githubusercontent.com/u/15850505?u=064c10efd2d57ae0bb9d53c6d97ea0a8e550c2a6&v=4"
+          },
+          "pullRequestReview": {
+           "id": "PRR_kwDOAAsO6M8AAAABQMkQNA"
+          }
+         },
+         {
+          "id": "PRRC_kwDOAAsO6M73zzOf",
+          "databaseId": 4157551519,
+          "body": "On `x86_64` I hit this assert \r\n\r\nhttps://github.com/rust-lang/rust/blob/837b18aae097503892d7aab6c7ddce332a991a21/compiler/rustc_codegen_llvm/src/va_arg.rs#L779\r\n\r\nBecause of `std::option::Option<std::num::NonZero<i128>>`. It's fine to remove that assert really. But, there might be similar asserts on targets that we don't run CI for, so this'll need some validation.\r\n\r\nWith that assert removed the roundtrip test passes.\r\n\r\nI assume you're running on aarch64 where I get that same error, still looking into it",
+          "createdAt": "2026-10-01T15:56:50Z",
+          "author": {
+           "login": "folkertdev",
+           "avatarUrl": "https://avatars.githubusercontent.com/u/7949978?v=4"
+          },
+          "pullRequestReview": {
+           "id": "PRR_kwDOAAsO6M8AAAABQMoyhg"
+          }
+         }
+        ]
+       }
+      }
+     ]
+    },
+    "timelineItems": {
+     "totalCount": 124,
+     "pageInfo": {
+      "startCursor": "Y3Vyc29yOnYyOpPPAAABoPMSJgABqzMyMTgxMjQ3NzU4",
+      "hasPreviousPage": true
+     },
+     "nodes": [
+      {
+       "__typename": "UnlabeledEvent",
+       "createdAt": "2026-09-30T16:07:28Z",
+       "actor": {
+        "login": "traviscross",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/1076834?v=4"
+       },
+       "label": {
+        "name": "I-lang-nominated"
+       }
+      },
+      {
+       "__typename": "UnlabeledEvent",
+       "createdAt": "2026-09-30T16:07:38Z",
+       "actor": {
+        "login": "traviscross",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/1076834?v=4"
+       },
+       "label": {
+        "name": "P-lang-drag-1"
+       }
+      },
+      {
+       "__typename": "HeadRefForcePushedEvent",
+       "createdAt": "2026-10-01T15:22:16Z",
+       "actor": {
+        "login": "clarfonthey",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/15850505?u=064c10efd2d57ae0bb9d53c6d97ea0a8e550c2a6&v=4"
+       }
+      }
+     ]
+    },
+    "commits": {
+     "nodes": [
+      {
+       "commit": {
+        "statusCheckRollup": {
+         "contexts": {
+          "nodes": [
+           {
+            "__typename": "CheckRun",
+            "name": "Calculate job matrix",
+            "conclusion": "SUCCESS",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441649391"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "Run zizmor",
+            "conclusion": "SUCCESS",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727392/job/110441649777"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-aarch64-gnu-llvm-21-1",
+            "conclusion": "FAILURE",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441952934"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-aarch64-gnu-llvm-21-2",
+            "conclusion": "CANCELLED",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441953703"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-pr-check-1",
+            "conclusion": "CANCELLED",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441953214"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-pr-check-2",
+            "conclusion": "CANCELLED",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441953070"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-tidy",
+            "conclusion": "SUCCESS",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441953024"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-x86_64-gnu-gcc",
+            "conclusion": "CANCELLED",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441953146"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-x86_64-gnu-gcc-core-tests",
+            "conclusion": "SUCCESS",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441953306"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-x86_64-gnu-llvm-21",
+            "conclusion": "CANCELLED",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441953134"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-x86_64-gnu-miri",
+            "conclusion": "CANCELLED",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441953213"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-x86_64-gnu-next-trait-solver-polonius",
+            "conclusion": "CANCELLED",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441953059"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "PR - test-x86_64-gnu-tools",
+            "conclusion": "CANCELLED",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110441953077"
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "publish toolstate",
+            "conclusion": "SKIPPED",
+            "status": "COMPLETED",
+            "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/36883727301/job/110459908416"
+           }
+          ]
+         }
+        }
+       }
+      }
+     ]
+    }
+   }
+  }
+ }
+}

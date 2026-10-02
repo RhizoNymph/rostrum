@@ -100,6 +100,7 @@ fn conversation() -> Conversation {
                 body: "nit".into(),
                 created_at: at(1_700_000_300),
             }],
+            opening_review: None,
         }],
         checks: vec![CheckRun {
             name: "ci".into(),
@@ -107,6 +108,7 @@ fn conversation() -> Conversation {
             url: None,
         }],
         state: Some(PullState::Open),
+        paging: Default::default(),
     }
 }
 
@@ -898,4 +900,34 @@ async fn opening_beside_a_live_writer_waits_rather_than_failing() {
     }
     writing.await.expect("writer finished");
     writer.close().await;
+}
+
+/// A pull request conversation is cached with its paging, so "load earlier"
+/// survives a restart, and its threads keep their openers.
+#[tokio::test]
+async fn a_paged_conversation_round_trips_with_its_cursors() {
+    use rostrum_core::{Connection, PageCursor, PageState, PageUpdate, ReviewId};
+
+    let db = db().await;
+    let repo = repo("rostrum");
+    let mut paged = conversation();
+    paged.threads[0].opening_review = Some(ReviewId("R_1".into()));
+    paged.apply_page(&PageUpdate::default().with(
+        Connection::Threads,
+        PageState::Earlier {
+            before: PageCursor("t-cursor".into()),
+            total: 120,
+        },
+    ));
+    db.save_conversation(&repo, PrNumber(1), &paged)
+        .await
+        .expect("save");
+    let back = db
+        .load_conversation(&repo, PrNumber(1))
+        .await
+        .expect("load")
+        .expect("cached");
+    assert_eq!(back, paged);
+    assert!(back.has_earlier());
+    assert_eq!(back.threads[0].opening_review, Some(ReviewId("R_1".into())));
 }

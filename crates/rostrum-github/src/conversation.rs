@@ -5,8 +5,6 @@
 //! separately would cost six requests per pull request and still race, since the
 //! pieces reference each other by id.
 
-use std::collections::HashMap;
-
 use chrono::{DateTime, Utc};
 use rostrum_core::{
     CheckRun, CheckState, CloseReason, CommentId, Conversation, EventKind, PullState, ReviewId,
@@ -14,15 +12,26 @@ use rostrum_core::{
 };
 use serde::Deserialize;
 
-use crate::graphql::{AuthorNode, Connection, RateLimit};
+use rostrum_core::{Connection as Paging, PageUpdate};
+
+use crate::graphql::{AuthorNode, Connection, Paged, RateLimit};
 
 /// Everything the detail pane needs for one pull request.
 ///
 /// `timelineItems` is restricted to the event types the UI renders; without an
 /// `itemTypes` filter the connection also returns every comment and review,
 /// which would duplicate the dedicated connections above it.
+///
+/// The four long connections are read newest-first, `$pageSize` at a time.
+/// The same document fetches the newest page (every `$with…` true, every
+/// cursor null) and an earlier one (only the connections with a cursor
+/// included); see [`crate::graphql::page_variables`].
 pub const PULL_REQUEST_CONVERSATION: &str = r#"
-query($owner: String!, $name: String!, $number: Int!) {
+query($owner: String!, $name: String!, $number: Int!, $pageSize: Int!,
+      $withComments: Boolean!, $commentsBefore: String,
+      $withReviews: Boolean!, $reviewsBefore: String,
+      $withThreads: Boolean!, $threadsBefore: String,
+      $withEvents: Boolean!, $eventsBefore: String) {
   rateLimit { cost remaining resetAt }
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
@@ -30,13 +39,19 @@ query($owner: String!, $name: String!, $number: Int!) {
       body
       createdAt
       author { login avatarUrl }
-      comments(first: 100) {
+      comments(last: $pageSize, before: $commentsBefore) @include(if: $withComments) {
+        totalCount
+        pageInfo { startCursor hasPreviousPage }
         nodes { id body createdAt author { login avatarUrl } }
       }
-      reviews(first: 100) {
+      reviews(last: $pageSize, before: $reviewsBefore) @include(if: $withReviews) {
+        totalCount
+        pageInfo { startCursor hasPreviousPage }
         nodes { id body state createdAt author { login avatarUrl } }
       }
-      reviewThreads(first: 100) {
+      reviewThreads(last: $pageSize, before: $threadsBefore) @include(if: $withThreads) {
+        totalCount
+        pageInfo { startCursor hasPreviousPage }
         nodes {
           id
           path
@@ -57,7 +72,7 @@ query($owner: String!, $name: String!, $number: Int!) {
           }
         }
       }
-      timelineItems(first: 100, itemTypes: [
+      timelineItems(last: $pageSize, before: $eventsBefore, itemTypes: [
         MERGED_EVENT,
         CLOSED_EVENT,
         REOPENED_EVENT,
@@ -69,7 +84,9 @@ query($owner: String!, $name: String!, $number: Int!) {
         LABELED_EVENT,
         UNLABELED_EVENT,
         RENAMED_TITLE_EVENT
-      ]) {
+      ]) @include(if: $withEvents) {
+        totalCount
+        pageInfo { startCursor hasPreviousPage }
         nodes {
           __typename
           ... on MergedEvent { createdAt actor { login avatarUrl } }
@@ -123,6 +140,16 @@ query($owner: String!, $name: String!, $number: Int!) {
 }
 "#;
 
+/// The paged connections of [`PULL_REQUEST_CONVERSATION`] and the variable
+/// stem each is switched and positioned by (`$withComments`,
+/// `$commentsBefore`, …).
+pub const PULL_REQUEST_PAGES: [(Paging, &str); 4] = [
+    (Paging::Comments, "comments"),
+    (Paging::Reviews, "reviews"),
+    (Paging::Threads, "threads"),
+    (Paging::Events, "events"),
+];
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationQueryData {
@@ -152,10 +179,11 @@ pub struct ConversationNode {
     pub created_at: DateTime<Utc>,
     /// `null` for deleted accounts and some bot actors.
     pub author: Option<AuthorNode>,
-    pub comments: Option<Connection<IssueCommentNode>>,
-    pub reviews: Option<Connection<ReviewNode>>,
-    pub review_threads: Option<Connection<ReviewThreadNode>>,
-    pub timeline_items: Option<Connection<TimelineEventNode>>,
+    /// Each `None` when the document left the connection out.
+    pub comments: Option<Paged<IssueCommentNode>>,
+    pub reviews: Option<Paged<ReviewNode>>,
+    pub review_threads: Option<Paged<ReviewThreadNode>>,
+    pub timeline_items: Option<Paged<TimelineEventNode>>,
     pub commits: Option<Connection<RollupCommitEdge>>,
 }
 
@@ -477,66 +505,69 @@ impl ReviewThreadNode {
             is_resolved: self.is_resolved,
             is_outdated: self.is_outdated,
             comments,
+            opening_review: opening_review.clone().map(ReviewId),
         };
         (thread, opening_review)
     }
 }
 
 impl ConversationNode {
+    /// The newest page as a conversation, its paging recorded.
     pub fn into_domain(self) -> Conversation {
+        let (mut conversation, update) = self.into_page();
+        conversation.apply_page(&update);
+        conversation
+    }
+
+    /// One page: its entries, and what it says about each connection it
+    /// included. Used as is for an earlier page, which is merged into the
+    /// conversation already held.
+    pub fn into_page(self) -> (Conversation, PageUpdate) {
+        let mut update = PageUpdate::default();
         let mut items = vec![TimelineItem::Body {
             author: self.author.and_then(AuthorNode::into_user),
             body: self.body,
             created_at: self.created_at,
         }];
 
-        for comment in self.comments.map(Connection::into_vec).unwrap_or_default() {
-            items.push(TimelineItem::Comment {
+        if let Some(comments) = self.comments {
+            let (nodes, state) = comments.into_parts();
+            update = update.with(Paging::Comments, state);
+            items.extend(nodes.into_iter().map(|comment| TimelineItem::Comment {
                 id: CommentId(comment.id),
                 author: comment.author.and_then(AuthorNode::into_user),
                 body: comment.body,
                 created_at: comment.created_at,
-            });
+            }));
         }
 
-        // Threads are decoded before reviews so each review can be given the
-        // ids of the threads it opened.
         let mut threads = Vec::new();
-        let mut threads_by_review: HashMap<String, Vec<ThreadId>> = HashMap::new();
-        for node in self
-            .review_threads
-            .map(Connection::into_vec)
-            .unwrap_or_default()
-        {
-            let (thread, opening_review) = node.into_domain();
-            if let Some(review_id) = opening_review {
-                threads_by_review
-                    .entry(review_id)
-                    .or_default()
-                    .push(thread.id.clone());
-            }
-            threads.push(thread);
+        if let Some(review_threads) = self.review_threads {
+            let (nodes, state) = review_threads.into_parts();
+            update = update.with(Paging::Threads, state);
+            threads.extend(nodes.into_iter().map(|node| node.into_domain().0));
         }
 
-        for review in self.reviews.map(Connection::into_vec).unwrap_or_default() {
-            let thread_ids = threads_by_review.remove(&review.id).unwrap_or_default();
-            items.push(TimelineItem::Review {
+        if let Some(reviews) = self.reviews {
+            let (nodes, state) = reviews.into_parts();
+            update = update.with(Paging::Reviews, state);
+            items.extend(nodes.into_iter().map(|review| TimelineItem::Review {
                 id: ReviewId(review.id),
                 author: review.author.and_then(AuthorNode::into_user),
                 state: review.state,
                 body: review.body,
                 created_at: review.created_at,
-                thread_ids,
-            });
+                // Filled from the threads' openers below, which also links a
+                // review to threads that arrive on a different page.
+                thread_ids: Vec::new(),
+            }));
         }
 
-        items.extend(
-            self.timeline_items
-                .map(Connection::into_vec)
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(TimelineEventNode::into_domain),
-        );
+        if let Some(events) = self.timeline_items {
+            let (nodes, state) = events.into_parts();
+            update = update.with(Paging::Events, state);
+            items.extend(nodes.into_iter().filter_map(TimelineEventNode::into_domain));
+        }
 
         let checks = self
             .commits
@@ -557,9 +588,11 @@ impl ConversationNode {
             threads,
             checks,
             state: self.state,
+            ..Default::default()
         };
+        conversation.relink_threads();
         conversation.sort();
-        conversation
+        (conversation, update)
     }
 }
 
