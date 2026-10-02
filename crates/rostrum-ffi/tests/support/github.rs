@@ -103,6 +103,11 @@ pub struct World {
     /// the newest holds [`newest_comment`], the earlier one two older
     /// comments.
     pub paged: bool,
+    /// `octo/repo`'s head-commit check contexts per pull request, as the CI
+    /// query's `contexts.nodes`.
+    pub ci: Vec<(u32, Vec<Value>)>,
+    /// The answer to every re-run request; `None` is 201.
+    pub rerun: Option<(u16, String)>,
 }
 
 pub struct FakeGitHub {
@@ -209,6 +214,34 @@ fn graphql(world: &World, body: &Value) -> Value {
     let variables = &body["variables"];
     let viewer = json!({"login": world.viewer, "avatarUrl": null});
 
+    // The CI query: open pull requests with their check contexts. Matched
+    // before the feed query, which also lists open pull requests.
+    if query.contains("contexts(first") && query.contains("pullRequests(states: OPEN") {
+        if find(world, variables).is_none() {
+            return json!({"data": {"repository": null}});
+        }
+        let nodes: Vec<Value> = world
+            .ci
+            .iter()
+            .map(|(number, contexts)| {
+                json!({
+                    "number": number,
+                    "headRefOid": format!("sha{number}aaaaaaa"),
+                    "commits": {"nodes": [{"commit": {
+                        "oid": format!("sha{number}aaaaaaa"),
+                        "statusCheckRollup": {"state": "PENDING", "contexts": {
+                            "totalCount": contexts.len(),
+                            "nodes": contexts
+                        }}
+                    }}]}
+                })
+            })
+            .collect();
+        return json!({"data": {
+            "rateLimit": {"cost": 1, "remaining": 4999, "resetAt": "2030-01-01T00:00:00Z"},
+            "repository": {"pullRequests": {"nodes": nodes}}
+        }});
+    }
     if query.contains("issues(states: OPEN") {
         if find(world, variables).is_none() {
             return json!({
@@ -488,7 +521,40 @@ fn rest(world: &mut World, request: &Request) -> (u16, String) {
 }
 
 /// The Stacks API, assignees, and every issue REST call, for `octo/repo`.
+/// The CI fixtures `rostrum-github` decodes in its own tests.
+const JOB_LOG: &str =
+    include_str!("../../../rostrum-github/fixtures/ci/job_log_failed_excerpt.txt");
+const CHECK_RUN: &str =
+    include_str!("../../../rostrum-github/fixtures/ci/check_run_third_party.json");
+const ANNOTATIONS: &str =
+    include_str!("../../../rostrum-github/fixtures/ci/check_run_annotations.json");
+
+/// Job logs, check-run output and re-runs, for `octo/repo`.
+fn ci_rest(world: &World, method: &str, path: &str) -> Option<(u16, String)> {
+    let rest = path.strip_prefix("/repos/octo/repo/")?;
+    match method {
+        "GET" if rest.starts_with("actions/jobs/") && rest.ends_with("/logs") => {
+            Some((200, JOB_LOG.to_string()))
+        }
+        "GET" if rest.starts_with("check-runs/") && rest.ends_with("/annotations") => {
+            Some((200, ANNOTATIONS.to_string()))
+        }
+        "GET" if rest.starts_with("check-runs/") => Some((200, CHECK_RUN.to_string())),
+        "POST"
+            if rest.ends_with("/rerun")
+                || rest.ends_with("/rerun-failed-jobs")
+                || rest.ends_with("/rerequest") =>
+        {
+            Some(world.rerun.clone().unwrap_or((201, String::new())))
+        }
+        _ => None,
+    }
+}
+
 fn issue_rest(world: &mut World, method: &str, path: &str, body: &str) -> Option<(u16, String)> {
+    if let Some(answer) = ci_rest(world, method, path) {
+        return Some(answer);
+    }
     let ok = |value: Value| Some((200, value.to_string()));
     match (method, path) {
         ("GET", "/repos/octo/repo/stacks") => {

@@ -1,19 +1,82 @@
 //! Copying the paired desktop's config: which repositories to watch, how many
-//! pull requests to fetch, the feed's filter preferences, and the stash
-//! default. The refresh interval, the notification switches and the search
-//! query stay the phone's own.
+//! pull requests and issues to fetch, the feed's filter preferences and
+//! sorts, the trunks, and the stash default. The refresh interval, the
+//! notification switches and the search query stay the phone's own.
+//!
+//! The preview also carries the desktop's revision and both differences —
+//! what copying would change here, and what pushing this phone's settings
+//! would change there (`remote::push`) — computed with `rostrum_remote::diff`
+//! on the two sides' shareable settings.
 
 use std::collections::BTreeSet;
 
 use rostrum_config::Config;
-use rostrum_core::{FeedFilter, LoginKey, RepoId};
-use rostrum_remote::DesktopConfig;
+use rostrum_core::{FeedFilter, LoginKey, RepoId, branches::TrunkName};
+use rostrum_remote::{
+    ConfigChange as WireChange, ConfigField as WireField, DesktopConfig, RevisedConfig,
+    api::RepoTrunks, diff,
+};
 
 use crate::{
     engine::RostrumCore,
     error::RostrumError,
-    settings::{PRS_PER_REPO, Settings},
+    settings::{ISSUES_PER_REPO, PRS_PER_REPO, Settings},
 };
+
+/// One shareable setting, by its key in `config.json`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum ConfigField {
+    Repos,
+    PrsPerRepo,
+    IssuesPerRepo,
+    HideDrafts,
+    HideEmptyRepos,
+    Authors,
+    IncludeInvolved,
+    Autostash,
+    RepoSort,
+    ItemSort,
+    Trunks,
+}
+
+impl From<WireField> for ConfigField {
+    fn from(field: WireField) -> Self {
+        match field {
+            WireField::Repos => Self::Repos,
+            WireField::PrsPerRepo => Self::PrsPerRepo,
+            WireField::IssuesPerRepo => Self::IssuesPerRepo,
+            WireField::HideDrafts => Self::HideDrafts,
+            WireField::HideEmptyRepos => Self::HideEmptyRepos,
+            WireField::Authors => Self::Authors,
+            WireField::IncludeInvolved => Self::IncludeInvolved,
+            WireField::Autostash => Self::Autostash,
+            WireField::RepoSort => Self::RepoSort,
+            WireField::ItemSort => Self::ItemSort,
+            WireField::Trunks => Self::Trunks,
+        }
+    }
+}
+
+/// One setting that would change, both values written out.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ConfigChange {
+    pub field: ConfigField,
+    /// `Pull requests per repository`.
+    pub label: String,
+    pub before: String,
+    pub after: String,
+}
+
+impl From<WireChange> for ConfigChange {
+    fn from(change: WireChange) -> Self {
+        Self {
+            field: change.field.into(),
+            label: change.field.label().to_string(),
+            before: change.before,
+            after: change.after,
+        }
+    }
+}
 
 /// What copying the desktop's config would do, shown before doing it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -34,6 +97,20 @@ pub struct DesktopConfigPreview {
     pub autostash: bool,
     /// `false` when copying would change nothing.
     pub changes_anything: bool,
+    /// The desktop's revision of these settings: pass it to
+    /// `push_config_to_desktop` so a push refuses to overwrite a change made
+    /// since. Empty only in a preview built without one.
+    #[uniffi(default = "")]
+    pub revision: String,
+    /// `None` from a desktop that does not share it.
+    #[uniffi(default)]
+    pub issues_per_repo: Option<u32>,
+    /// What copying the desktop's settings would change on this phone.
+    #[uniffi(default)]
+    pub copy_changes: Vec<ConfigChange>,
+    /// What pushing this phone's settings would change on the desktop.
+    #[uniffi(default)]
+    pub push_changes: Vec<ConfigChange>,
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -42,10 +119,10 @@ impl RostrumCore {
     /// phone's settings.
     pub async fn desktop_config(&self) -> Result<DesktopConfigPreview, RostrumError> {
         let client = self.remote().await?;
-        let (machine, desktop) = tokio::join!(client.machine(), client.config());
+        let (machine, desktop) = tokio::join!(client.machine(), client.config_with_revision());
         let (machine, desktop) = (machine?, desktop?);
         self.actor
-            .call(move |state| preview(&machine.name, &desktop, &state.config))
+            .call(move |state| revised_preview(&machine.name, &desktop, &state.config))
             .await
     }
 
@@ -125,6 +202,93 @@ pub(crate) fn apply(config: &mut Config, desktop: &DesktopConfig) {
     config.authors = desktop_authors(desktop).into_iter().collect();
     config.include_involved = desktop.include_involved;
     config.autostash = desktop.autostash;
+    // A desktop too old to share these leaves the phone's alone.
+    if let Some(issues) = desktop.issues_per_repo {
+        config.issues_per_repo = issues.clamp(*ISSUES_PER_REPO.start(), *ISSUES_PER_REPO.end());
+    }
+    if let Some(sort) = desktop.repo_sort {
+        config.repo_sort = sort;
+    }
+    if let Some(sort) = desktop.item_sort {
+        config.item_sort = sort;
+    }
+    if let Some(trunks) = &desktop.trunks {
+        config.trunks = trunks
+            .iter()
+            .map(|entry| {
+                (
+                    entry.repo.to_string(),
+                    entry.trunks.iter().map(ToString::to_string).collect(),
+                )
+            })
+            .collect();
+    }
+}
+
+/// This phone's shareable settings in the protocol's shape, every optional
+/// field present: what a push sends, and the phone's side of both diffs.
+/// Entries that do not parse are left out, as the desktop leaves them out.
+pub(crate) fn shareable(config: &Config) -> DesktopConfig {
+    let (repos, _) = config.repo_ids();
+    DesktopConfig {
+        repos,
+        prs_per_repo: config
+            .prs_per_repo
+            .clamp(*PRS_PER_REPO.start(), *PRS_PER_REPO.end()),
+        hide_drafts: config.hide_drafts,
+        hide_empty_repos: config.hide_empty_repos,
+        authors: config
+            .authors
+            .iter()
+            .filter(|login| !login.is_empty())
+            .cloned()
+            .collect(),
+        include_involved: config.include_involved,
+        autostash: config.autostash,
+        issues_per_repo: Some(
+            config
+                .issues_per_repo
+                .clamp(*ISSUES_PER_REPO.start(), *ISSUES_PER_REPO.end()),
+        ),
+        repo_sort: Some(config.repo_sort),
+        item_sort: Some(config.item_sort),
+        trunks: Some(
+            config
+                .trunks
+                .iter()
+                .filter_map(|(repo, names)| {
+                    Some(RepoTrunks {
+                        repo: repo.parse().ok()?,
+                        trunks: names
+                            .iter()
+                            .filter_map(|name| TrunkName::parse(name).ok())
+                            .collect(),
+                    })
+                })
+                .collect(),
+        ),
+    }
+}
+
+/// [`preview`] of a revised config, with its revision and both differences.
+pub(crate) fn revised_preview(
+    machine: &str,
+    desktop: &RevisedConfig,
+    phone: &Config,
+) -> DesktopConfigPreview {
+    let mine = shareable(phone);
+    DesktopConfigPreview {
+        revision: desktop.revision.0.clone(),
+        copy_changes: diff(&mine, &desktop.config)
+            .into_iter()
+            .map(Into::into)
+            .collect(),
+        push_changes: diff(&desktop.config, &mine)
+            .into_iter()
+            .map(Into::into)
+            .collect(),
+        ..preview(machine, &desktop.config, phone)
+    }
 }
 
 /// Diff the desktop's config against the phone's.
@@ -181,6 +345,10 @@ pub(crate) fn preview(
         include_involved: copied.include_involved,
         autostash: copied.autostash,
         changes_anything,
+        revision: String::new(),
+        issues_per_repo: desktop.issues_per_repo,
+        copy_changes: Vec::new(),
+        push_changes: Vec::new(),
     }
 }
 
@@ -346,5 +514,52 @@ mod tests {
         assert_eq!(preview.prs_per_repo, 1);
         assert_eq!(preview.repos, vec!["zed-industries/zed", "octo/repo"]);
         assert_eq!(preview.authors, vec!["alice", "bob"]);
+    }
+
+    #[test]
+    fn a_newer_desktops_sorts_trunks_and_issue_count_are_copied() {
+        let mut desktop = desktop();
+        desktop.issues_per_repo = Some(500);
+        desktop.item_sort = Some(rostrum_core::Sort::new(rostrum_core::ItemSortKey::Title));
+        desktop.trunks = Some(vec![RepoTrunks {
+            repo: repo("octo/repo"),
+            trunks: vec![TrunkName::parse("develop").expect("trunk")],
+        }]);
+        let mut config = Config::default();
+        apply(&mut config, &desktop);
+        assert_eq!(config.issues_per_repo, 100, "clamped");
+        assert_eq!(config.item_sort.key(), rostrum_core::ItemSortKey::Title);
+        // Absent from the desktop: the phone's own stays.
+        assert_eq!(config.repo_sort, Config::default().repo_sort);
+        assert_eq!(
+            config.trunks.get("octo/repo"),
+            Some(&vec!["develop".to_string()])
+        );
+    }
+
+    #[test]
+    fn the_phones_shareable_settings_round_trip_through_a_copy() {
+        let mut phone = copied();
+        phone.issues_per_repo = 40;
+        phone
+            .trunks
+            .insert("octo/repo".into(), vec!["release".into()]);
+        phone
+            .trunks
+            .insert("not a repo".into(), vec!["main".into()]);
+        let shared = shareable(&phone);
+        assert_eq!(shared.issues_per_repo, Some(40));
+        assert_eq!(shared.trunks.as_ref().map(Vec::len), Some(1));
+        // Copying the phone's own settings back changes nothing shareable.
+        let mut copy = Config::default();
+        apply(&mut copy, &shared);
+        assert!(diff(&shareable(&copy), &shared).is_empty());
+        let revised = RevisedConfig {
+            config: shared,
+            revision: rostrum_remote::ConfigRevision("r9".into()),
+        };
+        let preview = revised_preview("desk", &revised, &phone);
+        assert_eq!(preview.revision, "r9");
+        assert!(preview.copy_changes.is_empty() && preview.push_changes.is_empty());
     }
 }

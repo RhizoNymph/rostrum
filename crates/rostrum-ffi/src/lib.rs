@@ -29,6 +29,7 @@
 
 uniffi::setup_scaffolding!();
 
+pub mod ci;
 pub mod detail;
 pub mod diff;
 pub mod engine;

@@ -21,6 +21,8 @@ use crate::{
 const REFRESH_SECS: std::ops::RangeInclusive<u64> = 10..=3600;
 /// GitHub's page size caps a single query at 100.
 pub(crate) const PRS_PER_REPO: std::ops::RangeInclusive<u32> = 1..=100;
+/// Open issues fetched per repository: one GraphQL page, like pull requests.
+pub(crate) const ISSUES_PER_REPO: std::ops::RangeInclusive<u32> = 1..=100;
 
 /// Everything on the settings screen.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -39,6 +41,9 @@ pub struct Settings {
     pub autostash: bool,
     /// The feed's persisted filter preferences.
     pub feed: FeedPreferences,
+    /// Open issues fetched per repository (1..=100).
+    #[uniffi(default = 25)]
+    pub issues_per_repo: u32,
 }
 
 impl CoreState {
@@ -60,6 +65,9 @@ fn settings_of(config: &Config, feed: FeedPreferences) -> Settings {
         notify_review_requests: config.notify_review_requests,
         autostash: config.autostash,
         feed,
+        issues_per_repo: config
+            .issues_per_repo
+            .clamp(*ISSUES_PER_REPO.start(), *ISSUES_PER_REPO.end()),
     }
 }
 
@@ -136,6 +144,14 @@ impl RostrumCore {
     pub async fn set_prs_per_repo(&self, count: u32) -> Result<Settings, RostrumError> {
         let count = count.clamp(*PRS_PER_REPO.start(), *PRS_PER_REPO.end());
         self.edit_settings(move |config| config.prs_per_repo = count)
+            .await
+    }
+
+    /// Set how many open issues are fetched per repository; clamped to
+    /// 1..=100.
+    pub async fn set_issues_per_repo(&self, count: u32) -> Result<Settings, RostrumError> {
+        let count = count.clamp(*ISSUES_PER_REPO.start(), *ISSUES_PER_REPO.end());
+        self.edit_settings(move |config| config.issues_per_repo = count)
             .await
     }
 

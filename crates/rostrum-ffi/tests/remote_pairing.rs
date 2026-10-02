@@ -130,7 +130,14 @@ fn desktop_serving(api_version: u32, config: Arc<Mutex<DesktopConfig>>) -> Handl
         }
         match (request.method.as_str(), request.path.as_str()) {
             ("GET", "/api/v1/machine") => (200, json(&machine())),
-            ("GET", "/api/v1/config") => (200, json(&*config.lock().expect("config"))),
+            // As `rostrumd` answers: the settings and their revision.
+            ("GET", "/api/v1/config") => (
+                200,
+                json(&rostrum_remote::RevisedConfig {
+                    config: config.lock().expect("config").clone(),
+                    revision: rostrum_remote::ConfigRevision("r1".into()),
+                }),
+            ),
             ("GET", "/api/v1/github-token") => (
                 200,
                 json(&GitHubHandover {

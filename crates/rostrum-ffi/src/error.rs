@@ -114,6 +114,21 @@ pub enum RostrumError {
         reason: String,
     },
 
+    /// A re-run was refused: this token may not re-run checks here (not a
+    /// collaborator with write access, or missing the `workflow`/`checks`
+    /// permission).
+    #[error("no permission to re-run this: {reason}")]
+    CiNoPermission { reason: String },
+
+    /// GitHub will not re-run this one: too old (over a month), still
+    /// running, or the app does not accept re-requests.
+    #[error("this cannot be re-run: {reason}")]
+    CiNotRerunnable { reason: String },
+
+    /// The run or job to re-run no longer exists.
+    #[error("the run or job no longer exists")]
+    CiNotFound,
+
     /// The desktop answered with something that is not the protocol.
     #[error("unexpected response from the desktop: {reason}")]
     RemoteProtocol { reason: String },
@@ -158,6 +173,10 @@ pub enum RemoteErrorCode {
     PairingCodeExpired,
     RateLimited,
     Busy,
+    /// The desktop's settings changed since the revision a push was based
+    /// on; `push_config_to_desktop` reports this as
+    /// `ConfigPushResult::Changed` instead.
+    ConfigChanged,
     /// A stack request's `confirm_rewrite` did not match; stack calls report
     /// [`RostrumError::RewriteNotConfirmed`] instead.
     RewriteNotConfirmed,
@@ -253,9 +272,9 @@ impl From<ApiErrorCode> for RemoteErrorCode {
             // Stack calls turn this into `RostrumError::RewriteNotConfirmed`
             // with the branches; anything else reports the code.
             ApiErrorCode::RewriteNotConfirmed => Self::RewriteNotConfirmed,
-            // The phone does not push settings through the FFI yet; until it
-            // does, a stale push reads as the request being wrong.
-            ApiErrorCode::ConfigChanged => Self::BadRequest,
+            // `push_config_to_desktop` turns this into
+            // `ConfigPushResult::Changed`; anything else reports the code.
+            ApiErrorCode::ConfigChanged => Self::ConfigChanged,
             ApiErrorCode::Internal => Self::Internal,
         }
     }
@@ -408,6 +427,20 @@ mod tests {
             RostrumError::from(ClientError::Tls("bad".into())),
             RostrumError::RemoteProtocol { .. }
         ));
+    }
+
+    #[test]
+    fn stack_and_config_refusals_keep_their_own_codes() {
+        for (wire, code) in [
+            (ApiErrorCode::ConfigChanged, RemoteErrorCode::ConfigChanged),
+            (
+                ApiErrorCode::RewriteNotConfirmed,
+                RemoteErrorCode::RewriteNotConfirmed,
+            ),
+            (ApiErrorCode::Busy, RemoteErrorCode::Busy),
+        ] {
+            assert_eq!(RemoteErrorCode::from(wire), code);
+        }
     }
 
     #[test]

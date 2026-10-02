@@ -111,6 +111,10 @@ pub(crate) struct CoreState {
     pub branch_meta: HashMap<RepoId, BranchMeta>,
     /// Stack jobs already seen finished, so each refreshes the feed once.
     pub settled_stack_jobs: HashSet<u64>,
+    /// Every watched repository's CI checks, as last fetched.
+    pub ci: rostrum_core::ci::CiChecks,
+    /// Recent raw job logs, by repository and job id.
+    pub job_logs: Recent<(RepoId, u64), Arc<String>>,
     /// The notification seen set, once loaded from SQLite.
     pub baseline: Option<Baseline>,
     pub writer: Writer,
@@ -161,6 +165,8 @@ impl CoreState {
             assignable: HashMap::new(),
             branch_meta: HashMap::new(),
             settled_stack_jobs: HashSet::new(),
+            ci: rostrum_core::ci::CiChecks::default(),
+            job_logs: Recent::new(crate::ci::RECENT_LOGS),
             baseline: None,
             writer: startup.writer,
             notifier: startup.notifier,
@@ -183,6 +189,8 @@ impl CoreState {
         self.issue_details.retain(|key| &key.repo != id);
         self.assignable.remove(id);
         self.branch_meta.remove(id);
+        self.ci.forget(id);
+        self.job_logs.retain(|key| &key.0 != id);
     }
 
     /// The pull request as last seen in the feed. Kept after it leaves the
