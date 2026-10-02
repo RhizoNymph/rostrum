@@ -6,6 +6,7 @@
 pub mod arrivals;
 pub mod authors;
 pub mod branches;
+pub mod ci;
 pub mod feed;
 pub mod issue;
 pub mod model;
