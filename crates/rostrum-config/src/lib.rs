@@ -2,10 +2,16 @@
 //!
 //! Non-secret and human-editable. Tokens never appear here.
 
+pub mod document;
+pub mod shared;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
+
+pub use document::{ContentHash, Saved, Snapshot, merge3, save_merged};
+pub use shared::{SHARED_KEYS, SharedSettings, overlay_config, overlay_shared};
 
 use rostrum_core::{
     FeedFilter, FeedSort, FeedTab, ItemSortKey, LoginKey, RepoId, RepoSortKey, Sort,
@@ -14,7 +20,7 @@ use rostrum_core::{
 };
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     /// Repositories in `owner/name` form.
@@ -204,6 +210,20 @@ pub enum ConfigError {
     },
     #[error("could not serialise the config: {0}")]
     Serialize(#[source] serde_json::Error),
+    #[error("could not read {}: {source}", path.display())]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    /// The file exists but is not JSON. Never overwritten: that would erase a
+    /// hand-edit with a typo in it.
+    #[error("{} is not valid JSON ({source}); fix it before rostrum writes to it", path.display())]
+    Malformed {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
 }
 
 /// Why a repository could not be added.
@@ -287,17 +307,12 @@ impl Config {
         self.save_to(&path)
     }
 
+    /// Write the whole config to `path`, atomically. This replaces the file
+    /// outright; a writer sharing the file with others uses
+    /// [`document::save_merged`] instead.
     pub fn save_to(&self, path: &Path) -> Result<(), ConfigError> {
-        let io = |source| ConfigError::Write {
-            path: path.to_path_buf(),
-            source,
-        };
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(io)?;
-        }
-        let text = serde_json::to_string_pretty(self).map_err(ConfigError::Serialize)?;
-        std::fs::write(path, text).map_err(io)?;
-        Ok(())
+        let value = serde_json::to_value(self).map_err(ConfigError::Serialize)?;
+        document::write_atomic(path, &value).map(|_| ())
     }
 
     /// The feed filter this config describes.
