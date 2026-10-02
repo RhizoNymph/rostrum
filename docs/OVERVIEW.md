@@ -248,7 +248,13 @@ Overview:
     runs, in a task that outlives the request. Nothing is ever pushed. A
     paired phone can also copy the desktop's watched repositories and feed
     preferences (`GET /api/v1/config`) — never its clones, conflict handler,
-    refresh interval or notifications.
+    refresh interval or notifications — and send its own back on demand
+    (`PUT /api/v1/config`, against the revision it previewed; a stale one is
+    a 409 carrying the desktop's current settings). rostrumd replaces only
+    the shareable keys of `config.json`, through one writer, atomically. The
+    desktop app watches the file and adopts outside writes, and its own saves
+    are compare-and-swaps that re-apply the user's edit on top of anything
+    written meanwhile (`rostrum_config::save_merged`).
 
     A phone drives stacks the same way it drives local jobs, but as jobs it
     polls: a stack request names the repository and pull requests; rostrumd
@@ -394,7 +400,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 | `rostrum-stack` | no | Stacks that act: the `gh stack` runner and its typed commands, reading gh-stack's local file, making/arranging (`run_stack_job`), merging and unstacking |
 | `rostrum-remote` | no | Phone ↔ desktop protocol: pairing, device tokens, API types, and (feature `client`) the pinned HTTPS client |
 | `rostrumd` | no | Desktop daemon: pairing page and APK download over HTTP, the paired phone's API over HTTPS, systemd user service |
-| `rostrum-config` | no | `config.json`: watched repositories, clones, feed preferences, conflict handler |
+| `rostrum-config` | no | `config.json`: watched repositories, clones, feed preferences, conflict handler; the shareable subset and its revision; atomic, merging saves shared with other writers |
 | `rostrum-md` | no | `pulldown-cmark` → renderable markdown model |
 | `rostrum-ffi` | no | The Android app's core: `RostrumCore` over UniFFI (`cdylib`), plus the `uniffi-bindgen` binary |
 | `rostrum-ui` | yes | Theme, components, text/selection, markdown element |

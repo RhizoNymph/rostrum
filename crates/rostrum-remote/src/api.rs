@@ -6,7 +6,9 @@
 //! desktop's config does not already list as a clone.
 
 use chrono::{DateTime, Utc};
-use rostrum_core::{LoginKey, PrNumber, RepoId};
+use rostrum_core::{
+    ItemSortKey, LoginKey, PrNumber, RepoId, RepoSortKey, Sort, branches::TrunkName,
+};
 use serde::{Deserialize, Serialize};
 
 /// `GET /api/v1/machine`: the desktop, as far as the phone needs to know it.
@@ -32,13 +34,17 @@ pub struct CloneInfo {
     pub path: String,
 }
 
-/// `GET /api/v1/config`: the part of the desktop's `config.json` a phone may
-/// copy — what to watch and how the feed is narrowed.
+/// The settings a phone and the desktop share: `GET /api/v1/config` copies
+/// them to the phone, `PUT /api/v1/config` sends them to the desktop.
 ///
 /// Deliberately not the whole file: clone paths and the conflict-handler
-/// command describe this machine (and the command may carry secrets), and the
-/// refresh interval and notification switch are the desktop's own habits, not
-/// the phone's.
+/// command describe this machine (and the command may carry secrets), the
+/// refresh interval and notification switches are each device's own habits,
+/// and the open tab is where the user is right now.
+///
+/// The `Option` fields arrived after the first version. The desktop always
+/// fills them on `GET`; on `PUT`, `None` means "leave the desktop's value as
+/// it is", so a phone that does not know a field cannot reset it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DesktopConfig {
     /// Watched repositories, in the desktop's order. Malformed entries in the
@@ -51,6 +57,25 @@ pub struct DesktopConfig {
     pub authors: Vec<LoginKey>,
     pub include_involved: bool,
     pub autostash: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issues_per_repo: Option<u32>,
+    /// How repositories are ordered in the feed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_sort: Option<Sort<RepoSortKey>>,
+    /// How items are ordered within each repository.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item_sort: Option<Sort<ItemSortKey>>,
+    /// Trunk branches per repository; a repository not listed has its trunks
+    /// detected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trunks: Option<Vec<RepoTrunks>>,
+}
+
+/// One repository's configured trunks, in display order.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoTrunks {
+    pub repo: RepoId,
+    pub trunks: Vec<TrunkName>,
 }
 
 /// A pull request's identity.
@@ -443,6 +468,10 @@ pub enum ApiErrorCode {
     /// (or confirms branches it would not rewrite). The message names the
     /// branches; ask `STACK_PLAN` again and confirm exactly those.
     RewriteNotConfirmed,
+    /// `PUT /api/v1/config` named a `base` revision the desktop's settings
+    /// have moved on from. The body is a [`crate::ConfigConflict`] carrying
+    /// the current settings; preview again and push on top of them.
+    ConfigChanged,
     Internal,
 }
 
@@ -458,6 +487,7 @@ impl ApiErrorCode {
             Self::RateLimited => 429,
             Self::Busy => 409,
             Self::RewriteNotConfirmed => 409,
+            Self::ConfigChanged => 409,
             Self::Internal => 500,
         }
     }
@@ -630,6 +660,7 @@ mod tests {
             ApiErrorCode::RateLimited,
             ApiErrorCode::Busy,
             ApiErrorCode::RewriteNotConfirmed,
+            ApiErrorCode::ConfigChanged,
         ] {
             assert!((400..500).contains(&code.http_status()), "{code:?}");
         }

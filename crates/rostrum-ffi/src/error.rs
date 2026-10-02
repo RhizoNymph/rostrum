@@ -253,6 +253,9 @@ impl From<ApiErrorCode> for RemoteErrorCode {
             // Stack calls turn this into `RostrumError::RewriteNotConfirmed`
             // with the branches; anything else reports the code.
             ApiErrorCode::RewriteNotConfirmed => Self::RewriteNotConfirmed,
+            // The phone does not push settings through the FFI yet; until it
+            // does, a stale push reads as the request being wrong.
+            ApiErrorCode::ConfigChanged => Self::BadRequest,
             ApiErrorCode::Internal => Self::Internal,
         }
     }

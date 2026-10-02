@@ -7,6 +7,7 @@ use rostrum_remote::{CertFingerprint, MachineInfo};
 use tokio::sync::watch;
 
 use crate::{
+    config_push::ConfigWriter,
     error::StartupError,
     github::HandoverSource,
     jobs::{HandoffBook, JobRunner, Jobs},
@@ -52,6 +53,8 @@ pub struct Inner {
     pub fingerprint: CertFingerprint,
     pub apk_dir: PathBuf,
     pub rostrum_config: RostrumConfig,
+    /// The daemon's only writer of rostrum's `config.json` (phone pushes).
+    pub config_writer: ConfigWriter,
     pub registry: Registry,
     pub jobs: Jobs,
     pub github: Arc<dyn HandoverSource>,
@@ -92,6 +95,7 @@ impl Daemon {
             https_port: parts.https_port,
             fingerprint: parts.fingerprint,
             apk_dir: parts.apk_dir,
+            config_writer: ConfigWriter::spawn(parts.rostrum_config.path().to_path_buf()),
             rostrum_config: parts.rostrum_config,
             registry: Registry::spawn(devices, parts.code_ttl),
             jobs: Jobs::spawn(parts.runner, handoffs),

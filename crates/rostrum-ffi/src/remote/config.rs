@@ -201,6 +201,11 @@ mod tests {
             authors: vec![LoginKey::new("Alice"), LoginKey::new("bob")],
             include_involved: true,
             autostash: true,
+            // An older desktop: the later fields absent.
+            issues_per_repo: None,
+            repo_sort: None,
+            item_sort: None,
+            trunks: None,
         }
     }
 

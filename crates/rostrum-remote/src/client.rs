@@ -33,6 +33,7 @@ use crate::{
         AbortRequest, ApiError, ApiErrorCode, DesktopConfig, HandoffSession, JobOutcome,
         JobRequest, LocalStatus, LocalStatusRequest, MachineInfo, SyncAllRequest, SyncRun,
     },
+    config::{ConfigConflict, ConfigPush, ConfigPushOutcome, RevisedConfig},
     fingerprint::CertFingerprint,
     host::Host,
     pairing::{Endpoint, GitHubHandover, Hello, PairRequest, PairResponse},
@@ -133,6 +134,35 @@ impl RemoteClient {
     pub async fn config(&self) -> Result<DesktopConfig, ClientError> {
         self.call(Method::GET, routes::CONFIG, None::<&()>, QUICK)
             .await
+    }
+
+    /// The desktop's shareable settings with their revision, to preview a
+    /// push against (with [`crate::diff`]) and to send as its `base`.
+    pub async fn config_with_revision(&self) -> Result<RevisedConfig, ClientError> {
+        self.call(Method::GET, routes::CONFIG, None::<&()>, QUICK)
+            .await
+    }
+
+    /// Replace the desktop's shareable settings. With `push.base`, a desktop
+    /// whose settings have changed since answers
+    /// [`ConfigPushOutcome::Changed`] with its current settings, and nothing
+    /// is written.
+    pub async fn push_config(&self, push: &ConfigPush) -> Result<ConfigPushOutcome, ClientError> {
+        let response = self
+            .send(Method::PUT, routes::CONFIG, Some(push), QUICK)
+            .await?;
+        let status = response.status();
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|err| ClientError::Protocol(root_cause(&err)))?;
+        if status == StatusCode::CONFLICT
+            && let Ok(conflict) = serde_json::from_slice::<ConfigConflict>(&bytes)
+            && conflict.code == ApiErrorCode::ConfigChanged
+        {
+            return Ok(ConfigPushOutcome::Changed(conflict.current));
+        }
+        decode_bytes(status, &bytes).map(ConfigPushOutcome::Applied)
     }
 
     pub async fn github_token(&self) -> Result<GitHubHandover, ClientError> {
@@ -245,6 +275,17 @@ impl RemoteClient {
         body: Option<&B>,
         timeout: Duration,
     ) -> Result<T, ClientError> {
+        decode(self.send(method, path, body, timeout).await?).await
+    }
+
+    /// Send one request to the first host that accepts the connection.
+    async fn send<B: Serialize + ?Sized>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&B>,
+        timeout: Duration,
+    ) -> Result<reqwest::Response, ClientError> {
         let hosts = self.endpoint.hosts();
         let start = self.preferred.load(Ordering::Relaxed);
         let mut failures = Vec::new();
@@ -265,7 +306,7 @@ impl RemoteClient {
             match request.send().await {
                 Ok(response) => {
                     self.preferred.store(ix, Ordering::Relaxed);
-                    return decode(response).await;
+                    return Ok(response);
                 }
                 Err(err) if is_certificate_mismatch(&err) => {
                     tracing::warn!(%host, "certificate does not match the paired fingerprint");
@@ -341,15 +382,19 @@ async fn decode<T: DeserializeOwned>(response: reqwest::Response) -> Result<T, C
         .bytes()
         .await
         .map_err(|err| ClientError::Protocol(root_cause(&err)))?;
+    decode_bytes(status, &bytes)
+}
+
+fn decode_bytes<T: DeserializeOwned>(status: StatusCode, bytes: &[u8]) -> Result<T, ClientError> {
     if status.is_success() {
-        return serde_json::from_slice(&bytes).map_err(|err| {
+        return serde_json::from_slice(bytes).map_err(|err| {
             ClientError::Protocol(format!("could not read the {status} response: {err}"))
         });
     }
-    let error = serde_json::from_slice::<ApiError>(&bytes).unwrap_or_else(|_| {
+    let error = serde_json::from_slice::<ApiError>(bytes).unwrap_or_else(|_| {
         ApiError::new(
             ApiErrorCode::Internal,
-            format!("{status}: {}", String::from_utf8_lossy(&bytes)),
+            format!("{status}: {}", String::from_utf8_lossy(bytes)),
         )
     });
     if status == StatusCode::UNAUTHORIZED || error.code == ApiErrorCode::Unauthorized {

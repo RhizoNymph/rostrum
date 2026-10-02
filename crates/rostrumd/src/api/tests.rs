@@ -249,6 +249,10 @@ async fn a_paired_phone_gets_the_copyable_part_of_the_desktop_config() {
             authors: vec![LoginKey::new("ada-lin"), LoginKey::new("rhizonymph")],
             include_involved: true,
             autostash: true,
+            issues_per_repo: Some(rostrum_config::Config::default().issues_per_repo),
+            repo_sort: Some(rostrum_config::Config::default().repo_sort),
+            item_sort: Some(rostrum_config::Config::default().item_sort),
+            trunks: Some(vec![]),
         }
     );
     // The machine-specific and personal-habit fields never leave the desktop.

@@ -74,6 +74,11 @@ fn desktop_config() -> DesktopConfig {
         authors: vec![LoginKey::new("Alice")],
         include_involved: true,
         autostash: true,
+        // An older desktop: the later fields absent.
+        issues_per_repo: None,
+        repo_sort: None,
+        item_sort: None,
+        trunks: None,
     }
 }
 
