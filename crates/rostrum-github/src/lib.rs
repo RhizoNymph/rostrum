@@ -2,6 +2,7 @@
 
 pub mod auth;
 pub mod branches;
+pub mod ci;
 pub mod client;
 pub mod conversation;
 pub mod error;

@@ -813,7 +813,7 @@ pub(crate) fn encode_path_segment(segment: &str) -> String {
 
 /// GitHub's REST errors put the human-readable cause in `message`; fall back to
 /// the raw body when it is not JSON.
-fn rest_message(body: &str) -> String {
+pub(crate) fn rest_message(body: &str) -> String {
     serde_json::from_str::<serde_json::Value>(body)
         .ok()
         .and_then(|value| {
@@ -847,7 +847,7 @@ pub(crate) fn next_page_url(headers: &HeaderMap) -> Option<String> {
 
 /// Map a non-success HTTP status onto a structured error, distinguishing the
 /// two very different meanings GitHub gives 403.
-fn classify_status(
+pub(crate) fn classify_status(
     status: StatusCode,
     headers: &HeaderMap,
     body: &str,
