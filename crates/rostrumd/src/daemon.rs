@@ -13,6 +13,7 @@ use crate::{
     net::{NetworkView, request_host::TrustedNames},
     registry::{DeviceBook, Registry},
     rostrum_config::{self, RostrumConfig},
+    stacks::{RepoSnapshots, StackOps},
     tmux::SessionLister,
 };
 
@@ -35,6 +36,12 @@ pub struct DaemonParts {
     pub github: Arc<dyn HandoverSource>,
     pub tmux: Arc<dyn SessionLister>,
     pub network: watch::Receiver<NetworkView>,
+    /// `rostrum-stack` over `gh` (a recording double in tests).
+    pub stack_ops: Arc<dyn StackOps>,
+    /// Open pull requests and stacks from GitHub, for validating.
+    pub snapshots: Arc<dyn RepoSnapshots>,
+    /// Where arranging puts its scratch worktrees.
+    pub stack_scratch_dir: PathBuf,
 }
 
 pub struct Inner {
@@ -50,6 +57,9 @@ pub struct Inner {
     pub github: Arc<dyn HandoverSource>,
     pub tmux: Arc<dyn SessionLister>,
     pub network: watch::Receiver<NetworkView>,
+    pub stack_ops: Arc<dyn StackOps>,
+    pub snapshots: Arc<dyn RepoSnapshots>,
+    pub stack_scratch_dir: PathBuf,
 }
 
 /// Shared by every request on both servers. Cheap to clone.
@@ -88,6 +98,9 @@ impl Daemon {
             github: parts.github,
             tmux: parts.tmux,
             network: parts.network,
+            stack_ops: parts.stack_ops,
+            snapshots: parts.snapshots,
+            stack_scratch_dir: parts.stack_scratch_dir,
         })))
     }
 

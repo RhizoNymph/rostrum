@@ -23,6 +23,7 @@ pub mod fingerprint;
 pub mod host;
 pub mod pairing;
 pub mod secret;
+pub mod stack;
 
 #[cfg(feature = "client")]
 pub mod client;
@@ -41,6 +42,11 @@ pub use pairing::{
     PairingUriError,
 };
 pub use secret::{DeviceId, DeviceToken, GitHubToken, SecretError, TokenHash};
+pub use stack::{
+    ArrangeStackRequest, ExtendStackRequest, MakeStackRequest, MergeStackRequest, RewriteBranch,
+    StackJobId, StackJobKind, StackJobResult, StackJobState, StackJobStatus, StackMergeMethod,
+    StackPlanRequest, StackRewritePlan, UnstackRequest, confirms_exactly,
+};
 
 /// Bumped when a route or a type changes incompatibly. The phone refuses to
 /// pair with a desktop whose [`pairing::Hello::api_version`] it does not speak.
@@ -75,4 +81,28 @@ pub mod routes {
     pub const HANDOFFS: &str = "/api/v1/handoffs";
     /// `DELETE` → `null`: forget the calling device.
     pub const DEVICE: &str = "/api/v1/device";
+
+    // --- stacks (see [`crate::stack`]) -----------------------------------
+
+    /// `POST` [`crate::StackPlanRequest`] → [`crate::StackRewritePlan`]: the
+    /// dry run naming the branches an arrangement or extension would rewrite.
+    pub const STACK_PLAN: &str = "/api/v1/stacks/plan";
+    /// `POST` [`crate::MakeStackRequest`] → [`crate::StackJobStatus`].
+    pub const STACK_MAKE: &str = "/api/v1/stacks/make";
+    /// `POST` [`crate::ArrangeStackRequest`] → [`crate::StackJobStatus`].
+    pub const STACK_ARRANGE: &str = "/api/v1/stacks/arrange";
+    /// `POST` [`crate::ExtendStackRequest`] → [`crate::StackJobStatus`].
+    pub const STACK_EXTEND: &str = "/api/v1/stacks/extend";
+    /// `POST` [`crate::MergeStackRequest`] → [`crate::StackJobStatus`].
+    pub const STACK_MERGE: &str = "/api/v1/stacks/merge";
+    /// `POST` [`crate::UnstackRequest`] → [`crate::StackJobStatus`].
+    pub const STACK_UNSTACK: &str = "/api/v1/stacks/unstack";
+    /// `GET /api/v1/stacks/jobs/{id}` → [`crate::StackJobStatus`], or 404 for
+    /// an id the desktop does not know (it keeps the most recent jobs only).
+    pub const STACK_JOB: &str = "/api/v1/stacks/jobs/{id}";
+
+    /// [`STACK_JOB`] for one job.
+    pub fn stack_job(id: crate::StackJobId) -> String {
+        format!("/api/v1/stacks/jobs/{id}")
+    }
 }

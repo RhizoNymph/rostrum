@@ -9,6 +9,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use super::{
     Busy, CloneKey, Command, JobRunner, Lease,
     handoffs::HandoffBook,
+    stack_jobs::StackJobBook,
     sync::{SyncPlan, run_plan},
 };
 
@@ -37,6 +38,7 @@ struct Actor {
     stopping: bool,
     stop: watch::Sender<bool>,
     drained: Vec<oneshot::Sender<()>>,
+    stack_jobs: StackJobBook,
 }
 
 pub(super) fn spawn(runner: JobRunner, handoffs: HandoffBook) -> mpsc::UnboundedSender<Command> {
@@ -53,6 +55,7 @@ pub(super) fn spawn(runner: JobRunner, handoffs: HandoffBook) -> mpsc::Unbounded
         stopping: false,
         stop,
         drained: Vec::new(),
+        stack_jobs: StackJobBook::default(),
     };
     tokio::spawn(actor.run(rx));
     tx
@@ -103,6 +106,13 @@ impl Actor {
             }
             Command::Handoffs { reply } => {
                 let _ = reply.send(self.handoffs.records().to_vec());
+            }
+            Command::StackJobStart { repo, kind, reply } => {
+                let _ = reply.send(self.stack_jobs.start(repo, kind));
+            }
+            Command::StackJobUpdate { id, state } => self.stack_jobs.update(id, state),
+            Command::StackJobGet { id, reply } => {
+                let _ = reply.send(self.stack_jobs.get(id).cloned());
             }
             Command::Shutdown { reply } => {
                 self.stopping = true;

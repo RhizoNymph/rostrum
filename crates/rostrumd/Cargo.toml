@@ -20,11 +20,13 @@ rostrum-github.workspace = true
 rostrum-handoff.workspace = true
 rostrum-local.workspace = true
 rostrum-remote.workspace = true
+rostrum-stack.workspace = true
 
 axum.workspace = true
 axum-server.workspace = true
 chrono.workspace = true
 dirs.workspace = true
+futures.workspace = true
 getrandom.workspace = true
 if-addrs.workspace = true
 qrcode.workspace = true

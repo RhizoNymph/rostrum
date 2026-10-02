@@ -23,6 +23,12 @@ use serde::{Serialize, de::DeserializeOwned};
 use tokio::sync::watch;
 use tower::ServiceExt;
 
+use rostrum_core::{RepoId, RepoState};
+use rostrum_stack::{
+    ExtendJob, LocalTracking, MergeMethod, Progress, StackJob, StackOpError, StackOutcome,
+    StackProgress, StackReport,
+};
+
 use crate::{
     Daemon, DaemonParts,
     boxed::BoxFuture,
@@ -31,6 +37,7 @@ use crate::{
     jobs::JobRunner,
     net::{NetworkView, tailscale::Tailnet},
     rostrum_config::RostrumConfig,
+    stacks::{RepoSnapshots, SnapshotError, StackOps},
     tmux::{SessionLister, TmuxError, TmuxSession},
 };
 
@@ -84,12 +91,215 @@ pub fn view() -> NetworkView {
     }
 }
 
+// --- stacks -------------------------------------------------------------------
+
+/// An open, same-repository pull request of `owner/repo`.
+pub fn pull(number: u32, head: &str, base: &str) -> rostrum_core::PullRequest {
+    use rostrum_core::{MergeStateStatus, Mergeable, NodeId, PrNumber, PullRequest};
+    PullRequest {
+        number: PrNumber(number),
+        node_id: NodeId(format!("PR_{number}")),
+        title: format!("PR {number}"),
+        url: format!("https://github.com/owner/repo/pull/{number}"),
+        is_draft: false,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        author: None,
+        head_ref: head.into(),
+        head_sha: String::new(),
+        base_ref: base.into(),
+        additions: 0,
+        deletions: 0,
+        changed_files: 0,
+        mergeable: Mergeable::Unknown,
+        merge_state: MergeStateStatus::Unknown,
+        review_decision: None,
+        assignees: Vec::new(),
+        review_requests: Vec::new(),
+        labels: Vec::new(),
+        comment_count: 0,
+        checks: None,
+        base_divergence: None,
+        is_cross_repository: false,
+        pushed_at: None,
+    }
+}
+
+/// GitHub stack `number` over `members` (bottom first), trunk `main`.
+pub fn github_stack(number: u32, members: &[u32]) -> rostrum_core::Stack {
+    use rostrum_core::{PrNumber, RefName, Stack, StackMembers, StackNumber};
+    Stack {
+        repo: RepoId::new("owner", "repo"),
+        number: StackNumber::new(number),
+        trunk: RefName::new("main").expect("valid"),
+        members: StackMembers::new(members.iter().copied().map(PrNumber).collect()).expect("valid"),
+    }
+}
+
+/// `owner/repo` with these open pull requests and stacks.
+pub fn repo_state(
+    prs: Vec<rostrum_core::PullRequest>,
+    stacks: Vec<rostrum_core::Stack>,
+) -> RepoState {
+    RepoState {
+        prs,
+        stacks,
+        ..RepoState::new(RepoId::new("owner", "repo"))
+    }
+}
+
+/// Answers every snapshot with one state (re-labelled for the repository
+/// asked about).
+pub struct FixedSnapshots(pub RepoState);
+
+impl RepoSnapshots for FixedSnapshots {
+    fn snapshot<'a>(&'a self, repo: &'a RepoId) -> BoxFuture<'a, Result<RepoState, SnapshotError>> {
+        let mut state = self.0.clone();
+        state.id = repo.clone();
+        Box::pin(async move { Ok(state) })
+    }
+}
+
+/// One call the fake stack operations received.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StackCall {
+    Make {
+        prs: Vec<u32>,
+        trunk: String,
+        clone: PathBuf,
+    },
+    Extend {
+        stack: u32,
+        prs: Vec<u32>,
+    },
+    Merge {
+        stack: u32,
+        method: MergeMethod,
+        cwd: PathBuf,
+    },
+    Unstack {
+        stack: u32,
+        clone: PathBuf,
+    },
+}
+
+/// Records each operation, reports one progress step, optionally waits for a
+/// permit, then succeeds the way `rostrum-stack` would.
+#[derive(Default)]
+pub struct FakeStackOps {
+    pub calls: std::sync::Mutex<Vec<StackCall>>,
+    pub gate: Option<Arc<tokio::sync::Semaphore>>,
+}
+
+impl FakeStackOps {
+    pub fn gated(gate: Arc<tokio::sync::Semaphore>) -> Self {
+        Self {
+            gate: Some(gate),
+            ..Self::default()
+        }
+    }
+
+    pub fn calls(&self) -> Vec<StackCall> {
+        self.calls.lock().expect("lock").clone()
+    }
+
+    async fn step(&self, call: StackCall, progress: &Progress, step: StackProgress) {
+        self.calls.lock().expect("lock").push(call);
+        progress.send(step);
+        if let Some(gate) = &self.gate {
+            gate.acquire().await.expect("gate").forget();
+        }
+    }
+}
+
+impl StackOps for FakeStackOps {
+    fn make(
+        &self,
+        job: StackJob,
+        progress: Progress,
+    ) -> BoxFuture<'_, Result<StackOutcome, StackOpError>> {
+        Box::pin(async move {
+            let call = StackCall::Make {
+                prs: job.plan.members().iter().map(|m| m.number.0).collect(),
+                trunk: job.plan.trunk.to_string(),
+                clone: job.clone.clone(),
+            };
+            self.step(call, &progress, StackProgress::Fetching).await;
+            Ok(StackOutcome::Stacked(StackReport {
+                rewritten: job.plan.rewrites().iter().map(|m| m.number).collect(),
+                local: LocalTracking::Tracked,
+                notes: vec![],
+            }))
+        })
+    }
+
+    fn extend(
+        &self,
+        job: ExtendJob,
+        progress: Progress,
+    ) -> BoxFuture<'_, Result<StackOutcome, StackOpError>> {
+        Box::pin(async move {
+            let call = StackCall::Extend {
+                stack: job.plan.stack.get(),
+                prs: job.plan.additions().iter().map(|m| m.number.0).collect(),
+            };
+            self.step(call, &progress, StackProgress::Fetching).await;
+            Ok(StackOutcome::Extended {
+                stack: job.plan.stack,
+                report: StackReport {
+                    rewritten: job.plan.rewrites().iter().map(|m| m.number).collect(),
+                    local: LocalTracking::Skipped("extensions are tracked on GitHub".into()),
+                    notes: vec![],
+                },
+            })
+        })
+    }
+
+    fn merge(
+        &self,
+        cwd: PathBuf,
+        _repo: RepoId,
+        stack: rostrum_core::StackNumber,
+        method: MergeMethod,
+        progress: Progress,
+    ) -> BoxFuture<'_, Result<String, StackOpError>> {
+        Box::pin(async move {
+            let call = StackCall::Merge {
+                stack: stack.get(),
+                method,
+                cwd,
+            };
+            self.step(call, &progress, StackProgress::Merging).await;
+            Ok("✓ Merged".into())
+        })
+    }
+
+    fn unstack(
+        &self,
+        clone: PathBuf,
+        _repo: RepoId,
+        stack: rostrum_core::StackNumber,
+        progress: Progress,
+    ) -> BoxFuture<'_, Result<String, StackOpError>> {
+        Box::pin(async move {
+            let call = StackCall::Unstack {
+                stack: stack.get(),
+                clone,
+            };
+            self.step(call, &progress, StackProgress::Unstacking).await;
+            Ok(String::new())
+        })
+    }
+}
+
 pub struct Options {
     pub runner: JobRunner,
     pub github: Option<GitHubHandover>,
     pub sessions: Vec<TmuxSession>,
     pub view: NetworkView,
     pub code_ttl: Duration,
+    pub stacks: Arc<FakeStackOps>,
+    pub snapshot: RepoState,
 }
 
 impl Default for Options {
@@ -100,6 +310,8 @@ impl Default for Options {
             sessions: Vec::new(),
             view: view(),
             code_ttl: Duration::from_secs(300),
+            stacks: Arc::default(),
+            snapshot: repo_state(vec![], vec![]),
         }
     }
 }
@@ -107,6 +319,8 @@ impl Default for Options {
 pub struct Kit {
     pub scratch: ScratchDir,
     pub daemon: Daemon,
+    /// The stack operations the daemon was given, for asserting on.
+    pub stacks: Arc<FakeStackOps>,
     /// Keeps the daemon's view of the network alive (and settable).
     _network: watch::Sender<NetworkView>,
 }
@@ -135,11 +349,15 @@ impl Kit {
             github: Arc::new(FixedHandover(options.github)),
             tmux: Arc::new(FixedSessions(options.sessions)),
             network: receiver,
+            stack_ops: options.stacks.clone(),
+            snapshots: Arc::new(FixedSnapshots(options.snapshot)),
+            stack_scratch_dir: scratch.join("stack-worktrees"),
         })
         .expect("daemon starts");
         Self {
             scratch,
             daemon,
+            stacks: options.stacks,
             _network: network,
         }
     }
