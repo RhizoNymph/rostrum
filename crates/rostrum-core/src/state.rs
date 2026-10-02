@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use crate::{
     feed::FeedFilter,
     model::{Divergence, PrNumber, PullRequest, RepoId},
+    repo_meta::RepoMeta,
 };
 
 /// Per-repository fetch status.
@@ -46,6 +47,10 @@ pub struct RepoState {
     pub prs: Vec<PullRequest>,
     pub load: LoadState,
     pub collapsed: bool,
+    /// The repository's own facts — owner, push and creation times, stars —
+    /// for sorting repositories. `None` until the first refresh or cache
+    /// read supplies them; the sort places unknown values last.
+    pub meta: Option<RepoMeta>,
 }
 
 impl RepoState {
@@ -55,6 +60,7 @@ impl RepoState {
             prs: Vec::new(),
             load: LoadState::Idle,
             collapsed: false,
+            meta: None,
         }
     }
 }
@@ -191,6 +197,7 @@ mod tests {
                 comment_count: 0,
                 checks: None,
                 base_divergence: None,
+                pushed_at: None,
             })
             .collect();
         state.load = LoadState::Loaded { at: Utc::now() };

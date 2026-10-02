@@ -90,6 +90,7 @@ pub fn pull(number: u32, head_sha: &str) -> PullRequest {
         comment_count: 0,
         checks: None,
         base_divergence: None,
+        pushed_at: None,
     }
 }
 

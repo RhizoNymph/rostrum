@@ -1,0 +1,26 @@
+{
+  "data": {
+    "rateLimit": {
+      "cost": 1,
+      "remaining": 4974,
+      "resetAt": "2026-10-01T17:22:01Z"
+    },
+    "viewer": {
+      "login": "RhizoNymph",
+      "avatarUrl": "https://avatars.githubusercontent.com/u/82485126?u=119e7e32d874b130afd1e85f19976ed44acadfe7&v=4"
+    },
+    "repository": {
+      "pushedAt": "2026-10-01T02:20:41Z",
+      "createdAt": "2026-08-01T18:20:41Z",
+      "updatedAt": "2026-10-01T02:20:47Z",
+      "stargazerCount": 0,
+      "owner": {
+        "__typename": "User",
+        "login": "RhizoNymph"
+      },
+      "pullRequests": {
+        "nodes": []
+      }
+    }
+  }
+}
