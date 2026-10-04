@@ -159,6 +159,15 @@ unconsumed older one.
   need a catch; `BackendError` mirrors the core's `RostrumError` variant for
   variant, and `describe()` gives the sentence the UI shows.
   `requiresSignIn` / `requiresPairing` classify errors for recovery actions.
+- That mirror is compiler-checked: `toBackendError` and `toModel` in
+  `FfiErrors.kt`, and `describe()`'s outer `when` over `BackendError`, have
+  no `else`, so a variant added to the core's `RostrumError` or a code added
+  to its `RemoteErrorCode` fails this module's compile until it is mapped
+  here. (`describe()`'s inner `when` over `RemoteErrorCode` does have an
+  `else`, so a new code falls back to "The desktop refused: …" until it is
+  given its own sentence.) The CI re-run refusals (`CiNoPermission`,
+  `CiNotRerunnable`, `CiNotFound`) and the `ConfigChanged` remote code are
+  carried for that reason, before any screen uses them.
 - `feedUpdates: Flow<FeedSnapshot>` is the core's `FeedObserver`, bridged
   into a `MutableSharedFlow` (replay 1, drop-oldest): the observer is
   registered right after the core opens and emits each snapshot the core
