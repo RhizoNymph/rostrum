@@ -1,0 +1,164 @@
+﻿2026-10-02T00:06:31.5741691Z Current runner version: '2.337.0'
+2026-10-02T00:06:42.2955101Z ##[group]Run echo "::add-matcher::.github/problem-matchers/msvc.json"
+2026-10-02T00:06:42.2955712Z [36;1mecho "::add-matcher::.github/problem-matchers/msvc.json"[0m
+2026-10-02T00:06:42.3555157Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-02T00:06:42.3555525Z env:
+2026-10-02T00:06:42.3556031Z   FORCE_COLOR: 1
+2026-10-02T00:06:42.3556221Z   ARCH: x64
+2026-10-02T00:06:42.3556400Z ##[endgroup]
+2026-10-02T00:06:42.8579102Z ##[group]Run .\\PCbuild\\build.bat -e -v -d -p "${ARCH}" --disable-gil
+2026-10-02T00:06:42.8579742Z [36;1m.\\PCbuild\\build.bat -e -v -d -p "${ARCH}" --disable-gil[0m
+2026-10-02T00:06:42.8598066Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-02T00:06:42.8598461Z env:
+2026-10-02T00:06:42.8598640Z   FORCE_COLOR: 1
+2026-10-02T00:06:42.8598823Z   ARCH: x64
+2026-10-02T00:06:42.8598989Z ##[endgroup]
+2026-10-02T00:06:43.3893985Z Using py -3.14 (found 3.14 with py.exe)
+2026-10-02T00:06:43.3969766Z Fetching external libraries...
+2026-10-02T00:06:43.4002947Z Fetching bzip2-1.0.8...
+2026-10-02T00:06:45.4746058Z Fetching mpdecimal-4.0.0...
+2026-10-02T00:06:46.0701194Z Fetching sqlite-3.53.4.0...
+2026-10-02T00:06:46.6695373Z Fetching xz-5.8.1.1...
+2026-10-02T00:06:47.3201630Z Fetching zlib-ng-2.2.4...
+2026-10-02T00:06:48.0113110Z Fetching zstd-1.5.7...
+2026-10-02T00:06:48.8202256Z Fetching external binaries...
+2026-10-02T00:06:48.8222987Z Fetching libffi-3.4.4...
+2026-10-02T00:06:49.3833505Z Fetching openssl-bin-3.5.9...
+2026-10-02T00:06:51.0289824Z Fetching tcltk-9.0.4.0...
+2026-10-02T00:06:51.8972699Z Finished.
+2026-10-02T00:06:52.7886115Z Using "C:\Program Files\Microsoft Visual Studio\18\Enterprise\MSBuild\Current\Bin\msbuild.exe" (found in the Visual Studio installation)
+2026-10-02T00:06:52.8257021Z Using py -3.14 (found 3.14 with py.exe)
+2026-10-02T00:06:52.8311848Z 
+2026-10-02T00:08:54.3231527Z ##[group]Run .\\python.bat -m test.pythoninfo
+2026-10-02T00:08:54.3231947Z [36;1m.\\python.bat -m test.pythoninfo[0m
+2026-10-02T00:08:54.3300840Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-02T00:08:54.3301176Z env:
+2026-10-02T00:08:54.3301354Z   FORCE_COLOR: 1
+2026-10-02T00:08:54.3301542Z   ARCH: x64
+2026-10-02T00:08:54.3301724Z ##[endgroup]
+2026-10-02T00:08:54.6371683Z Running Debug|x64 interpreter...
+2026-10-02T00:09:00.4808389Z Python build information
+2026-10-02T00:09:00.4808836Z ########################
+2026-10-02T00:09:00.4809023Z 
+2026-10-02T00:09:00.4809222Z _decimal.LIBMPDEC_VERSION: 4.0.0
+2026-10-02T00:09:00.4809931Z _decimal.libmpdec_version: 4.0.0
+2026-10-02T00:09:00.4810399Z _testcapi.LONG_MAX: 2147483647
+2026-10-02T00:09:00.4810850Z _testcapi.PY_SSIZE_T_MAX: 9223372036854775807
+2026-10-02T00:09:00.4811326Z _testcapi.SIZEOF_TIME_T: 8
+2026-10-02T00:09:00.7505729Z ##[group]Run .\\PCbuild\\rt.bat -p "${ARCH}" -q --fast-ci -d --disable-gil
+2026-10-02T00:09:00.7506304Z [36;1m.\\PCbuild\\rt.bat -p "${ARCH}" -q --fast-ci -d --disable-gil[0m
+2026-10-02T00:09:00.7518856Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-02T00:09:00.7519239Z env:
+2026-10-02T00:09:00.7519411Z   FORCE_COLOR: 1
+2026-10-02T00:09:00.7519608Z   ARCH: x64
+2026-10-02T00:09:00.7519777Z ##[endgroup]
+2026-10-02T00:09:00.8301318Z 
+2026-10-02T00:09:00.8302019Z D:\a\cpython\cpython>"D:\a\cpython\cpython\PCbuild\amd64t\python_d.exe"  -m test --fast-ci --fast-ci 
+2026-10-02T00:09:01.8044072Z + 'D:\a\cpython\cpython\PCbuild\amd64t\python_d.exe' -u -W error -bb -E -m test --fast-ci --fast-ci --dont-add-python-opts
+2026-10-02T00:09:02.3769331Z == CPython 3.16.0a0 free-threading build (remotes/pull/157932/merge:59c98bf, Oct 2 2026, 00:08:14) [MSC v.1951 64 bit (AMD64)]
+2026-10-02T00:09:02.4371344Z == Windows-2025Server-10.0.26100-SP0 little-endian
+2026-10-02T00:09:02.4373609Z == Python build: free_threading debug
+2026-10-02T00:09:02.4374439Z == cwd: D:\a\cpython\cpython\build\test_python_worker_2928æ
+2026-10-02T00:09:02.4374880Z == CPU count: 4
+2026-10-02T00:09:02.4375762Z == encodings: locale=cp1252 FS=utf-8
+2026-10-02T00:09:02.4377145Z == resources: all,-cpu
+2026-10-02T00:09:02.4378989Z 
+2026-10-02T00:09:02.4379654Z Using random seed: 3120313184
+2026-10-02T00:09:02.4752881Z 0:00:00 mem: 45.9 MiB Run 502 tests in parallel using 6 worker processes (timeout: 10 min, worker timeout: 15 min)
+2026-10-02T00:09:04.6096027Z 0:00:02 mem: 269.3 MiB [  1/502] [33mtest.test_gdb.test_cfunction skipped[0m
+2026-10-02T00:32:06.6524972Z 
+2026-10-02T00:32:06.6525493Z ======================================================================
+2026-10-02T00:32:06.6528049Z [31mFAIL[0m[1;31m: test_imap_and_imap_unordered_with_buffersize_when_buffer_is_full (test.test_multiprocessing_spawn.test_threads.WithThreadsTestPool.test_imap_and_imap_unordered_with_buffersize_when_buffer_is_full) (method_name='imap_unordered')[0m
+2026-10-02T00:32:06.6530231Z ----------------------------------------------------------------------
+2026-10-02T00:32:06.6531022Z Traceback (most recent call last):
+2026-10-02T00:32:06.6531998Z   File [35m"D:\a\cpython\cpython\Lib\test\support\__init__.py"[0m, line [35m1121[0m, in [35mwrapper[0m
+2026-10-02T00:32:06.6533102Z     [31mfunc[0m[1;31m(self, *args, **kwargs, **subtest_kwargs)[0m
+2026-10-02T00:32:06.6534254Z     [31m~~~~[0m[1;31m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+2026-10-02T00:32:06.6535672Z   File [35m"D:\a\cpython\cpython\Lib\test\_test_multiprocessing.py"[0m, line [35m3223[0m, in [35mtest_imap_and_imap_unordered_with_buffersize_when_buffer_is_full[0m
+2026-10-02T00:32:06.6537193Z     [31mself.assertEqual[0m[1;31m(last_produced_task_arg.value, processes + 1)[0m
+2026-10-02T00:32:06.6538243Z     [31m~~~~~~~~~~~~~~~~[0m[1;31m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+2026-10-02T00:32:06.6541892Z [1;35mAssertionError[0m: [35m4 != 5[0m
+2026-10-02T00:32:06.6543071Z 
+2026-10-02T00:32:06.6543898Z ----------------------------------------------------------------------
+2026-10-02T00:32:06.6549399Z Ran 1 test in 2.377s
+2026-10-02T00:32:06.6549954Z 
+2026-10-02T00:32:06.6550528Z [1;31mFAILED[0m ([1;31mfailures=1[0m)
+2026-10-02T00:32:06.6551601Z [31mtest test.test_multiprocessing_spawn.test_threads failed[0m
+2026-10-02T00:32:07.7064135Z 0:23:05 load avg: 4.60 mem: 92.2 MiB [2/3/1] [32mtest.test_multiprocessing_spawn.test_manager passed[0m
+2026-10-02T00:32:07.7065618Z Re-running test.test_multiprocessing_spawn.test_manager in verbose mode (matching: test_default_timeout)
+2026-10-02T00:32:07.7067064Z test_default_timeout (test.test_multiprocessing_spawn.test_manager.WithManagerTestBarrier.test_default_timeout)
+2026-10-02T00:34:02.1248073Z Ran 248 tests in 117.694s
+2026-10-02T00:34:02.1248210Z 
+2026-10-02T00:34:02.1248370Z [32mOK[0m ([33mskipped=10[0m)
+2026-10-02T00:34:02.1248658Z [1;31m1 test failed again:[0m
+2026-10-02T00:34:02.1248930Z     test.test_multiprocessing_spawn.test_threads
+2026-10-02T00:34:02.1249135Z 
+2026-10-02T00:34:02.1249290Z == Tests result: [1;31mFAILURE[0m ==
+2026-10-02T00:34:02.1249464Z 
+2026-10-02T00:34:02.1249585Z [33m10 slowest tests:[0m
+2026-10-02T00:34:02.1249819Z - test_regrtest: 4 min 46 sec
+2026-10-02T00:34:02.1250131Z - test.test_multiprocessing_spawn.test_processes: 4 min 4 sec
+2026-10-02T00:34:02.1250546Z - test.test_concurrent_futures.test_process_pool: 3 min 20 sec
+2026-10-02T00:34:02.1251040Z - test.test_multiprocessing_spawn.test_manager: 3 min 9 sec
+2026-10-02T00:34:02.1251419Z - test.test_multiprocessing_spawn.test_misc: 2 min 57 sec
+2026-10-02T00:34:02.1251728Z - test_tarfile: 2 min 49 sec
+2026-10-02T00:34:02.1251959Z - test_zipfile: 2 min 43 sec
+2026-10-02T00:34:02.1252178Z - test_embed: 2 min 12 sec
+2026-10-02T00:34:02.1252391Z - test_pdb: 2 min 6 sec
+2026-10-02T00:34:02.1252611Z - test_imaplib: 2 min 3 sec
+2026-10-02T00:34:02.1252754Z 
+2026-10-02T00:34:02.1252884Z [33m47 tests skipped:[0m
+2026-10-02T00:34:02.1253369Z     test.test_asyncio.test_unix_events test.test_gdb.test_backtrace
+2026-10-02T00:34:02.1253776Z     test.test_gdb.test_cfunction test.test_gdb.test_cfunction_full
+2026-10-02T00:34:02.1254128Z     test.test_gdb.test_jit test.test_gdb.test_misc
+2026-10-02T00:34:02.1254508Z     test.test_gdb.test_pretty_print
+2026-10-02T00:34:02.1254858Z     test.test_multiprocessing_fork.test_manager
+2026-10-02T00:34:02.1255172Z     test.test_multiprocessing_fork.test_misc
+2026-10-02T00:34:02.1255468Z     test.test_multiprocessing_fork.test_processes
+2026-10-02T00:34:02.1255768Z     test.test_multiprocessing_fork.test_threads
+2026-10-02T00:34:02.1256076Z     test.test_multiprocessing_forkserver.test_manager
+2026-10-02T00:34:02.1256406Z     test.test_multiprocessing_forkserver.test_misc
+2026-10-02T00:34:02.1256822Z     test.test_multiprocessing_forkserver.test_preload
+2026-10-02T00:34:02.1257153Z     test.test_multiprocessing_forkserver.test_processes
+2026-10-02T00:34:02.1257556Z     test.test_multiprocessing_forkserver.test_threads test_android
+2026-10-02T00:34:02.1257955Z     test_apple test_curses test_dbm_gnu test_dbm_ndbm test_devpoll
+2026-10-02T00:34:02.1258315Z     test_dtrace test_epoll test_fcntl test_fork1 test_grp
+2026-10-02T00:34:02.1258652Z     test_interpreters test_ioctl test_kqueue test_openpty
+2026-10-02T00:34:02.1259013Z     test_perf_profiler test_perfmaps test_poll test_pty test_pwd
+2026-10-02T00:34:02.1259399Z     test_readline test_resource test_samply_profiler test_syslog
+2026-10-02T00:34:02.1259786Z     test_termios test_threadsignals test_tty test_wait3 test_wait4
+2026-10-02T00:34:02.1260111Z     test_xxlimited test_xxtestfuzz
+2026-10-02T00:34:02.1260258Z 
+2026-10-02T00:34:02.1260449Z [33m3 tests skipped (resource denied):[0m
+2026-10-02T00:34:02.1260746Z     test_peg_generator test_xpickle test_zipfile64
+2026-10-02T00:34:02.1260952Z 
+2026-10-02T00:34:02.1261074Z [33m3 re-run tests:[0m
+2026-10-02T00:34:02.1261320Z     test.test_multiprocessing_spawn.test_manager
+2026-10-02T00:34:02.1261675Z     test.test_multiprocessing_spawn.test_threads test_free_threading
+2026-10-02T00:34:02.1261934Z 
+2026-10-02T00:34:02.1262054Z [1;31m1 test failed:[0m
+2026-10-02T00:34:02.1262292Z     test.test_multiprocessing_spawn.test_threads
+2026-10-02T00:34:02.1262475Z 
+2026-10-02T00:34:02.1262598Z [32m451 tests OK.[0m
+2026-10-02T00:34:02.1262719Z 
+2026-10-02T00:34:02.1262826Z Total duration: 24 min 59 sec
+2026-10-02T00:34:02.1263199Z Total tests: run=53,092 [31mfailures=3[0m [33mskipped=3,712[0m
+2026-10-02T00:34:02.1263828Z Total test files: run=502/502 [31mfailed=1[0m [33mskipped=47[0m [33mresource_denied=3[0m [33mrerun=3[0m
+2026-10-02T00:34:02.1264311Z Result: [1;31mFAILURE[0m
+2026-10-02T00:34:02.3512090Z ##[error]Process completed with exit code 2.
+2026-10-02T00:34:02.3822557Z Post job cleanup.
+2026-10-02T00:34:02.5657018Z [command]"C:\Program Files\Git\bin\git.exe" version
+2026-10-02T00:34:02.6006065Z git version 2.55.0.windows.5
+2026-10-02T00:34:02.6088515Z Temporarily overriding HOME='D:\a\_temp\531bbc43-30ff-425a-becf-06ce8c14e7d9' before making global git config changes
+2026-10-02T00:34:02.6089956Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-02T00:34:02.6091079Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\cpython\cpython
+2026-10-02T00:34:02.6462142Z Removing SSH command configuration
+2026-10-02T00:34:02.6479160Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+2026-10-02T00:34:02.6811925Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+2026-10-02T00:34:03.2471682Z Removing HTTP extra header
+2026-10-02T00:34:03.2484054Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-02T00:34:03.2785608Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+2026-10-02T00:34:03.8261788Z Removing includeIf entries pointing to credentials config files
+2026-10-02T00:34:03.8273839Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-02T00:34:03.8571028Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+2026-10-02T00:34:04.4366198Z Cleaning up orphan processes

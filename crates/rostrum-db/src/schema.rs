@@ -1,7 +1,7 @@
 //! Table definitions and the one migration rule that matters: the cache is
 //! disposable, the drafts table is not.
 
-use sqlx::{Row, SqlitePool};
+use sqlx::{Connection, Row, SqliteConnection};
 use tracing::{info, warn};
 
 use crate::error::DbError;
@@ -141,14 +141,14 @@ CREATE TABLE IF NOT EXISTS cache_stack (
 /// Runs as one transaction, so a failure part-way leaves the file untouched.
 /// A cache version mismatch drops the cache tables; the drafts table is only
 /// ever created, never dropped.
-pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), DbError> {
+pub(crate) async fn migrate(conn: &mut SqliteConnection) -> Result<(), DbError> {
     // `IMMEDIATE`: the migration reads the recorded versions before it
     // writes. A deferred transaction would take a read snapshot first and
     // then fail outright (`SQLITE_BUSY_SNAPSHOT`, which the busy timeout does
     // not retry) if another connection — a previous session still flushing
     // its last writes — committed in between. Taking the write lock up front
     // makes the open wait its turn instead.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let mut tx = conn.begin_with("BEGIN IMMEDIATE").await?;
 
     sqlx::query(CREATE_META).execute(&mut *tx).await?;
     sqlx::query(CREATE_DRAFTS).execute(&mut *tx).await?;

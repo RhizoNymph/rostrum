@@ -172,3 +172,82 @@ async fn the_page_refuses_a_cross_site_code_request_over_a_real_socket() {
     assert_eq!(status, 403, "{body}");
     harness.stop().await;
 }
+
+#[tokio::test]
+async fn a_phone_pushes_its_settings_and_a_stale_push_is_turned_back() {
+    use rostrum_remote::{ConfigPush, ConfigPushOutcome, diff};
+
+    let harness = Harness::start(
+        "it-tls-push",
+        None,
+        Some(serde_json::json!({
+            "repos": ["RhizoNymph/rostrum"],
+            "refresh_secs": 45,
+            "clones": {"RhizoNymph/rostrum": "/home/secret/rostrum"},
+            "kept_unknown": [1, 2]
+        })),
+    )
+    .await;
+    let (client, _) = harness.pair("phone").await;
+
+    // Preview: the phone's settings against the desktop's.
+    let current = client.config_with_revision().await.expect("config");
+    let mut mine = current.config.clone();
+    mine.repos.push(RepoId::new("rust-lang", "rust"));
+    mine.hide_drafts = true;
+    let changes = diff(&current.config, &mine);
+    assert_eq!(changes.len(), 2);
+
+    let pushed = client
+        .push_config(&ConfigPush {
+            config: mine.clone(),
+            base: Some(current.revision.clone()),
+        })
+        .await
+        .expect("push");
+    let ConfigPushOutcome::Applied(applied) = pushed else {
+        panic!("expected applied, got {pushed:?}");
+    };
+    assert_eq!(applied.config.repos, mine.repos);
+    assert!(diff(&applied.config, &mine).is_empty());
+    // An older phone's plain read sees the new settings too.
+    assert_eq!(client.config().await.expect("config").repos, mine.repos);
+
+    // A second push still based on the old revision is turned back with the
+    // current settings, and writes nothing.
+    let before = std::fs::read(harness.scratch.join("config.json")).expect("read");
+    let mut stale = mine.clone();
+    stale.prs_per_repo = 7;
+    let outcome = client
+        .push_config(&ConfigPush {
+            config: stale,
+            base: Some(current.revision),
+        })
+        .await
+        .expect("answers");
+    assert_eq!(outcome, ConfigPushOutcome::Changed(applied));
+    assert_eq!(
+        std::fs::read(harness.scratch.join("config.json")).expect("read"),
+        before
+    );
+
+    let on_disk: serde_json::Value = serde_json::from_slice(&before).expect("json");
+    assert_eq!(on_disk["refresh_secs"], 45);
+    assert_eq!(
+        on_disk["clones"],
+        serde_json::json!({"RhizoNymph/rostrum": "/home/secret/rostrum"})
+    );
+    assert_eq!(on_disk["kept_unknown"], serde_json::json!([1, 2]));
+
+    // Unpaired, a push is refused.
+    client.unpair().await.expect("unpair");
+    let err = client
+        .push_config(&ConfigPush {
+            config: mine,
+            base: None,
+        })
+        .await
+        .expect_err("revoked");
+    assert!(matches!(err, ClientError::Unauthorized), "{err:?}");
+    harness.stop().await;
+}

@@ -125,7 +125,7 @@ impl Store {
         tracing::debug!(?tab, "feed tab changed");
         self.state.tab = tab;
         self.config.feed_tab = tab;
-        self.persist_config();
+        self.persist_config(cx);
         cx.notify();
     }
 

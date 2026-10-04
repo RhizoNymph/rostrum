@@ -291,3 +291,15 @@ pub fn assert_no_secret_on_disk(dir: &Path, secret: &str) {
         }
     }
 }
+
+/// Every pull request in a list of feed items, stacks flattened, in display
+/// order.
+pub fn flat_pulls(items: &[rostrum_ffi::stacks::PullItem]) -> Vec<rostrum_ffi::feed::PrSummary> {
+    items
+        .iter()
+        .flat_map(|item| match item {
+            rostrum_ffi::stacks::PullItem::Single { pull } => vec![pull.clone()],
+            rostrum_ffi::stacks::PullItem::Stack { members, .. } => members.clone(),
+        })
+        .collect()
+}

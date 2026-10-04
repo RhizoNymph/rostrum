@@ -1,4 +1,4 @@
-package io.github.rhizonymph.rostrum.ui.pr.conversation
+package io.github.rhizonymph.rostrum.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -24,10 +24,6 @@ import androidx.compose.ui.unit.dp
 import io.github.rhizonymph.rostrum.data.model.Chip
 import io.github.rhizonymph.rostrum.data.model.MdBlock
 import io.github.rhizonymph.rostrum.data.model.TimelineEvent
-import io.github.rhizonymph.rostrum.ui.components.Avatar
-import io.github.rhizonymph.rostrum.ui.components.CardShape
-import io.github.rhizonymph.rostrum.ui.components.RostrumIcons
-import io.github.rhizonymph.rostrum.ui.components.StatusChip
 import io.github.rhizonymph.rostrum.ui.components.markdown.MarkdownBlocks
 import io.github.rhizonymph.rostrum.ui.format.relativeAge
 import io.github.rhizonymph.rostrum.ui.theme.RostrumText
@@ -105,15 +101,17 @@ fun EventRow(
     }
 }
 
-/** The icon for an event row. */
+/** The icon for an event row (pull requests and issues share the events). */
 fun eventIcon(event: TimelineEvent): ImageVector = when (event) {
     TimelineEvent.Merged -> RostrumIcons.Merge
     TimelineEvent.Closed -> RostrumIcons.Close
+    is TimelineEvent.ClosedAs -> RostrumIcons.CircleCheck
     TimelineEvent.Reopened -> RostrumIcons.Refresh
     TimelineEvent.ReadyForReview, is TimelineEvent.ReviewRequested -> RostrumIcons.Eye
     TimelineEvent.ConvertedToDraft, is TimelineEvent.Renamed -> RostrumIcons.Edit
     TimelineEvent.ForcePushed -> RostrumIcons.Rebase
     is TimelineEvent.Other -> RostrumIcons.Commit
     is TimelineEvent.Assigned, is TimelineEvent.Labeled -> RostrumIcons.Plus
-    is TimelineEvent.Unlabeled -> RostrumIcons.Close
+    is TimelineEvent.Unassigned, is TimelineEvent.Unlabeled -> RostrumIcons.Close
+    is TimelineEvent.CrossReferenced -> RostrumIcons.Link
 }

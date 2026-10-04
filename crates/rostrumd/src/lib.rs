@@ -20,6 +20,7 @@
 pub mod api;
 pub mod app;
 pub mod boxed;
+pub mod config_push;
 pub mod convert;
 pub mod daemon;
 pub mod error;

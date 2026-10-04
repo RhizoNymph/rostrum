@@ -32,7 +32,7 @@ use std::{path::Path, time::Duration};
 
 use chrono::Utc;
 use sqlx::{
-    SqlitePool,
+    ConnectOptions, Connection, SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 
@@ -40,6 +40,11 @@ pub use error::DbError;
 pub use types::{CachedResponse, DraftSet};
 
 use types::encode_time;
+
+/// How long a query waits for a free pooled connection. Only contention
+/// between this store's own callers counts against it: creating and migrating
+/// the database, which waits on the disk, happens before the pool exists.
+const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A handle to the local store. Cheap to clone; wraps a connection pool.
 #[derive(Clone, Debug)]
@@ -68,7 +73,23 @@ impl Db {
             .foreign_keys(true)
             .busy_timeout(Duration::from_secs(5));
 
-        Self::from_options(options, 4).await
+        // Create and migrate on a connection of its own, before any pool
+        // exists. Creating the file and switching it to WAL each `fsync`, and
+        // an `fsync` has no upper bound on a busy disk: done through the
+        // pool, a slow disk turned into `PoolTimedOut` after the pool's
+        // acquire timeout, though nothing was wrong. A plain connection waits
+        // as long as the disk needs, and still fails on a real error.
+        let mut setup = options.clone().connect().await?;
+        schema::migrate(&mut setup).await?;
+
+        let pool = Self::pool_options(4).connect_lazy_with(options);
+        // Open the pool's first connection before the setup one closes:
+        // closing a WAL database's last connection checkpoints it, which is
+        // another `fsync` for nothing. This also surfaces a pool that cannot
+        // connect here, at open, rather than on the first query.
+        drop(pool.acquire().await?);
+        setup.close().await?;
+        Ok(Self { pool })
     }
 
     /// An ephemeral database, for tests.
@@ -83,23 +104,19 @@ impl Db {
             .foreign_keys(true)
             .busy_timeout(Duration::from_secs(5));
 
-        Self::from_options(options, 1).await
+        let pool = Self::pool_options(1).connect_with(options).await?;
+        let mut conn = pool.acquire().await?;
+        schema::migrate(&mut conn).await?;
+        Ok(Self { pool })
     }
 
-    async fn from_options(
-        options: SqliteConnectOptions,
-        max_connections: u32,
-    ) -> Result<Self, DbError> {
-        let pool = SqlitePoolOptions::new()
+    fn pool_options(max_connections: u32) -> SqlitePoolOptions {
+        SqlitePoolOptions::new()
             .max_connections(max_connections)
             .min_connections(1)
             .idle_timeout(None)
             .max_lifetime(None)
-            .connect_with(options)
-            .await?;
-
-        schema::migrate(&pool).await?;
-        Ok(Self { pool })
+            .acquire_timeout(ACQUIRE_TIMEOUT)
     }
 
     /// Delete cache rows last written more than `max_age` ago.

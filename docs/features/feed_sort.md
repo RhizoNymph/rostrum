@@ -22,11 +22,9 @@ direction, chosen from a **Sort** popover in the feed header and remembered in
 - Grouping pull requests into stacks — see `stacks.md`. `flatten`'s
   `push_units` sorts each stack as one unit through `compare_groups`, with the
   stack's visible members bottom first.
-- Sorting on Android. The Android core lays the feed out with
-  `FeedOrder::AsListed` — the user arranges its repositories in settings — and
-  ignores the persisted sort until it has a control of its own. It does
-  receive repository metadata, so turning sorting on there is a call-site
-  change.
+- The Android app's Sort sheet: see `docs/features/android_issues_repo.md`.
+  The phone receives both sorts and the core's option labels through
+  `rostrum-ffi` and orders nothing itself.
 - A separate sort per tab. Issues and pull requests share the one item sort;
   the tab never changes the order setting, only which list it applies to.
 - Filtering. The sort never hides anything; see `author_filter` and

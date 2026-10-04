@@ -1,15 +1,18 @@
 //! rostrum's own `config.json`: clones, the conflict handler, autostash.
 //!
 //! Re-read on every request that needs it, so a clone added in the desktop
-//! app works from the phone without restarting the daemon. The daemon only
-//! reads this file. When it does not exist the defaults are used without
-//! writing them — creating the desktop app's config is the desktop app's job.
+//! app works from the phone without restarting the daemon. When it does not
+//! exist the defaults are used without writing them. The one write is a
+//! phone's settings push, which replaces only the shareable keys
+//! ([`crate::config_push`]).
 
 use std::path::{Path, PathBuf};
 
 use rostrum_config::Config;
-use rostrum_core::RepoId;
-use rostrum_remote::{API_VERSION, CloneInfo, DesktopConfig, MachineInfo};
+use rostrum_core::{RepoId, branches::TrunkName};
+use rostrum_remote::{
+    API_VERSION, CloneInfo, ConfigRevision, DesktopConfig, MachineInfo, RepoTrunks, RevisedConfig,
+};
 
 #[derive(Clone, Debug)]
 pub struct RostrumConfig {
@@ -104,6 +107,34 @@ pub fn desktop_config(config: &Config) -> DesktopConfig {
             .collect(),
         include_involved: config.include_involved,
         autostash: config.autostash,
+        issues_per_repo: Some(config.issues_per_repo),
+        repo_sort: Some(config.repo_sort),
+        item_sort: Some(config.item_sort),
+        trunks: Some(trunks(config)),
+    }
+}
+
+/// The configured trunks, valid repositories and names only, by repository.
+fn trunks(config: &Config) -> Vec<RepoTrunks> {
+    config
+        .trunks
+        .iter()
+        .filter_map(|(repo, names)| {
+            let repo = repo.parse::<RepoId>().ok()?;
+            let trunks = names
+                .iter()
+                .filter_map(|name| TrunkName::parse(name).ok())
+                .collect();
+            Some(RepoTrunks { repo, trunks })
+        })
+        .collect()
+}
+
+/// [`desktop_config`] with the revision of the settings it was read from.
+pub fn revised_config(config: &Config) -> RevisedConfig {
+    RevisedConfig {
+        config: desktop_config(config),
+        revision: ConfigRevision(config.shared().revision()),
     }
 }
 

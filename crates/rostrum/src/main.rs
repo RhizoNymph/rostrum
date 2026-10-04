@@ -1,5 +1,6 @@
 //! rostrum — open pull requests across many repositories, in one feed.
 
+mod ci;
 mod detail;
 mod feed;
 mod issue;
@@ -109,6 +110,11 @@ struct Workspace {
     /// Loading syntect's defaults is slow, so one highlighter is shared by
     /// every detail view.
     highlighter: Rc<Highlighter>,
+    /// The CI grid. Built once and kept, so its scroll position and
+    /// selection survive switching away and back.
+    ci: Entity<ci::CiView>,
+    /// Whether the window shows the CI grid instead of the feed and detail.
+    showing_ci: bool,
     /// Watches the store for newly arrived pull requests. Held so it is not
     /// dropped; it has no rendered form.
     _notifier: Entity<Notifier>,
@@ -120,8 +126,12 @@ impl Workspace {
         let store = cx.new(Store::new);
         let feed = cx.new(|cx| FeedView::new(store.clone(), cx));
         let notifier = cx.new(|cx| Notifier::new(store.clone(), cx));
+        let ci = cx.new(|cx| ci::CiView::new(store.clone(), cx));
 
         let subscriptions = vec![
+            cx.subscribe_in(&ci, window, |this, _, event, window, cx| match event {
+                ci::CiEvent::Leave => this.show_ci(false, window, cx),
+            }),
             cx.observe(&store, |this, _, cx| this.sync_detail(cx)),
             cx.subscribe_in(&feed, window, |this, _, event, window, cx| match event {
                 FeedEvent::FocusDetail => {
@@ -129,6 +139,7 @@ impl Workspace {
                 }
                 FeedEvent::OpenRepo(repo) => this.open_repo(repo.clone(), window, cx),
                 FeedEvent::NewIssue { repo } => this.open_new_issue(repo.clone(), cx),
+                FeedEvent::OpenCi => this.show_ci(true, window, cx),
             }),
         ];
 
@@ -144,9 +155,29 @@ impl Workspace {
             detail: None,
             detail_focus: cx.focus_handle(),
             highlighter: Rc::new(Highlighter::new()),
+            ci,
+            showing_ci: false,
             _notifier: notifier,
             _subscriptions: subscriptions,
         }
+    }
+
+    /// Switch the whole window to the CI grid, or back to the feed. Focus
+    /// follows, so the grid's keys work at once and the feed's afterwards.
+    fn show_ci(&mut self, show: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.showing_ci == show {
+            return;
+        }
+        tracing::info!(show, "CI view");
+        self.showing_ci = show;
+        self.ci.update(cx, |ci, cx| ci.set_visible(show, cx));
+        let focus = if show {
+            self.ci.focus_handle(cx)
+        } else {
+            self.feed.focus_handle(cx)
+        };
+        window.focus(&focus, cx);
+        cx.notify();
     }
 
     /// Switch the left pane to `repo`'s own view.
@@ -390,7 +421,10 @@ impl Render for Workspace {
                         })),
                 )
             })
-            .child(
+            .when(self.showing_ci, |el| {
+                el.child(div().flex_1().min_h_0().child(self.ci.clone()))
+            })
+            .when(!self.showing_ci, |el| el.child(
                 h_flex()
                     .flex_1()
                     .min_h_0()
@@ -443,7 +477,7 @@ impl Render for Workspace {
                                 ),
                             }),
                     ),
-            )
+            ))
     }
 }
 
@@ -462,6 +496,7 @@ fn main() {
         feed::bind_keys(cx);
         repo_view::bind_keys(cx);
         detail::bind_keys(cx);
+        ci::bind_keys(cx);
 
         cx.bind_keys([
             gpui::KeyBinding::new("ctrl-q", Quit, None),

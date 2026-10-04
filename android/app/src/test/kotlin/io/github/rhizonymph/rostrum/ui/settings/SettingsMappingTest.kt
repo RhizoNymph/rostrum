@@ -4,6 +4,9 @@ import io.github.rhizonymph.rostrum.data.BackendError
 import io.github.rhizonymph.rostrum.data.model.CloneInfo
 import io.github.rhizonymph.rostrum.data.model.FeedPreferences
 import io.github.rhizonymph.rostrum.data.model.FeedSnapshot
+import io.github.rhizonymph.rostrum.data.model.FeedTab
+import io.github.rhizonymph.rostrum.data.model.TabCounts
+import io.github.rhizonymph.rostrum.testing.TEST_SORT
 import io.github.rhizonymph.rostrum.data.model.MachineInfo
 import io.github.rhizonymph.rostrum.data.model.RepoBody
 import io.github.rhizonymph.rostrum.data.model.RepoLoad
@@ -23,6 +26,9 @@ class SettingsMappingTest {
 
     private fun feed(shown: List<String>, hideEmpty: Boolean = true) = FeedSnapshot(
         revision = 1,
+        tab = FeedTab.PullRequests,
+        tabCounts = TabCounts(0, 0),
+        sort = TEST_SORT,
         repos = shown.map { RepoSection(it, RepoLoad.Idle, 0, 0, false, RepoBody.Empty) },
         hiddenEmptyRepos = 0, totalOpen = 0, visibleOpen = 0, query = "",
         preferences = FeedPreferences.Default.copy(hideEmptyRepos = hideEmpty),

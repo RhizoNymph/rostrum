@@ -14,6 +14,8 @@ data class FeedUiState(
     val search: SearchState = SearchState.Closed,
     val desktop: DesktopPill = DesktopPill.Checking,
     val filters: FilterSheetState = FilterSheetState.Closed,
+    /** The Sort sheet is open; it reads the snapshot's [io.github.rhizonymph.rostrum.data.model.SortSettings]. */
+    val sortOpen: Boolean = false,
     /** GitHub rejected the token; the screen offers signing in again. */
     val authProblem: BackendError? = null,
     /** The instant relative ages ("2h") are measured from. */

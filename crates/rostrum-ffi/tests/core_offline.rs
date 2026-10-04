@@ -25,7 +25,10 @@ use support::{Scratch, assert_no_secret_on_disk, files, pull, repo, seed};
 
 fn pulls(snapshot: &FeedSnapshot) -> Vec<u32> {
     match &snapshot.repos[0].body {
-        RepoBody::Pulls { pulls } => pulls.iter().map(|pull| pull.number).collect(),
+        RepoBody::Pulls { items } => support::flat_pulls(items)
+            .iter()
+            .map(|pull| pull.number)
+            .collect(),
         other => panic!("expected pulls, got {other:?}"),
     }
 }

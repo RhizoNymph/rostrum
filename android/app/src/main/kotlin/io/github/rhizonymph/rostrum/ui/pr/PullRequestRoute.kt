@@ -97,6 +97,7 @@ fun PullRequestRoute(
             onMerge = detailVm::openMerge,
             onUpdateBranch = detailVm::updateBranch,
             local = LocalActions(branchVm::runOp, branchVm::abort, branchVm::setAutostash, branchVm::refresh),
+            onLoadEarlier = detailVm::loadEarlier,
         ),
     )
 

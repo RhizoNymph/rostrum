@@ -1,6 +1,7 @@
 package io.github.rhizonymph.rostrum.ui.feed
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,7 +33,14 @@ import androidx.compose.ui.unit.dp
 import io.github.rhizonymph.rostrum.data.BackendError
 import io.github.rhizonymph.rostrum.data.describe
 import io.github.rhizonymph.rostrum.data.model.FeedSnapshot
-import io.github.rhizonymph.rostrum.data.model.PrSummary
+import io.github.rhizonymph.rostrum.data.model.FeedTab
+import io.github.rhizonymph.rostrum.ui.components.SegmentPosition
+import io.github.rhizonymph.rostrum.ui.components.cardSegment
+import io.github.rhizonymph.rostrum.ui.items.ItemRow
+import io.github.rhizonymph.rostrum.ui.items.ItemRowContent
+import io.github.rhizonymph.rostrum.ui.items.RowCallbacks
+import io.github.rhizonymph.rostrum.ui.items.repoInitial
+import io.github.rhizonymph.rostrum.ui.items.rowsOf
 import io.github.rhizonymph.rostrum.data.model.RepoBody
 import io.github.rhizonymph.rostrum.data.model.RepoLoad
 import io.github.rhizonymph.rostrum.data.model.RepoSection
@@ -59,8 +67,9 @@ private sealed interface Segment {
         override val key get() = "stale:$repo"
     }
 
-    data class Pull(val pr: PrSummary) : Segment {
-        override val key get() = "pr:${pr.repo}#${pr.number}"
+    /** A pull request, a stack header or an issue. */
+    data class Item(val row: ItemRow) : Segment {
+        override val key get() = row.key
     }
 
     data class Body(val section: RepoSection) : Segment {
@@ -70,11 +79,16 @@ private sealed interface Segment {
 
 private fun segmentsOf(section: RepoSection): List<Segment> = buildList {
     add(Segment.Header(section))
+    val stale = (section.load as? RepoLoad.Failed)?.let { Segment.StaleNotice(section.repo, it.reason) }
     when (val body = section.body) {
         RepoBody.Collapsed -> Unit
         is RepoBody.Pulls -> {
-            (section.load as? RepoLoad.Failed)?.let { add(Segment.StaleNotice(section.repo, it.reason)) }
-            body.pulls.forEach { add(Segment.Pull(it)) }
+            stale?.let(::add)
+            rowsOf(section.repo, body.items).forEach { add(Segment.Item(it)) }
+        }
+        is RepoBody.Issues -> {
+            stale?.let(::add)
+            body.issues.forEach { add(Segment.Item(ItemRow.Issue(it))) }
         }
         RepoBody.Loading, RepoBody.Empty, is RepoBody.Failed -> add(Segment.Body(section))
     }
@@ -121,7 +135,7 @@ fun FeedList(
                             .padding(top = gap)
                             .cardSegment(position, colors.surface, colors.border),
                     ) {
-                        SegmentContent(segment, now, actions)
+                        SegmentContent(segment, snapshot.tab, now, actions)
                     }
                 }
             }
@@ -145,18 +159,25 @@ private fun LazyListScope.footer(hidden: Int) {
 }
 
 @Composable
-private fun SegmentContent(segment: Segment, now: Instant, actions: FeedActions) {
+private fun SegmentContent(segment: Segment, tab: FeedTab, now: Instant, actions: FeedActions) {
     when (segment) {
-        is Segment.Header -> RepoHeader(segment.section, onToggle = { actions.toggleCollapsed(segment.section.repo) })
+        is Segment.Header -> RepoHeader(
+            segment.section,
+            onOpen = { actions.openRepo(segment.section.repo) },
+            onToggle = { actions.toggleCollapsed(segment.section.repo) },
+        )
         is Segment.StaleNotice -> StaleNotice(segment.reason, onRetry = { actions.retryRepo(segment.repo) })
-        is Segment.Pull -> PrRow(segment.pr, now, onClick = { actions.openPullRequest(segment.pr.ref) })
-        is Segment.Body -> RepoBodyRow(segment.section, onRetry = { actions.retryRepo(segment.section.repo) })
+        is Segment.Item -> ItemRowContent(segment.row, now, RowCallbacks(actions.openPullRequest, actions.openIssue, actions.stackAction))
+        is Segment.Body -> RepoBodyRow(segment.section, tab, onRetry = { actions.retryRepo(segment.section.repo) })
     }
 }
 
-/** 50dp: letter tile, `owner/` + **name**, visible count, collapse chevron. */
+/**
+ * 50dp: letter tile, `owner/` + **name** (tap to open the repository's
+ * screen), visible count, collapse chevron.
+ */
 @Composable
-private fun RepoHeader(section: RepoSection, onToggle: () -> Unit) {
+private fun RepoHeader(section: RepoSection, onOpen: () -> Unit, onToggle: () -> Unit) {
     val colors = RostrumTheme.colors
     val (owner, name) = splitRepo(section.repo)
     Row(
@@ -181,7 +202,11 @@ private fun RepoHeader(section: RepoSection, onToggle: () -> Unit) {
             },
             style = RostrumText.label.copy(fontWeight = FontWeight.Normal),
             maxLines = 1,
-            modifier = Modifier.weight(1f).semantics { heading() },
+            modifier = Modifier
+                .weight(1f)
+                .clickable(onClickLabel = "Open ${section.repo}", onClick = onOpen)
+                .padding(vertical = 12.dp)
+                .semantics { heading() },
         )
         if (section.load == RepoLoad.Loading && section.body !is RepoBody.Loading) {
             CircularProgressIndicator(color = colors.textMuted, strokeWidth = 1.5.dp, modifier = Modifier.size(12.dp))
@@ -198,7 +223,7 @@ private fun RepoHeader(section: RepoSection, onToggle: () -> Unit) {
 }
 
 @Composable
-private fun RepoBodyRow(section: RepoSection, onRetry: () -> Unit) {
+private fun RepoBodyRow(section: RepoSection, tab: FeedTab, onRetry: () -> Unit) {
     val colors = RostrumTheme.colors
     when (val body = section.body) {
         RepoBody.Loading -> Row(
@@ -207,7 +232,7 @@ private fun RepoBodyRow(section: RepoSection, onRetry: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             CircularProgressIndicator(color = colors.accent, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
-            Text("Loading pull requests…", style = RostrumText.meta, color = colors.textMuted)
+            Text(if (tab == FeedTab.Issues) "Loading issues…" else "Loading pull requests…", style = RostrumText.meta, color = colors.textMuted)
         }
         is RepoBody.Failed -> Column(
             Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp, top = 12.dp, bottom = 4.dp),
@@ -220,12 +245,12 @@ private fun RepoBodyRow(section: RepoSection, onRetry: () -> Unit) {
             TextPillButton("Retry", onRetry)
         }
         RepoBody.Empty -> Text(
-            emptyBodyText(section),
+            emptyBodyText(section, tab),
             style = RostrumText.meta,
             color = colors.textMuted,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp),
         )
-        RepoBody.Collapsed, is RepoBody.Pulls -> Unit
+        RepoBody.Collapsed, is RepoBody.Pulls, is RepoBody.Issues -> Unit
     }
 }
 

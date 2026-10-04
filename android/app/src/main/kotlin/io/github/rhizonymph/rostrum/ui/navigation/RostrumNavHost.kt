@@ -10,7 +10,10 @@ import androidx.navigation.toRoute
 import io.github.rhizonymph.rostrum.data.model.PrRef
 import io.github.rhizonymph.rostrum.ui.desktop.DesktopRoute
 import io.github.rhizonymph.rostrum.ui.feed.FeedRoute
+import io.github.rhizonymph.rostrum.ui.issue.IssueRoute
+import io.github.rhizonymph.rostrum.ui.newissue.NewIssueRoute
 import io.github.rhizonymph.rostrum.ui.onboarding.PairRoute
+import io.github.rhizonymph.rostrum.ui.repo.RepoRoute
 import io.github.rhizonymph.rostrum.ui.onboarding.SignInRoute
 import io.github.rhizonymph.rostrum.ui.pr.PullRequestRoute
 import io.github.rhizonymph.rostrum.ui.profiles.AddTokenProfileRoute
@@ -62,6 +65,10 @@ fun RostrumNavHost(
                 profileLabel = label,
                 onOpenPullRequest = { pr -> navController.openPullRequest(pr) },
                 onOpenProfiles = openProfiles,
+                onOpenIssue = { issue -> navController.navigate(Destination.Issue(issue.repo, issue.number)) },
+                onOpenRepo = { repo -> navController.navigate(Destination.Repo(repo)) },
+                onNewIssue = { navController.navigate(Destination.NewIssue()) },
+                onPairDesktop = { navController.navigate(Destination.Pair()) },
             )
         }
         composable<Destination.Desktop> {
@@ -99,6 +106,33 @@ fun RostrumNavHost(
                     )
                 },
                 reviewSheet = { onDismiss, onSubmitted -> SubmitReviewSheet(pr, onDismiss, onSubmitted) },
+            )
+        }
+        composable<Destination.Issue> { entry ->
+            val route = entry.toRoute<Destination.Issue>()
+            IssueRoute(issue = route.issue, onBack = { navController.popBackStack() })
+        }
+        composable<Destination.NewIssue> { entry ->
+            val route = entry.toRoute<Destination.NewIssue>()
+            NewIssueRoute(
+                repo = route.repo,
+                onBack = { navController.popBackStack() },
+                onCreated = { issue ->
+                    navController.navigate(Destination.Issue(issue.repo, issue.number)) {
+                        popUpTo<Destination.NewIssue> { inclusive = true }
+                    }
+                },
+            )
+        }
+        composable<Destination.Repo> { entry ->
+            val route = entry.toRoute<Destination.Repo>()
+            RepoRoute(
+                repo = route.repo,
+                onBack = { navController.popBackStack() },
+                onOpenPullRequest = { pr -> navController.openPullRequest(pr) },
+                onOpenIssue = { issue -> navController.navigate(Destination.Issue(issue.repo, issue.number)) },
+                onNewIssue = { repo -> navController.navigate(Destination.NewIssue(repo)) },
+                onPairDesktop = { navController.navigate(Destination.Pair()) },
             )
         }
         composable<Destination.FileDiff> { entry ->

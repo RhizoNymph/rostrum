@@ -1,5 +1,6 @@
 package io.github.rhizonymph.rostrum.ui.feed
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -9,13 +10,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import io.github.rhizonymph.rostrum.data.model.FeedTab
 import androidx.compose.ui.unit.dp
 import io.github.rhizonymph.rostrum.data.requiresSignIn
 import io.github.rhizonymph.rostrum.ui.common.UiState
 import io.github.rhizonymph.rostrum.ui.common.dataOrNull
 import io.github.rhizonymph.rostrum.ui.components.ErrorView
 import io.github.rhizonymph.rostrum.ui.components.LoadingView
+import io.github.rhizonymph.rostrum.ui.components.NewIssueFab
 
 /**
  * The feed, stateless: header (with [profileLabel], the active profile, in
@@ -33,7 +37,6 @@ fun FeedScreen(
     val snapshot = state.feed.dataOrNull()
     Column(modifier.fillMaxSize()) {
         FeedHeader(
-            openCount = snapshot?.visibleOpen,
             desktop = state.desktop.view(profileLabel),
             filterActive = snapshot?.filterActive == true,
             filterCount = snapshot?.let { activeFilterCount(it.preferences) } ?: 0,
@@ -44,27 +47,33 @@ fun FeedScreen(
             FeedSearchField(search.text, actions.queryChange)
         }
         if (snapshot != null) {
+            FeedTabs(snapshot.tab, snapshot.tabCounts, snapshot.sort.summary, actions)
             FilterChipsRow(snapshot.preferences, snapshot.viewer?.login, actions)
         }
-        PullToRefreshBox(
-            isRefreshing = state.refreshing,
-            onRefresh = actions.refresh,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-        ) {
-            when (val feed = state.feed) {
-                UiState.Loading -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-                    LoadingView(label = "Loading your feed…")
-                }
-                is UiState.Error -> Column(
-                    Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp),
-                ) {
-                    if (feed.error.requiresSignIn) {
-                        AuthBanner(feed.error, actions.signOut)
-                    } else {
-                        ErrorView(feed.error, title = "Couldn't load the feed", onRetry = actions.retry)
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            PullToRefreshBox(
+                isRefreshing = state.refreshing,
+                onRefresh = actions.refresh,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                when (val feed = state.feed) {
+                    UiState.Loading -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                        LoadingView(label = "Loading your feed…")
                     }
+                    is UiState.Error -> Column(
+                        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp),
+                    ) {
+                        if (feed.error.requiresSignIn) {
+                            AuthBanner(feed.error, actions.signOut)
+                        } else {
+                            ErrorView(feed.error, title = "Couldn't load the feed", onRetry = actions.retry)
+                        }
+                    }
+                    is UiState.Loaded -> FeedList(feed.data, state.now, state.authProblem, actions)
                 }
-                is UiState.Loaded -> FeedList(feed.data, state.now, state.authProblem, actions)
+            }
+            if (snapshot?.tab == FeedTab.Issues) {
+                NewIssueFab(actions.newIssue, Modifier.align(Alignment.BottomEnd).padding(16.dp))
             }
         }
     }

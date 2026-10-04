@@ -9,16 +9,28 @@ use std::collections::HashMap;
 
 use chrono::Utc;
 use rostrum_core::{
-    FeedFilter, FeedOrder, FeedRow, LoadState, PullRequest, RepoId, RepoMeta, RepoState, User,
-    carry_forward_divergence, flatten_in,
+    FeedFilter, FeedRow, FeedStack, FeedTab, Issue, LoadState, LoginKey, PullRequest, RepoId,
+    RepoMeta, RepoState, Stack, User, carry_forward_divergence, flatten_tab, tab_counts,
 };
 use rostrum_github::GitHubError;
 
 use crate::{
     engine::state::PullKey,
-    feed::{FeedPreferences, FeedSnapshot, RepoBody, RepoLoad, RepoSection, summary::summarize},
+    feed::{FeedPreferences, FeedSnapshot, RepoBody, RepoLoad, RepoSection, TabCounts},
+    issues::summary::summarize_issue,
+    sort::settings,
+    stacks::PullItems,
     types::UserRef,
 };
+
+/// What the cache held for one repository.
+#[derive(Default)]
+pub(crate) struct Cached {
+    pub prs: Vec<PullRequest>,
+    pub issues: Vec<Issue>,
+    pub stacks: Vec<Stack>,
+    pub meta: Option<RepoMeta>,
+}
 
 /// What one repository fetch brought back.
 pub(crate) struct Fetched {
@@ -44,6 +56,8 @@ pub(crate) struct FeedState {
     /// Watched repositories, in settings order.
     pub repos: Vec<RepoState>,
     pub filter: FeedFilter,
+    /// Which list the feed shows.
+    pub tab: FeedTab,
     /// Bumped on every change; see `FeedSnapshot::revision`.
     pub revision: u64,
     /// Whether the SQLite cache has been read into `repos`.
@@ -58,10 +72,11 @@ pub(crate) struct FeedState {
 }
 
 impl FeedState {
-    pub(crate) fn new(repos: Vec<RepoId>, filter: FeedFilter) -> Self {
+    pub(crate) fn new(repos: Vec<RepoId>, filter: FeedFilter, tab: FeedTab) -> Self {
         Self {
             repos: repos.into_iter().map(RepoState::new).collect(),
             filter,
+            tab,
             revision: 0,
             hydrated: false,
             known: HashMap::new(),
@@ -82,6 +97,9 @@ impl FeedState {
         // not blank its card.
         if state.prs.is_empty() {
             state.load = LoadState::Loading;
+        }
+        if state.issues.is_empty() && !matches!(state.issues_load, LoadState::Loaded { .. }) {
+            state.issues_load = LoadState::Loading;
         }
         let seq = self.next_seq;
         self.next_seq += 1;
@@ -132,12 +150,48 @@ impl FeedState {
         }
     }
 
+    /// Apply a repository's open issues, fetched beside its pull requests.
+    /// A failure keeps the issues already held and reports itself on the
+    /// Issues tab only.
+    pub(crate) fn apply_issues(
+        &mut self,
+        repo: &RepoId,
+        outcome: Result<Vec<Issue>, &GitHubError>,
+    ) {
+        let Some(state) = self.repos.iter_mut().find(|state| &state.id == repo) else {
+            return;
+        };
+        match outcome {
+            Ok(issues) => {
+                state.issues = issues;
+                state.issues_load = LoadState::Loaded { at: Utc::now() };
+            }
+            Err(error) => {
+                state.issues_load = LoadState::Failed {
+                    message: error.to_string(),
+                    at: Utc::now(),
+                };
+            }
+        }
+    }
+
+    /// Replace a repository's stacks. Returns whether they changed.
+    pub(crate) fn apply_stacks(&mut self, repo: &RepoId, stacks: Vec<Stack>) -> bool {
+        match self.repos.iter_mut().find(|state| &state.id == repo) {
+            Some(state) if state.stacks != stacks => {
+                state.stacks = stacks;
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Fill repositories that have nothing yet from the cache. Never
     /// overwrites data that already arrived from the network.
-    pub(crate) fn hydrate(&mut self, cached: Vec<(RepoId, Vec<PullRequest>)>) {
+    pub(crate) fn hydrate(&mut self, cached: Vec<(RepoId, Cached)>) {
         self.hydrated = true;
-        for (id, prs) in cached {
-            for pr in &prs {
+        for (id, cached) in cached {
+            for pr in &cached.prs {
                 self.known
                     .entry(PullKey {
                         repo: id.clone(),
@@ -145,10 +199,20 @@ impl FeedState {
                     })
                     .or_insert_with(|| pr.clone());
             }
-            if let Some(repo) = self.repos.iter_mut().find(|repo| repo.id == id)
-                && repo.prs.is_empty()
-            {
-                repo.prs = prs;
+            let Some(repo) = self.repos.iter_mut().find(|repo| repo.id == id) else {
+                continue;
+            };
+            if repo.prs.is_empty() {
+                repo.prs = cached.prs;
+            }
+            if repo.issues.is_empty() {
+                repo.issues = cached.issues;
+            }
+            if repo.stacks.is_empty() {
+                repo.stacks = cached.stacks;
+            }
+            if repo.meta.is_none() {
+                repo.meta = cached.meta;
             }
         }
     }
@@ -226,35 +290,34 @@ impl FeedState {
         }
     }
 
-    /// The feed as Kotlin renders it.
+    /// The feed as Kotlin renders it: the active tab, in the saved sort,
+    /// stacks grouped — `rostrum_core::flatten_tab`, the desktop's own layout.
     pub(crate) fn snapshot(&self, viewer: Option<&User>, settling: bool) -> FeedSnapshot {
-        // The phone keeps the user's own repository order (they arrange it
-        // in settings) and the fetched item order until it has a sort
-        // control; the desktop's `flatten` applies the persisted sort.
-        let feed = flatten_in(&self.repos, &self.filter, FeedOrder::AsListed);
+        let feed = flatten_tab(&self.repos, &self.filter, self.tab);
         let viewer_key = viewer.map(User::key);
 
         let mut sections: Vec<RepoSection> = Vec::new();
         let mut building: Option<Building> = None;
+        let finish = |building: Building| {
+            building.finish(
+                &self.repos,
+                &self.filter,
+                self.tab,
+                feed.stacks(),
+                viewer_key.as_ref(),
+            )
+        };
         for row in feed.rows() {
             match *row {
                 FeedRow::RepoHeader { repo } => {
                     if let Some(done) = building.take() {
-                        sections.push(done.finish(&self.repos, &self.filter));
+                        sections.push(finish(done));
                     }
                     building = Some(Building::new(repo.0));
                 }
-                // Stack grouping is desktop-only for now: the phone gets the
-                // members in the same contiguous order, without the header.
-                FeedRow::StackHeader { .. } => {}
-                FeedRow::PrRow { repo, pr, .. } => {
-                    if let (Some(current), Some(state)) =
-                        (building.as_mut(), self.repos.get(repo.0))
-                        && let Some(pull) = state.prs.get(pr.0)
-                    {
-                        current
-                            .pulls
-                            .push(summarize(&state.id, pull, viewer_key.as_ref()));
+                FeedRow::StackHeader { .. } | FeedRow::PrRow { .. } | FeedRow::IssueRow { .. } => {
+                    if let Some(current) = building.as_mut() {
+                        current.rows.push(*row);
                     }
                 }
                 FeedRow::RepoEmpty { .. } => set_body(&mut building, RepoBody::Empty),
@@ -263,32 +326,35 @@ impl FeedState {
                     let reason = self
                         .repos
                         .get(repo.0)
-                        .and_then(|state| state.load.error_message())
+                        .and_then(|state| load_for(state, self.tab).error_message())
                         .unwrap_or("the last refresh failed")
                         .to_string();
                     set_body(&mut building, RepoBody::Failed { reason });
                 }
-                // `flatten` builds the pull request tab only; the phone has
-                // no issue list yet.
-                FeedRow::Spacer { .. } | FeedRow::IssueRow { .. } => {}
+                FeedRow::Spacer { .. } => {}
             }
         }
         if let Some(done) = building.take() {
-            sections.push(done.finish(&self.repos, &self.filter));
+            sections.push(finish(done));
         }
 
-        let visible_open = self
-            .repos
-            .iter()
-            .flat_map(|repo| &repo.prs)
-            .filter(|pr| self.filter.accepts(pr))
-            .count();
+        let counts = tab_counts(&self.repos, &self.filter);
+        let total_open = match self.tab {
+            FeedTab::PullRequests => self.repos.iter().map(|repo| repo.prs.len()).sum(),
+            FeedTab::Issues => self.repos.iter().map(|repo| repo.issues.len()).sum(),
+        };
         FeedSnapshot {
             revision: self.revision,
+            tab: self.tab.into(),
+            tab_counts: TabCounts {
+                pull_requests: count(counts.pull_requests),
+                issues: count(counts.issues),
+            },
+            sort: settings(self.filter.sort),
             repos: sections,
             hidden_empty_repos: count(feed.hidden_repos()),
-            total_open: count(self.repos.iter().map(|repo| repo.prs.len()).sum()),
-            visible_open: count(visible_open),
+            total_open: count(total_open),
+            visible_open: count(counts.get(self.tab)),
             query: self.filter.query.clone(),
             preferences: self.preferences(),
             filter_active: self.filter.is_active(),
@@ -298,11 +364,20 @@ impl FeedState {
     }
 }
 
+/// The load state governing a tab: pull requests and issues load apart.
+fn load_for(repo: &RepoState, tab: FeedTab) -> &LoadState {
+    match tab {
+        FeedTab::PullRequests => &repo.load,
+        FeedTab::Issues => &repo.issues_load,
+    }
+}
+
 /// A section being assembled from `flatten`'s rows.
 struct Building {
     repo: usize,
     body: Option<RepoBody>,
-    pulls: Vec<crate::feed::PrSummary>,
+    /// Its item rows, stack headers included, in display order.
+    rows: Vec<FeedRow>,
 }
 
 impl Building {
@@ -310,26 +385,67 @@ impl Building {
         Self {
             repo,
             body: None,
-            pulls: Vec::new(),
+            rows: Vec::new(),
         }
     }
 
-    fn finish(self, repos: &[RepoState], filter: &FeedFilter) -> RepoSection {
+    fn finish(
+        self,
+        repos: &[RepoState],
+        filter: &FeedFilter,
+        tab: FeedTab,
+        stacks: &[FeedStack],
+        viewer: Option<&LoginKey>,
+    ) -> RepoSection {
         let state = &repos[self.repo];
+        let items = match tab {
+            FeedTab::PullRequests => {
+                let mut items = PullItems::new(state, stacks, viewer);
+                for row in &self.rows {
+                    items.push(*row);
+                }
+                let items = items.finish();
+                (!items.is_empty()).then_some(RepoBody::Pulls { items })
+            }
+            FeedTab::Issues => {
+                let issues: Vec<_> = self
+                    .rows
+                    .iter()
+                    .filter_map(|row| match row {
+                        FeedRow::IssueRow { issue, .. } => state.issues.get(issue.0),
+                        _ => None,
+                    })
+                    .map(|issue| summarize_issue(&state.id, issue, viewer))
+                    .collect();
+                (!issues.is_empty()).then_some(RepoBody::Issues { issues })
+            }
+        };
         let body = if state.collapsed {
             RepoBody::Collapsed
         } else if let Some(body) = self.body {
             body
-        } else if self.pulls.is_empty() {
-            RepoBody::Empty
         } else {
-            RepoBody::Pulls { pulls: self.pulls }
+            items.unwrap_or(RepoBody::Empty)
+        };
+        let (open, visible) = match tab {
+            FeedTab::PullRequests => (
+                state.prs.len(),
+                state.prs.iter().filter(|pr| filter.accepts(pr)).count(),
+            ),
+            FeedTab::Issues => (
+                state.issues.len(),
+                state
+                    .issues
+                    .iter()
+                    .filter(|issue| filter.accepts_issue(issue))
+                    .count(),
+            ),
         };
         RepoSection {
             repo: state.id.to_string(),
-            load: load_of(&state.load),
-            open_count: count(state.prs.len()),
-            visible_count: count(state.prs.iter().filter(|pr| filter.accepts(pr)).count()),
+            load: load_of(load_for(state, tab)),
+            open_count: count(open),
+            visible_count: count(visible),
             collapsed: state.collapsed,
             body,
         }
@@ -342,7 +458,7 @@ fn set_body(building: &mut Option<Building>, body: RepoBody) {
     }
 }
 
-fn load_of(load: &LoadState) -> RepoLoad {
+pub(crate) fn load_of(load: &LoadState) -> RepoLoad {
     match load {
         LoadState::Idle => RepoLoad::Idle,
         LoadState::Loading => RepoLoad::Loading,
@@ -365,17 +481,49 @@ mod tests {
 
     use rostrum_core::{Divergence, LoginKey, PrNumber};
 
+    use rostrum_core::{ItemSortKey, Sort, SortDirection};
+
     use super::*;
-    use crate::test_support::{pull, pull_by};
+    use crate::{
+        feed::PrSummary,
+        stacks::{PullItem, numbers},
+        test_support::{issue, pull, pull_by},
+    };
+
+    /// The pull requests of a list with no stacks.
+    fn singles(items: &[PullItem]) -> Vec<PrSummary> {
+        items
+            .iter()
+            .map(|item| match item {
+                PullItem::Single { pull } => pull.clone(),
+                PullItem::Stack { .. } => panic!("unexpected stack"),
+            })
+            .collect()
+    }
+
+    fn cached(prs: Vec<PullRequest>) -> Cached {
+        Cached {
+            prs,
+            ..Cached::default()
+        }
+    }
 
     fn repo_id(name: &str) -> RepoId {
         name.parse().expect("repo")
     }
 
+    /// Items oldest first, so a list reads in number order.
+    fn oldest_first() -> FeedFilter {
+        let mut filter = FeedFilter::default();
+        filter.sort.items = Sort::with_direction(ItemSortKey::Created, SortDirection::Ascending);
+        filter
+    }
+
     fn feed(names: &[&str]) -> FeedState {
         FeedState::new(
             names.iter().map(|name| repo_id(name)).collect(),
-            FeedFilter::default(),
+            oldest_first(),
+            FeedTab::PullRequests,
         )
     }
 
@@ -398,7 +546,7 @@ mod tests {
 
     fn pulls(section: &RepoSection) -> Vec<u32> {
         match &section.body {
-            RepoBody::Pulls { pulls } => pulls.iter().map(|pull| pull.number).collect(),
+            RepoBody::Pulls { items } => numbers(items),
             other => panic!("expected pulls, got {other:?}"),
         }
     }
@@ -419,7 +567,7 @@ mod tests {
     }
 
     #[test]
-    fn sections_keep_settings_order_and_carry_their_pulls() {
+    fn sections_carry_their_pulls_in_the_repository_sort() {
         let mut state = feed(&["a/b", "c/d"]);
         load(&mut state, "c/d", vec![pull(3)]);
         load(&mut state, "a/b", vec![pull(1), pull(2)]);
@@ -504,9 +652,10 @@ mod tests {
         load(&mut state, "a/b", vec![first]);
         load(&mut state, "a/b", vec![pull(1)]);
         let snapshot = state.snapshot(None, false);
-        let RepoBody::Pulls { pulls } = &snapshot.repos[0].body else {
+        let RepoBody::Pulls { items } = &snapshot.repos[0].body else {
             panic!("pulls");
         };
+        let pulls = singles(items);
         assert_eq!(pulls[0].base_divergence.as_ref().map(|d| d.behind), Some(2));
     }
 
@@ -555,8 +704,8 @@ mod tests {
         let mut state = feed(&["a/b", "c/d"]);
         load(&mut state, "a/b", vec![pull(5)]);
         state.hydrate(vec![
-            (repo_id("a/b"), vec![pull(1)]),
-            (repo_id("c/d"), vec![pull(2)]),
+            (repo_id("a/b"), cached(vec![pull(1)])),
+            (repo_id("c/d"), cached(vec![pull(2)])),
         ]);
         let snapshot = state.snapshot(None, false);
         assert_eq!(pulls(&snapshot.repos[0]), vec![5]);
@@ -596,10 +745,18 @@ mod tests {
             vec![repo_id("g/h"), repo_id("c/d"), repo_id("a/b")]
         );
         // Kept repositories keep what they had; the new one starts idle.
+        // (Sections follow the repository sort, not the settings order.)
         let snapshot = state.snapshot(None, false);
-        assert_eq!(snapshot.repos[0].load, RepoLoad::Idle);
-        assert_eq!(snapshot.repos[1].body, RepoBody::Collapsed);
-        assert_eq!(pulls(&snapshot.repos[2]), vec![1]);
+        let section = |name: &str| {
+            snapshot
+                .repos
+                .iter()
+                .find(|section| section.repo == name)
+                .expect("section")
+        };
+        assert_eq!(section("g/h").load, RepoLoad::Idle);
+        assert_eq!(section("c/d").body, RepoBody::Collapsed);
+        assert_eq!(pulls(section("a/b")), vec![1]);
 
         // Dropping a repository forgets its pull requests and its fetch order.
         let removed = state.set_repos(vec![repo_id("g/h")]);
@@ -641,12 +798,138 @@ mod tests {
             avatar_url: None,
         };
         let snapshot = state.snapshot(Some(&me), true);
-        let RepoBody::Pulls { pulls } = &snapshot.repos[0].body else {
+        let RepoBody::Pulls { items } = &snapshot.repos[0].body else {
             panic!("pulls");
         };
+        let pulls = singles(items);
         assert!(pulls[0].is_yours);
         assert!(!pulls[1].is_yours);
         assert!(snapshot.merge_states_settling);
         assert_eq!(snapshot.viewer.map(|v| v.login), Some("me".to_string()));
+    }
+
+    fn issues_of(section: &RepoSection) -> Vec<u32> {
+        match &section.body {
+            RepoBody::Issues { issues } => issues.iter().map(|issue| issue.number).collect(),
+            other => panic!("expected issues, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_default_item_sort_is_newest_first() {
+        let mut state = FeedState::new(
+            vec![repo_id("a/b")],
+            FeedFilter::default(),
+            FeedTab::PullRequests,
+        );
+        load(&mut state, "a/b", vec![pull(1), pull(3), pull(2)]);
+        let snapshot = state.snapshot(None, false);
+        assert_eq!(pulls(&snapshot.repos[0]), vec![3, 2, 1]);
+        assert_eq!(snapshot.sort.summary, FeedFilter::default().sort.summary());
+    }
+
+    #[test]
+    fn the_issues_tab_shows_issues_and_both_tabs_are_counted() {
+        let mut state = feed(&["a/b"]);
+        load(&mut state, "a/b", vec![pull(1), pull(2)]);
+        let id = repo_id("a/b");
+        state.apply_issues(
+            &id,
+            Ok(vec![issue(7, "alice"), issue(5, "bob"), issue(6, "alice")]),
+        );
+
+        let prs = state.snapshot(None, false);
+        assert_eq!(prs.tab, crate::feed::FeedTab::PullRequests);
+        assert_eq!(prs.tab_counts.pull_requests, 2);
+        assert_eq!(prs.tab_counts.issues, 3);
+        assert_eq!(prs.total_open, 2);
+
+        state.tab = FeedTab::Issues;
+        let issues = state.snapshot(None, false);
+        assert_eq!(issues.tab, crate::feed::FeedTab::Issues);
+        assert_eq!(issues_of(&issues.repos[0]), vec![5, 6, 7]);
+        assert_eq!(issues.total_open, 3);
+        assert_eq!(issues.repos[0].open_count, 3);
+        assert!(matches!(issues.repos[0].load, RepoLoad::Loaded { .. }));
+
+        // The author filter narrows the issues tab, and its count.
+        state.filter.authors = BTreeSet::from([LoginKey::new("alice")]);
+        let alice = state.snapshot(None, false);
+        assert_eq!(issues_of(&alice.repos[0]), vec![6, 7]);
+        assert_eq!(alice.visible_open, 2);
+        assert_eq!(alice.tab_counts.issues, 2);
+    }
+
+    #[test]
+    fn an_issue_failure_keeps_the_issues_and_reports_on_its_tab_only() {
+        let mut state = feed(&["a/b"]);
+        load(&mut state, "a/b", vec![pull(1)]);
+        let id = repo_id("a/b");
+        state.apply_issues(&id, Ok(vec![issue(4, "alice")]));
+        let error = GitHubError::NotFound {
+            resource: "issues".into(),
+        };
+        state.apply_issues(&id, Err(&error));
+        assert!(matches!(
+            state.snapshot(None, false).repos[0].load,
+            RepoLoad::Loaded { .. }
+        ));
+        state.tab = FeedTab::Issues;
+        let snapshot = state.snapshot(None, false);
+        assert_eq!(issues_of(&snapshot.repos[0]), vec![4]);
+        assert!(matches!(snapshot.repos[0].load, RepoLoad::Failed { .. }));
+    }
+
+    #[test]
+    fn stacks_arrive_grouped_and_a_change_is_reported() {
+        let mut state = feed(&["a/b"]);
+        let mut prs = vec![pull(1), pull(2), pull(3)];
+        prs[2].base_ref = prs[1].head_ref.clone();
+        load(&mut state, "a/b", prs);
+        let snapshot = state.snapshot(None, false);
+        let RepoBody::Pulls { items } = &snapshot.repos[0].body else {
+            panic!("pulls");
+        };
+        assert_eq!(numbers(items), vec![1, 2, 3]);
+        assert!(matches!(&items[1], PullItem::Stack { members, .. } if members.len() == 2));
+
+        let id = repo_id("a/b");
+        let stack = rostrum_core::Stack {
+            repo: id.clone(),
+            number: rostrum_core::StackNumber::new(9),
+            trunk: rostrum_core::RefName::new("main").expect("ref"),
+            members: rostrum_core::StackMembers::new(vec![PrNumber(2), PrNumber(3)])
+                .expect("members"),
+        };
+        assert!(state.apply_stacks(&id, vec![stack.clone()]));
+        assert!(!state.apply_stacks(&id, vec![stack]));
+        let snapshot = state.snapshot(None, false);
+        let RepoBody::Pulls { items } = &snapshot.repos[0].body else {
+            panic!("pulls");
+        };
+        let PullItem::Stack { stack, .. } = &items[1] else {
+            panic!("a stack");
+        };
+        assert_eq!(stack.kind, crate::stacks::StackKind::GitHub { number: 9 });
+    }
+
+    #[test]
+    fn hydration_fills_issues_stacks_and_facts_too() {
+        let mut state = feed(&["a/b"]);
+        state.hydrate(vec![(
+            repo_id("a/b"),
+            Cached {
+                prs: vec![pull(1)],
+                issues: vec![issue(2, "alice")],
+                stacks: Vec::new(),
+                meta: None,
+            },
+        )]);
+        state.tab = FeedTab::Issues;
+        state.filter.hide_empty_repos = false;
+        let snapshot = state.snapshot(None, false);
+        assert_eq!(snapshot.tab_counts.issues, 1);
+        assert_eq!(snapshot.tab_counts.pull_requests, 1);
+        assert_eq!(issues_of(&snapshot.repos[0]), vec![2]);
     }
 }

@@ -19,6 +19,9 @@ internal object SamplePulls {
 
     val repos = listOf(ROSTRUM, ZED, RUST, TOKIO, BEVY)
 
+    /** Stars per sample repository, for the repository sort. */
+    val stars = mapOf(ROSTRUM to 12, ZED to 51_000, RUST to 99_000, TOKIO to 27_000, BEVY to 37_000)
+
     const val DIFF_OVERVIEW_SHA = "136c158e2b1f4a9d8c7e6f5a4b3c2d1e0f9a8b7c"
 
     fun labels(repo: String): List<LabelView> = when (repo) {
@@ -71,6 +74,7 @@ internal object SamplePulls {
             FakePull(
                 repo = ROSTRUM, number = 11,
                 title = "docs: android companion design",
+                baseRef = "feat/author-filter",
                 author = VIEWER, createdAt = ago(12), updatedAt = ago(12), isDraft = true,
                 checks = null, reviewDecision = null, mergeStatus = MergeStatus.Draft,
                 behind = 0, ahead = 1, labels = listOf("android", "documentation"),

@@ -3,10 +3,18 @@
 //! Each area of the API adds its own `impl CoreState` block in its module;
 //! this file holds the fields and the helpers every area shares.
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::Arc,
+    time::Instant,
+};
 
 use rostrum_config::Config;
-use rostrum_core::{Baseline, Conversation, Label, PrNumber, PullRequest, RepoId};
+use rostrum_core::{
+    Baseline, Conversation, IssueDetail, IssueNumber, Label, PrNumber, PullRequest, RepoId, User,
+    branches::RepoMeta as BranchMeta,
+};
 use rostrum_github::{GitHubClient, GitHubError};
 
 use crate::{
@@ -45,6 +53,26 @@ impl PullKey {
     }
 }
 
+/// An issue's identity: which repository, which number.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct IssueKey {
+    pub repo: RepoId,
+    pub number: IssueNumber,
+}
+
+impl IssueKey {
+    /// Validate what Kotlin passed.
+    pub(crate) fn parse(repo: &str, number: u32) -> Result<Self, RostrumError> {
+        if number == 0 {
+            return Err(RostrumError::invalid("issue numbers start at 1"));
+        }
+        Ok(Self {
+            repo: parse_repo(repo)?,
+            number: IssueNumber(number),
+        })
+    }
+}
+
 /// Parse an `owner/name` Kotlin passed back.
 pub(crate) fn parse_repo(repo: &str) -> Result<RepoId, RostrumError> {
     repo.parse()
@@ -73,6 +101,20 @@ pub(crate) struct CoreState {
     pub labels: HashMap<RepoId, Arc<Vec<Label>>>,
     /// Merge-state re-checks per repository this poll cycle.
     pub probes: HashMap<RepoId, ProbeSlot>,
+    /// Repositories whose stacks GitHub said are not enabled, and when.
+    pub stacks_unavailable: HashMap<RepoId, Instant>,
+    /// Issue details fetched this session (SQLite keeps them all).
+    pub issue_details: Recent<IssueKey, Arc<IssueDetail>>,
+    /// Who can be assigned issues in each repository, fetched once each.
+    pub assignable: HashMap<RepoId, Arc<Vec<User>>>,
+    /// Each repository's branch facts from its last branch-tree fetch.
+    pub branch_meta: HashMap<RepoId, BranchMeta>,
+    /// Stack jobs already seen finished, so each refreshes the feed once.
+    pub settled_stack_jobs: HashSet<u64>,
+    /// Every watched repository's CI checks, as last fetched.
+    pub ci: rostrum_core::ci::CiChecks,
+    /// Recent raw job logs, by repository and job id.
+    pub job_logs: Recent<(RepoId, u64), Arc<String>>,
     /// The notification seen set, once loaded from SQLite.
     pub baseline: Option<Baseline>,
     pub writer: Writer,
@@ -99,7 +141,11 @@ impl CoreState {
         let (repo_ids, repo_warnings) = startup.config.repo_ids();
         let mut warnings = startup.warnings;
         warnings.extend(repo_warnings.into_iter().map(|warning| warning.0));
-        let feed = FeedState::new(repo_ids, startup.config.feed_filter());
+        let feed = FeedState::new(
+            repo_ids,
+            startup.config.feed_filter(),
+            startup.config.feed_tab,
+        );
         Self {
             config_path: startup.config_path,
             config: startup.config,
@@ -114,25 +160,19 @@ impl CoreState {
             files: Recent::new(RECENT_DIFFS),
             labels: HashMap::new(),
             probes: HashMap::new(),
+            stacks_unavailable: HashMap::new(),
+            issue_details: Recent::new(RECENT_CONVERSATIONS),
+            assignable: HashMap::new(),
+            branch_meta: HashMap::new(),
+            settled_stack_jobs: HashSet::new(),
+            ci: rostrum_core::ci::CiChecks::default(),
+            job_logs: Recent::new(crate::ci::RECENT_LOGS),
             baseline: None,
             writer: startup.writer,
             notifier: startup.notifier,
             observed: false,
             me,
         }
-    }
-
-    /// Change the settings and write them, keeping memory and disk in step:
-    /// if the write fails, the change is not applied.
-    pub(crate) fn edit_config(
-        &mut self,
-        edit: impl FnOnce(&mut Config),
-    ) -> Result<(), RostrumError> {
-        let mut next = self.config.clone();
-        edit(&mut next);
-        next.save_to(&self.config_path)?;
-        self.config = next;
-        Ok(())
     }
 
     /// Forget everything held for a repository that is no longer watched:
@@ -145,6 +185,12 @@ impl CoreState {
         self.labels.remove(id);
         self.conversations.retain(|key| &key.repo != id);
         self.files.retain(|key| &key.repo != id);
+        self.stacks_unavailable.remove(id);
+        self.issue_details.retain(|key| &key.repo != id);
+        self.assignable.remove(id);
+        self.branch_meta.remove(id);
+        self.ci.forget(id);
+        self.job_logs.retain(|key| &key.0 != id);
     }
 
     /// The pull request as last seen in the feed. Kept after it leaves the

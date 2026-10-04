@@ -4,6 +4,7 @@ use std::time::SystemTime;
 
 use crate::{
     feed::BaseDivergence,
+    issues::IssueCloseReason,
     markdown::MdBlock,
     review::PendingReview,
     types::{
@@ -25,6 +26,14 @@ pub struct PullDetail {
     pub unresolved_threads: u32,
     /// Your unsent inline comments on this pull request.
     pub pending_review: PendingReview,
+    /// Older comments, reviews, threads or events remain beyond the pages
+    /// loaded: show "Load earlier".
+    #[uniffi(default)]
+    pub has_earlier: bool,
+    /// How many remain, for "Load earlier (N more)"; `None` when nothing
+    /// does.
+    #[uniffi(default)]
+    pub earlier_count: Option<u32>,
 }
 
 /// The header, and the facts the Branch tab and the action bar decide on.
@@ -131,17 +140,45 @@ pub enum TimelineKind {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum TimelineEvent {
     Merged,
+    /// Closed with no recorded reason: a pull request, or an issue closed
+    /// before GitHub kept reasons.
     Closed,
+    /// An issue closed as completed, not planned, or a duplicate.
+    ClosedAs {
+        reason: IssueCloseReason,
+    },
     Reopened,
     ReadyForReview,
     ConvertedToDraft,
     ForcePushed,
-    ReviewRequested { reviewer: String },
-    Assigned { assignee: String },
-    Labeled { label: String },
-    Unlabeled { label: String },
-    Renamed { from: String, to: String },
-    Other { kind: String },
+    ReviewRequested {
+        reviewer: String,
+    },
+    Assigned {
+        assignee: String,
+    },
+    Unassigned {
+        assignee: String,
+    },
+    /// Another issue or pull request mentioned this one. `source` is
+    /// `owner/name#number`.
+    CrossReferenced {
+        source: String,
+        title: String,
+    },
+    Labeled {
+        label: String,
+    },
+    Unlabeled {
+        label: String,
+    },
+    Renamed {
+        from: String,
+        to: String,
+    },
+    Other {
+        kind: String,
+    },
 }
 
 /// An inline review thread.

@@ -1,17 +1,23 @@
 package io.github.rhizonymph.rostrum.data
 
 import io.github.rhizonymph.rostrum.data.model.AuthorRoster
+import io.github.rhizonymph.rostrum.data.model.BranchTree
 import io.github.rhizonymph.rostrum.data.model.BranchUpdateMethod
+import io.github.rhizonymph.rostrum.data.model.CloseIssueAs
 import io.github.rhizonymph.rostrum.data.model.CommentAnchor
 import io.github.rhizonymph.rostrum.data.model.DesktopConfigPreview
 import io.github.rhizonymph.rostrum.data.model.DesktopGitHubToken
 import io.github.rhizonymph.rostrum.data.model.DesktopProbe
 import io.github.rhizonymph.rostrum.data.model.FeedPreferences
 import io.github.rhizonymph.rostrum.data.model.FeedSnapshot
+import io.github.rhizonymph.rostrum.data.model.FeedTab
 import io.github.rhizonymph.rostrum.data.model.FileDiff
 import io.github.rhizonymph.rostrum.data.model.FilesOverview
 import io.github.rhizonymph.rostrum.data.model.GitHubStatus
 import io.github.rhizonymph.rostrum.data.model.HandoffSession
+import io.github.rhizonymph.rostrum.data.model.IssueDetail
+import io.github.rhizonymph.rostrum.data.model.IssueRef
+import io.github.rhizonymph.rostrum.data.model.ItemSortKey
 import io.github.rhizonymph.rostrum.data.model.JobResult
 import io.github.rhizonymph.rostrum.data.model.LabelView
 import io.github.rhizonymph.rostrum.data.model.LocalOp
@@ -27,10 +33,15 @@ import io.github.rhizonymph.rostrum.data.model.PrRef
 import io.github.rhizonymph.rostrum.data.model.PullDetail
 import io.github.rhizonymph.rostrum.data.model.PullHeader
 import io.github.rhizonymph.rostrum.data.model.RemoteStatus
+import io.github.rhizonymph.rostrum.data.model.RepoOverview
+import io.github.rhizonymph.rostrum.data.model.RepoSortKey
 import io.github.rhizonymph.rostrum.data.model.ReviewEvent
 import io.github.rhizonymph.rostrum.data.model.Settings
+import io.github.rhizonymph.rostrum.data.model.SortDirection
+import io.github.rhizonymph.rostrum.data.model.SortSettings
 import io.github.rhizonymph.rostrum.data.model.SyncAllOp
 import io.github.rhizonymph.rostrum.data.model.SyncRun
+import io.github.rhizonymph.rostrum.data.model.TrunkSettings
 import io.github.rhizonymph.rostrum.data.model.UserRef
 import kotlinx.coroutines.flow.Flow
 
@@ -43,7 +54,7 @@ import kotlinx.coroutines.flow.Flow
  * Secrets are never persisted here: the app keeps them in its secret store and
  * hands them in with [setGitHubToken] and [setRemote] at start-up.
  */
-interface RostrumBackend {
+interface RostrumBackend : IssuesApi, StackActionsApi {
     // --- session -------------------------------------------------------------
 
     /**
@@ -103,7 +114,7 @@ interface RostrumBackend {
     /** Add or remove one author from the filter (case-insensitive). */
     suspend fun toggleAuthor(login: String): Outcome<FeedSnapshot>
 
-    /** Reset the query and every preference to their defaults. */
+    /** Reset the query and every preference to their defaults. The sort is kept. */
     suspend fun clearFilter(): Outcome<FeedSnapshot>
 
     /** Collapse or expand a repository's container. Not persisted. */
@@ -115,6 +126,35 @@ interface RostrumBackend {
     /** Every feed change, including background ones (the core's `FeedObserver`). */
     val feedUpdates: Flow<FeedSnapshot>
 
+    /** Show the Pull requests or the Issues tab; persisted. */
+    suspend fun setFeedTab(tab: FeedTab): Outcome<FeedSnapshot>
+
+    // --- sort ----------------------------------------------------------------
+
+    suspend fun sortSettings(): Outcome<SortSettings>
+
+    /**
+     * Order repositories by [key]. With no [direction], a new key starts at its
+     * default direction and the current key keeps its own.
+     */
+    suspend fun setRepoSort(key: RepoSortKey, direction: SortDirection?): Outcome<FeedSnapshot>
+
+    /** Order pull requests and issues by [key]; [direction] as for [setRepoSort]. */
+    suspend fun setItemSort(key: ItemSortKey, direction: SortDirection?): Outcome<FeedSnapshot>
+
+    // --- one repository ------------------------------------------------------
+
+    /** The repository's pull requests (stacks grouped) and issues, unfiltered. No network. */
+    suspend fun repoOverview(repo: String): Outcome<RepoOverview>
+
+    /** Its branches under its trunks, with ahead/behind. */
+    suspend fun branchTree(repo: String): Outcome<BranchTree>
+
+    suspend fun trunks(repo: String): Outcome<TrunkSettings>
+
+    /** Configure [repo]'s trunks; `null` returns to detection. Names are validated. */
+    suspend fun setTrunks(repo: String, names: List<String>?): Outcome<TrunkSettings>
+
     // --- one pull request ----------------------------------------------------
 
     /** Fetch the conversation, threads and checks from GitHub. */
@@ -122,6 +162,9 @@ interface RostrumBackend {
 
     /** The last fetched detail from the cache, or `null`. No network. */
     suspend fun cachedPullDetail(pr: PrRef): Outcome<PullDetail?>
+
+    /** The conversation with its next earlier page merged in; a reload keeps it. */
+    suspend fun loadEarlierPull(pr: PrRef): Outcome<PullDetail>
 
     /** Just the header, from the feed's data. No network. */
     suspend fun pullHeader(pr: PrRef): Outcome<PullHeader>

@@ -1,4 +1,4 @@
-package io.github.rhizonymph.rostrum.ui.feed
+package io.github.rhizonymph.rostrum.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape

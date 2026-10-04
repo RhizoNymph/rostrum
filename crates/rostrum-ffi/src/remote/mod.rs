@@ -7,10 +7,12 @@
 
 mod config;
 mod convert;
+mod push;
 mod refs;
 mod types;
 
-pub use config::DesktopConfigPreview;
+pub use config::{ConfigChange, ConfigField, DesktopConfigPreview};
+pub use push::ConfigPushResult;
 
 pub use types::{
     CloneInfo, DesktopGitHubToken, DesktopProbe, HandoffSession, HandoffState, InProgress,

@@ -35,6 +35,10 @@ inline commenting and pending reviews, merging, and the paired desktop
 - Copying the paired desktop's settings (repositories, pull requests per
   repository, feed preferences, stash default) onto the phone: offered right
   after pairing, and from Settings.
+- The feed's sort and Pull requests | Issues tabs, the issue screens (with
+  editing), stacks in the feed and their actions through the desktop,
+  "load earlier" on conversations, and a repository's own screen: see
+  `docs/features/android_issues_repo.md`.
 
 ## Non-scope
 
@@ -124,7 +128,8 @@ navigation code in the features.
 
 Routes (`ui/navigation/Destinations.kt`, `@Serializable`): `SignIn`,
 `Pair(link: String?)`, `AddTokenProfile`, `Feed`, `Desktop`, `Settings`,
-`PullRequest(repo, number, tab: PrTab)`, `FileDiff(repo, number, fileIndex)`.
+`PullRequest(repo, number, tab: PrTab)`, `FileDiff(repo, number, fileIndex)`,
+`Issue(repo, number)`, `NewIssue(repo: String?)`, `Repo(repo)`.
 Bottom-bar switches use `navigateTopLevel` (pop to the start destination,
 save and restore state, single top). The Desktop item carries a badge with
 the number of handoff sessions waiting (`ShellViewModel`, polled every 60 s
@@ -364,15 +369,19 @@ composables, a pure mapping file with its own tests, and previews.
   interval while the screen is started. A sign-in error shows a "Sign in
   again" banner (sign out); other errors go to the snackbar, and become the
   error state only when nothing is on screen.
-- `FeedUiState.kt` (sealed search, filter-sheet and desktop-pill states; the
-  roster exists only while the sheet is open), `FeedMapping.kt` (row chips,
-  meta line, active-filter count, "Authors: me, ada-lin", pill status).
-- UI: `FeedScreen`, `FeedHeader` (wordmark, "N open", the profile pill —
-  the active profile's label with a dot for its desktop's state; tapping it
-  opens the profile switcher — search,
-  filter button with the active dot), `FeedList` + `CardSegment` (each repo
-  card is several lazy items so long repos stay lazy), `PrRow`,
-  `FeedFilterSheet`, `FeedActions`, `FeedPreviews`.
+  Tabs and the Sort sheet: see `android_issues_repo.md`.
+- `FeedUiState.kt` (sealed search, filter-sheet and desktop-pill states, the
+  Sort sheet flag; the roster exists only while the sheet is open),
+  `FeedMapping.kt` (empty-body texts per tab, active-filter count, "Authors:
+  me, ada-lin", pill status); row decisions live in `ui/items/ItemRows.kt`.
+- UI: `FeedScreen`, `FeedHeader` (wordmark, the profile pill — the active
+  profile's label with a dot for its desktop's state; tapping it opens the
+  profile switcher — search, sort, and the filter button with the active
+  dot), `FeedTabs` (the tabs' counts replace the header's "N open"),
+  `FeedList` + `components/CardSegment` (each repo card is several lazy
+  items so long repos stay lazy; the header's name opens the repository),
+  the shared rows in `ui/items/`, `FeedSortSheet`, `FeedFilterSheet`,
+  `FeedActions`, `FeedPreviews`, and the "New issue" FAB on the Issues tab.
 
 ### Pull request (`ui/pr/`)
 
@@ -548,7 +557,7 @@ What the core does not provide, and what the app does instead:
 | `ui/app/RostrumApp.kt` | Root: splash, the graph keyed by profile and sign-in, scaffold, bottom bar, snackbar, profile switcher, link routing and draining |
 | `ui/app/GraphViewModelStores.kt` | `GraphKey`; one ViewModel store per graph, cleared when the graph changes |
 | `ui/app/ShellViewModel.kt` | Desktop badge |
-| `ui/navigation/Destinations.kt` | `Destination`, `PrTab`, `TopLevel` |
+| `ui/navigation/Destinations.kt` | `Destination` (incl. `Issue`, `NewIssue`, `Repo`), `PrTab`, `TopLevel` |
 | `ui/navigation/RostrumNavHost.kt` | The graph; `openPullRequest`, `navigateTopLevel` |
 | `ui/navigation/AppLinks.kt` | `AppLink`, `AppLinks.parse`, `AppLinkInbox`, `LinkRoute`, `routeOf` |
 | `ui/desktopconfig/DesktopConfigCopier.kt` | Preview, and copy + feed refresh, shared by pairing and Settings |
@@ -566,6 +575,8 @@ What the core does not provide, and what the app does instead:
 | `ui/format/Formatters.kt` | Pure formatting |
 | `ui/preview/PreviewData.kt` | Sample data for previews |
 | `ui/feed/`, `ui/pr/`, `ui/pr/files/`, `ui/review/`, `ui/settings/`, `ui/desktop/`, `ui/onboarding/` | Screens (see *Screens*) |
+| `ui/items/`, `ui/issue/`, `ui/newissue/`, `ui/repo/` | Shared item rows, the issue screen, the new-issue form, the repository screen (see `android_issues_repo.md`) |
+| `ui/components/TimelineItems.kt`, `CommentBar.kt`, `PickerSheet.kt`, `CardSegment.kt` | Comment cards and event rows, the comment field, the multi-select picker, card segments — shared by features |
 | `res/drawable/ic_notification.xml` | Status-bar icon |
 
 All paths are under `android/app/src/main/kotlin/io/github/rhizonymph/rostrum/`
@@ -590,7 +601,8 @@ holds the in-memory registry and `testProfileManager()`.
   notification worker; secrets reach it only through `setGitHubToken` and
   `setRemote`.
 - **Features do not import each other**; only `RostrumNavHost` knows them
-  all.
+  all. What two features draw alike lives in `ui/items/` (rows) or
+  `ui/components/` (timeline items, comment bar, pickers).
 - **The graph is keyed on the profile and its sign-in**, so a signed-out
   user can never reach a signed-in screen through the back stack, and no
   screen of one profile survives a switch to another.

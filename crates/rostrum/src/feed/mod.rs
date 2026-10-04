@@ -52,6 +52,7 @@ actions!(
         OpenRepo,
         NextTab,
         PreviousTab,
+        OpenCi,
     ]
 );
 
@@ -80,6 +81,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", DismissFilter, Some(FEED_CONTEXT)),
         KeyBinding::new("escape", DismissFilter, Some(FILTER_CONTEXT)),
         KeyBinding::new("c", ToggleCollapse, Some(FEED_CONTEXT)),
+        // Shift: plain `c` already collapses a repository.
+        KeyBinding::new("shift-c", OpenCi, Some(FEED_CONTEXT)),
         KeyBinding::new("o", OpenRepo, Some(FEED_CONTEXT)),
         // Brackets, not a modifier chord: they sit beside `j`/`k` on the
         // home row and read as "left"/"right", and like them they are inert
@@ -100,6 +103,8 @@ pub enum FeedEvent {
     /// came from its header, or the form's own default when it came from the
     /// tab bar.
     NewIssue { repo: Option<RepoId> },
+    /// Switch the window to the CI grid.
+    OpenCi,
 }
 
 /// Corner radius of a repo container, in pixels.
@@ -411,6 +416,10 @@ impl FeedView {
     fn next_tab(&mut self, _: &NextTab, _window: &mut Window, cx: &mut Context<Self>) {
         let tab = self.store.read(cx).state.tab.next();
         self.set_tab(tab, cx);
+    }
+
+    fn open_ci(&mut self, _: &OpenCi, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(FeedEvent::OpenCi);
     }
 
     fn previous_tab(&mut self, _: &PreviousTab, _window: &mut Window, cx: &mut Context<Self>) {
@@ -737,7 +746,12 @@ impl FeedView {
                     })
                     .child(self.authors_button(author_count, cx))
                     .child(self.repos_button(repo_count, cx))
-                    .child(self.sort_button(cx)),
+                    .child(self.sort_button(cx))
+                    .child(
+                        Button::new("open-ci", "CI")
+                            .tooltip("The checks of every open pull request, as a grid (shift-c)")
+                            .on_click(cx.listener(|_, _, _window, cx| cx.emit(FeedEvent::OpenCi))),
+                    ),
             )
             .child(
                 h_flex()
@@ -903,6 +917,7 @@ impl Render for FeedView {
             .on_action(cx.listener(Self::open_repo))
             .on_action(cx.listener(Self::next_tab))
             .on_action(cx.listener(Self::previous_tab))
+            .on_action(cx.listener(Self::open_ci))
             .child(self.render_tabs(cx))
             .child(self.render_filter_bar(cx))
             .child(self.render_stack_bar(cx))

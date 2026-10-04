@@ -6,6 +6,23 @@ import io.github.rhizonymph.rostrum.data.RostrumBackend
 import io.github.rhizonymph.rostrum.data.RostrumLog
 import io.github.rhizonymph.rostrum.data.describe
 import io.github.rhizonymph.rostrum.data.model.AuthorRoster
+import io.github.rhizonymph.rostrum.data.model.StackRewritePlan
+import io.github.rhizonymph.rostrum.data.model.StackPlanRequest
+import io.github.rhizonymph.rostrum.data.model.StackPlanCheck
+import io.github.rhizonymph.rostrum.data.model.StackMergeMethod
+import io.github.rhizonymph.rostrum.data.model.StackJob
+import io.github.rhizonymph.rostrum.data.model.StackCandidate
+import io.github.rhizonymph.rostrum.data.model.BranchTree
+import io.github.rhizonymph.rostrum.data.model.CloseIssueAs
+import io.github.rhizonymph.rostrum.data.model.FeedTab
+import io.github.rhizonymph.rostrum.data.model.IssueDetail
+import io.github.rhizonymph.rostrum.data.model.IssueRef
+import io.github.rhizonymph.rostrum.data.model.ItemSortKey
+import io.github.rhizonymph.rostrum.data.model.RepoOverview
+import io.github.rhizonymph.rostrum.data.model.RepoSortKey
+import io.github.rhizonymph.rostrum.data.model.SortDirection
+import io.github.rhizonymph.rostrum.data.model.SortSettings
+import io.github.rhizonymph.rostrum.data.model.TrunkSettings
 import io.github.rhizonymph.rostrum.data.model.BranchUpdateMethod
 import io.github.rhizonymph.rostrum.data.model.CommentAnchor
 import io.github.rhizonymph.rostrum.data.model.DesktopConfigPreview
@@ -46,6 +63,7 @@ import uniffi.rostrum_ffi.FeedObserver
 import uniffi.rostrum_ffi.RostrumCore
 import uniffi.rostrum_ffi.renderMarkdown as ffiRenderMarkdown
 import java.io.File
+import java.time.Instant
 import uniffi.rostrum_ffi.FeedSnapshot as FfiFeedSnapshot
 
 /**
@@ -155,10 +173,122 @@ class FfiRostrumBackend(name: String, openCore: CoreOpener) : RostrumBackend {
     override suspend fun authorRoster(limit: Int?): Outcome<AuthorRoster> =
         core("authorRoster") { it.authorRoster(limit?.coerceAtLeast(0)?.toUInt()).toModel() }
 
+    override suspend fun setFeedTab(tab: FeedTab): Outcome<FeedSnapshot> =
+        core("setFeedTab") { it.setFeedTab(tab.toFfi()).toModel() }
+
+    // --- sort ------------------------------------------------------------------
+
+    override suspend fun sortSettings(): Outcome<SortSettings> = core("sortSettings") { it.sortSettings().toModel() }
+
+    override suspend fun setRepoSort(key: RepoSortKey, direction: SortDirection?): Outcome<FeedSnapshot> =
+        core("setRepoSort") { it.setRepoSort(key.toFfi(), direction?.toFfi()).toModel() }
+
+    override suspend fun setItemSort(key: ItemSortKey, direction: SortDirection?): Outcome<FeedSnapshot> =
+        core("setItemSort") { it.setItemSort(key.toFfi(), direction?.toFfi()).toModel() }
+
+    // --- issues ----------------------------------------------------------------
+
+    private val IssueRef.n: UInt get() = number.toUInt()
+
+    override suspend fun issueDetail(issue: IssueRef): Outcome<IssueDetail> =
+        core("issueDetail") { it.issueDetail(issue.repo, issue.n).toModel() }
+
+    override suspend fun cachedIssueDetail(issue: IssueRef): Outcome<IssueDetail?> =
+        core("cachedIssueDetail") { it.cachedIssueDetail(issue.repo, issue.n)?.toModel() }
+
+    override suspend fun loadEarlierIssue(issue: IssueRef): Outcome<IssueDetail> =
+        core("loadEarlierIssue") { it.loadEarlierIssue(issue.repo, issue.n).toModel() }
+
+    override suspend fun editIssue(
+        issue: IssueRef,
+        title: String,
+        body: String,
+        baseUpdatedAt: Instant,
+        overwrite: Boolean,
+    ): Outcome<IssueDetail> = core("editIssue") { it.editIssue(issue.repo, issue.n, title, body, baseUpdatedAt, overwrite).toModel() }
+
+    override suspend fun commentOnIssue(issue: IssueRef, body: String): Outcome<Unit> =
+        core("commentOnIssue") { it.commentOnIssue(issue.repo, issue.n, body) }
+
+    override suspend fun closeIssue(issue: IssueRef, reason: CloseIssueAs): Outcome<Unit> =
+        core("closeIssue") { it.closeIssue(issue.repo, issue.n, reason.toFfi()) }
+
+    override suspend fun reopenIssue(issue: IssueRef): Outcome<Unit> =
+        core("reopenIssue") { it.reopenIssue(issue.repo, issue.n) }
+
+    override suspend fun addIssueLabel(issue: IssueRef, label: String): Outcome<Unit> =
+        core("addIssueLabel") { it.addIssueLabel(issue.repo, issue.n, label) }
+
+    override suspend fun removeIssueLabel(issue: IssueRef, label: String): Outcome<Unit> =
+        core("removeIssueLabel") { it.removeIssueLabel(issue.repo, issue.n, label) }
+
+    override suspend fun assignableUsers(repo: String): Outcome<List<UserRef>> =
+        core("assignableUsers") { core -> core.assignableUsers(repo).map { it.toModel() } }
+
+    override suspend fun addIssueAssignee(issue: IssueRef, login: String): Outcome<Unit> =
+        core("addIssueAssignee") { it.addIssueAssignee(issue.repo, issue.n, login) }
+
+    override suspend fun removeIssueAssignee(issue: IssueRef, login: String): Outcome<Unit> =
+        core("removeIssueAssignee") { it.removeIssueAssignee(issue.repo, issue.n, login) }
+
+    override suspend fun createIssue(
+        repo: String,
+        title: String,
+        body: String,
+        labels: List<String>,
+        assignees: List<String>,
+    ): Outcome<Int> = core("createIssue") { it.createIssue(repo, title, body, labels, assignees).toInt() }
+
+    // --- stack actions (on the paired desktop) ---------------------------------
+
+    private fun List<Int>.u(): List<UInt> = map { it.toUInt() }
+
+    override suspend fun planStackRewrite(request: StackPlanRequest): Outcome<StackRewritePlan> =
+        core("planStackRewrite") { it.planStackRewrite(request.toFfi()).toModel() }
+
+    override suspend fun checkStackPlan(request: StackPlanRequest): Outcome<StackPlanCheck> =
+        core("checkStackPlan") { it.checkStackPlan(request.toFfi()).toModel() }
+
+    override suspend fun stackCandidates(repo: String, stack: Int): Outcome<List<StackCandidate>> =
+        core("stackCandidates") { core -> core.stackCandidates(repo, stack.toUInt()).map { it.toModel() } }
+
+    override suspend fun makeStack(repo: String, prs: List<Int>, trunk: String): Outcome<StackJob> =
+        core("makeStack") { it.makeStack(repo, prs.u(), trunk).toModel() }
+
+    override suspend fun arrangeStack(repo: String, prs: List<Int>, trunk: String, confirmRewrite: List<String>): Outcome<StackJob> =
+        core("arrangeStack") { it.arrangeStack(repo, prs.u(), trunk, confirmRewrite).toModel() }
+
+    override suspend fun extendStack(repo: String, stack: Int, prs: List<Int>, confirmRewrite: List<String>): Outcome<StackJob> =
+        core("extendStack") { it.extendStack(repo, stack.toUInt(), prs.u(), confirmRewrite).toModel() }
+
+    override suspend fun mergeStack(repo: String, stack: Int, method: StackMergeMethod): Outcome<StackJob> =
+        core("mergeStack") { it.mergeStack(repo, stack.toUInt(), method.toFfi()).toModel() }
+
+    override suspend fun unstack(repo: String, stack: Int): Outcome<StackJob> =
+        core("unstack") { it.unstack(repo, stack.toUInt()).toModel() }
+
+    override suspend fun stackJob(id: Long): Outcome<StackJob> = core("stackJob") { it.stackJob(id.toULong()).toModel() }
+
+    // --- one repository --------------------------------------------------------
+
+    override suspend fun repoOverview(repo: String): Outcome<RepoOverview> =
+        core("repoOverview") { it.repoOverview(repo).toModel() }
+
+    override suspend fun branchTree(repo: String): Outcome<BranchTree> =
+        core("branchTree") { it.branchTree(repo).toModel() }
+
+    override suspend fun trunks(repo: String): Outcome<TrunkSettings> = core("trunks") { it.trunks(repo).toModel() }
+
+    override suspend fun setTrunks(repo: String, names: List<String>?): Outcome<TrunkSettings> =
+        core("setTrunks") { it.setTrunks(repo, names).toModel() }
+
     // --- one pull request ----------------------------------------------------
 
     override suspend fun pullDetail(pr: PrRef): Outcome<PullDetail> =
         core("pullDetail") { it.pullDetail(pr.repo, pr.n).toModel() }
+
+    override suspend fun loadEarlierPull(pr: PrRef): Outcome<PullDetail> =
+        core("loadEarlierPull") { it.loadEarlierPull(pr.repo, pr.n).toModel() }
 
     override suspend fun cachedPullDetail(pr: PrRef): Outcome<PullDetail?> =
         core("cachedPullDetail") { it.cachedPullDetail(pr.repo, pr.n)?.toModel() }

@@ -66,7 +66,7 @@ fn section<'a>(snapshot: &'a FeedSnapshot, repo: &str) -> &'a RepoBody {
 
 fn pulls(snapshot: &FeedSnapshot) -> Vec<rostrum_ffi::feed::PrSummary> {
     match section(snapshot, "octo/repo") {
-        RepoBody::Pulls { pulls } => pulls.clone(),
+        RepoBody::Pulls { items } => support::flat_pulls(items),
         other => panic!("expected pulls, got {other:?}"),
     }
 }

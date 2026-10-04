@@ -26,6 +26,13 @@ Overview:
       feed's item sort; with nothing selected the right pane shows the branch
       tree — trunks against the default branch, pull requests against their
       base, stacks nested.
+    ci_grid: >
+      A whole-window PRs × checks grid reached from the feed: each open pull
+      request's head-commit checks (Actions jobs, other apps' check runs,
+      legacy statuses) with live elapsed / since-finished times, a log viewer
+      with collapsible sections and the failing step highlighted, and
+      confirmed re-runs that flip cells to queued at once. Matrix, timing, log
+      parsing and re-run rules are pure in `rostrum_core::ci`.
     issues: >
       The Issues tab and everything behind it: fetching and caching each
       repository's open issues in the poll cycle, the issue pane (header with
@@ -94,6 +101,12 @@ Overview:
       pairing. ViewModels depend on one Kotlin interface,
       `RostrumBackend`, shaped after `RostrumCore`; secrets are sealed with an
       Android Keystore key; WorkManager runs the notification check.
+    android_issues_repo: >
+      The phone's feed sort and Pull requests | Issues tabs, the issue screen
+      (with editing) and new-issue form, stacks drawn together in the feed and
+      their actions run on the paired desktop as polled jobs, "load earlier"
+      on conversations, and a repository's own screen with its branch tree and
+      trunks — ordered and assembled by the core, drawn by the app.
     android_profiles: >
       Several paired desktops on one phone, each a profile with its own
       repositories, filters, cache, drafts and GitHub account (a desktop's
@@ -242,7 +255,13 @@ Overview:
     runs, in a task that outlives the request. Nothing is ever pushed. A
     paired phone can also copy the desktop's watched repositories and feed
     preferences (`GET /api/v1/config`) — never its clones, conflict handler,
-    refresh interval or notifications.
+    refresh interval or notifications — and send its own back on demand
+    (`PUT /api/v1/config`, against the revision it previewed; a stale one is
+    a 409 carrying the desktop's current settings). rostrumd replaces only
+    the shareable keys of `config.json`, through one writer, atomically. The
+    desktop app watches the file and adopts outside writes, and its own saves
+    are compare-and-swaps that re-apply the user's edit on top of anything
+    written meanwhile (`rostrum_config::save_merged`).
 
     A phone drives stacks the same way it drives local jobs, but as jobs it
     polls: a stack request names the repository and pull requests; rostrumd
@@ -270,6 +289,11 @@ Features Index:
     entry_points: [crates/rostrum/src/repo_view/mod.rs, crates/rostrum-core/src/branches/mod.rs, crates/rostrum-core/src/navigation.rs]
     depends_on: [repo_feed, issues, feed_sort, pr_detail, github_sync, ui_foundation]
     doc: docs/features/repo_view.md
+  ci_grid:
+    description: PRs × checks grid with live timings, job logs, and re-runs.
+    entry_points: [crates/rostrum/src/ci/mod.rs, crates/rostrum/src/sync/ci.rs, crates/rostrum-core/src/ci/mod.rs, crates/rostrum-github/src/ci/mod.rs]
+    depends_on: [repo_feed, feed_sort, github_sync, ui_foundation]
+    doc: docs/features/ci_grid.md
   issues:
     description: Issues tab, issue fetch and cache, issue pane with labels/assignees/close/reopen, and issue creation.
     entry_points: [crates/rostrum/src/issue/mod.rs, crates/rostrum/src/sync/issues.rs, crates/rostrum-core/src/issue.rs, crates/rostrum-core/src/tabs.rs, crates/rostrum-github/src/issues/mod.rs]
@@ -333,11 +357,15 @@ Features Index:
     description: >
       The Android app's Rust core behind UniFFI — a ProfileRegistry with one
       profile per paired desktop or GitHub token, each a RostrumCore serving
-      the feed, detail, diff rows, pending review, desktop pairing and jobs,
-      copying the desktop's config, and background notifications, all
-      render-ready for Compose.
-    entry_points: [crates/rostrum-ffi/src/lib.rs, crates/rostrum-ffi/src/profiles/mod.rs, crates/rostrum-ffi/src/engine/mod.rs]
-    depends_on: [repo_feed, pr_detail, diff_review, diff_overview, author_filter, github_sync, remote_protocol]
+      the feed (pull request and issue tabs, the saved sorts, stacks as
+      units), stack actions through the paired desktop, pull request and
+      issue detail with every issue action, issue creation and editing, and
+      "load earlier" paging, a repository's own screen with its branch
+      tree and trunks, the CI grid with logs and re-runs, diff rows, pending
+      review, desktop pairing and jobs, sharing settings with the desktop
+      both ways, and background notifications, all render-ready for Compose.
+    entry_points: [crates/rostrum-ffi/src/lib.rs, crates/rostrum-ffi/src/profiles/mod.rs, crates/rostrum-ffi/src/engine/mod.rs, crates/rostrum-ffi/src/issues/mod.rs, crates/rostrum-ffi/src/repo_view/mod.rs, crates/rostrum-ffi/src/stack_actions/mod.rs, crates/rostrum-ffi/src/ci/mod.rs, crates/rostrum-ffi/src/remote/push.rs]
+    depends_on: [repo_feed, pr_detail, diff_review, diff_overview, author_filter, github_sync, remote_protocol, feed_sort, issues, stacks, repo_view, ci_grid]
     doc: docs/features/android_core.md
   android_build:
     description: Gradle project, cargo-ndk + UniFFI pipeline, signing, and APK publishing for the Android app.
@@ -349,6 +377,11 @@ Features Index:
     entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/RostrumApplication.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/RostrumBackend.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/ffi/FfiRostrumBackend.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/navigation/RostrumNavHost.kt]
     depends_on: [android_build, android_core, android_profiles]
     doc: docs/features/android_app.md
+  android_issues_repo:
+    description: Feed sort sheet and Pull requests | Issues tabs, issue screen with editing and new-issue form, stacks in the feed with their actions on the paired desktop, load earlier, repository screen with branch tree and trunk editor, on Android.
+    entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/feed/FeedSortSheet.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/issue/IssueRoute.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/newissue/NewIssueRoute.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/repo/RepoRoute.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/items/ItemRows.kt]
+    depends_on: [android_app, android_core, feed_sort, issues, stacks, repo_view]
+    doc: docs/features/android_issues_repo.md
   android_profiles:
     description: One profile per paired desktop or pasted token; ProfileManager over the core's profile registry, per-profile secrets, switching, pairing into profiles, notifications across profiles.
     entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/profiles/ProfileManager.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/ffi/FfiProfileRegistry.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/app/RostrumApp.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/profiles/ProfileSwitcherSheet.kt]
@@ -379,7 +412,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 | `rostrum-stack` | no | Stacks that act: the `gh stack` runner and its typed commands, reading gh-stack's local file, making/arranging (`run_stack_job`), merging and unstacking |
 | `rostrum-remote` | no | Phone ↔ desktop protocol: pairing, device tokens, API types, and (feature `client`) the pinned HTTPS client |
 | `rostrumd` | no | Desktop daemon: pairing page and APK download over HTTP, the paired phone's API over HTTPS, systemd user service |
-| `rostrum-config` | no | `config.json`: watched repositories, clones, feed preferences, conflict handler |
+| `rostrum-config` | no | `config.json`: watched repositories, clones, feed preferences, conflict handler; the shareable subset and its revision; atomic, merging saves shared with other writers |
 | `rostrum-md` | no | `pulldown-cmark` → renderable markdown model |
 | `rostrum-ffi` | no | The Android app's core: `RostrumCore` over UniFFI (`cdylib`), plus the `uniffi-bindgen` binary |
 | `rostrum-ui` | yes | Theme, components, text/selection, markdown element |
@@ -391,6 +424,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 |---|---|---|
 | Auth | `gh auth token`, `$GITHUB_TOKEN` fallback | No secret storage of our own; `gh` handles SSO and refresh |
 | Reads | GraphQL v4 | One round-trip per repo instead of dozens; cost-based rate limit |
+| CI checks | A third GraphQL document per repository (`statusCheckRollup` contexts of each open PR's head commit), on the feed's poll plus a 15 s poll while the grid shows something running | Keeps the feed query lean; a point-1 request per repository; the fast poll touches only repositories with running checks |
 | Issues | A second GraphQL document per repository, not a selection on the pull request query | Separate load states per list, no coupling to the merge-probe timer; one extra point-1 request per repository per poll |
 | Mutations | REST v3, except draft conversion and branch updates | Simpler, better-documented endpoints for merge/review/comment. REST accepts `draft` only at creation, and its `update-branch` endpoint can only merge, so those two go through GraphQL |
 | Node ids | Fetched with the feed query | GraphQL mutations address a pull request by node id only. Carrying it on `PullRequest` makes a conversion one round trip, and is what the other GraphQL-only operations will need |
@@ -508,7 +542,7 @@ Each phase leaves a usable application.
 
 ## Status
 
-All five phases are complete and verified against the live API. 1497 tests pass
+All five phases are complete and verified against the live API. 1622 tests pass
 (154 of them in `rostrum-ffi`); clippy is clean across the workspace.
 
 Issues are on the desktop: a tab beside pull requests, an issue pane with

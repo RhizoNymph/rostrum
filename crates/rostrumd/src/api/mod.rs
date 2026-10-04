@@ -7,6 +7,7 @@
 //! its code's status.
 
 pub mod auth;
+mod config;
 mod local;
 mod machine;
 mod pairing;
@@ -29,7 +30,7 @@ pub fn router(daemon: Daemon) -> Router {
         .route(routes::HELLO, get(pairing::hello))
         .route(routes::PAIR, post(pairing::pair))
         .route(routes::MACHINE, get(machine::machine))
-        .route(routes::CONFIG, get(machine::config))
+        .route(routes::CONFIG, get(machine::config).put(config::push))
         .route(routes::GITHUB_TOKEN, get(machine::github_token))
         .route(routes::LOCAL_STATUS, post(local::status))
         .route(routes::LOCAL_JOB, post(local::job))
@@ -53,6 +54,8 @@ async fn not_found() -> ApiFailure {
     ApiFailure::new(ApiErrorCode::NotFound, "no such route")
 }
 
+#[cfg(test)]
+mod config_tests;
 #[cfg(test)]
 mod stack_tests;
 #[cfg(test)]

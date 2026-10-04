@@ -5,6 +5,7 @@ import io.github.rhizonymph.rostrum.data.model.CheckState
 import io.github.rhizonymph.rostrum.data.model.Chip
 import io.github.rhizonymph.rostrum.data.model.ColorRole
 import io.github.rhizonymph.rostrum.data.model.ReviewState
+import io.github.rhizonymph.rostrum.data.model.PrRef
 import io.github.rhizonymph.rostrum.data.model.ReviewThreadView
 import io.github.rhizonymph.rostrum.data.model.Side
 import io.github.rhizonymph.rostrum.data.model.ThreadCommentView
@@ -100,6 +101,20 @@ internal object SampleConversation {
         val checks = genericChecks(pull.checks)
         val files = SampleFiles.generic(pull.changedFiles, pull.additions, pull.deletions, pull.number)
         return FakeConversation(timeline, mutableListOf(), checks, files)
+    }
+
+    /** Older entries "load earlier" brings in: two comments on rostrum #9, before its newest page. */
+    fun earlier(now: Instant): Map<PrRef, List<TimelineEntry>> {
+        fun comment(id: String, author: String, hoursAgo: Long, text: String) = TimelineEntry(
+            id = id, author = UserRef(author), createdAt = now.minus(Duration.ofHours(hoursAgo)),
+            kind = TimelineKind.Comment(FakeMarkdown.parse(text), text),
+        )
+        return mapOf(
+            PrRef(SamplePulls.ROSTRUM, 9) to listOf(
+                comment("old-1", "ada-lin", 26, "Should involvement include mentions?"),
+                comment("old-2", SamplePulls.VIEWER, 25, "Not yet: reviews and assignments only."),
+            ),
+        )
     }
 
     private fun genericChecks(state: CheckState?): List<CheckRunView> {

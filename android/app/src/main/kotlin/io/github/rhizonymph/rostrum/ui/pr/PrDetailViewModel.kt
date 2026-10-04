@@ -79,6 +79,21 @@ class PrDetailViewModel(
         return result
     }
 
+    /** Merge the conversation's previous page in; a later reload keeps it. */
+    fun loadEarlier() {
+        if (_state.value.loadingEarlier || detail?.hasEarlier != true) return
+        _state.update { it.copy(loadingEarlier = true) }
+        viewModelScope.launch {
+            when (val earlier = backend.loadEarlierPull(pr)) {
+                is Outcome.Ok -> _state.update { it.copy(detail = UiState.Loaded(earlier.value), loadingEarlier = false) }
+                is Outcome.Err -> {
+                    fail("load_earlier", earlier.error)
+                    _state.update { it.copy(loadingEarlier = false) }
+                }
+            }
+        }
+    }
+
     // --- comments --------------------------------------------------------------
 
     fun setComment(text: String) = _state.update { it.copy(comment = text) }

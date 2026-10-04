@@ -17,4 +17,9 @@ enum class FakeCall {
     LocalStatus, RunLocalJob, AbortLocal, StartSyncAll, SyncAllStatus, Handoffs, RefreshGitHubTokenFromDesktop, Unpair,
     DesktopConfig, CopyDesktopConfig,
     CheckNotifications, MarkNotificationsSeen,
+    SetFeedTab, SortSettings, SetRepoSort, SetItemSort,
+    IssueDetail, CachedIssueDetail, CommentOnIssue, CloseIssue, ReopenIssue, AddIssueLabel, RemoveIssueLabel,
+    AssignableUsers, AddIssueAssignee, RemoveIssueAssignee, CreateIssue, LoadEarlierIssue, EditIssue, LoadEarlierPull,
+    PlanStackRewrite, CheckStackPlan, StackCandidates, MakeStack, ArrangeStack, ExtendStack, MergeStack, Unstack, StackJob,
+    RepoOverview, BranchTree, Trunks, SetTrunks,
 }

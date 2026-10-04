@@ -1,6 +1,17 @@
-package io.github.rhizonymph.rostrum.ui.feed
+package io.github.rhizonymph.rostrum.ui.items
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Icon
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -33,8 +44,9 @@ import io.github.rhizonymph.rostrum.ui.theme.RostrumTheme
 import java.time.Instant
 
 /**
- * One pull request in the feed: CI glyph, title, `#10 · ada-lin · 2h` with
- * `+900 −9` (or the Draft chip) on the right, then its chips.
+ * One pull request: CI glyph, title, `#10 · ada-lin · 2h` with `+900 −9`
+ * (or the Draft chip) on the right, then its chips. A stack member
+ * ([stack] set) is indented behind a chain glyph.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -43,15 +55,21 @@ fun PrRow(
     now: Instant,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    stack: StackPlace? = null,
+    /** Arrange mode: 0 unpicked, else the pick's position (1 = bottom). */
+    pick: Int? = null,
 ) {
     val colors = RostrumTheme.colors
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .height(IntrinsicSize.Min)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 13.dp),
+            .padding(start = if (stack == null) 14.dp else 8.dp, end = 14.dp, top = 13.dp, bottom = 13.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        if (pick != null) PickBadge(pick)
+        if (stack != null) ChainGlyph(stack)
         CiGlyph(
             shape = pr.checks.ciShape(),
             color = pr.checksRole.colors().solid,
@@ -115,8 +133,36 @@ private fun MetaLine(pr: PrSummary, now: Instant, colors: RostrumColors) {
     }
 }
 
+/** The chain glyph of a stack member, with the rule joining it to the members above and below. */
 @Composable
-private fun Dot(colors: RostrumColors) {
+private fun ChainGlyph(place: StackPlace) {
+    val colors = RostrumTheme.colors
+    Box(Modifier.width(18.dp).fillMaxHeight().clearAndSetSemantics { contentDescription = "Stack member" }) {
+        val up = place == StackPlace.Middle || place == StackPlace.Top
+        val down = place == StackPlace.Middle || place == StackPlace.Bottom
+        if (up) Box(Modifier.align(Alignment.TopCenter).width(1.dp).height(10.dp).offset(y = (-13).dp).background(colors.borderStrong))
+        if (down) Box(Modifier.align(Alignment.BottomCenter).width(1.dp).fillMaxHeight(0.7f).offset(y = 13.dp).background(colors.borderStrong))
+        Icon(RostrumIcons.Link, contentDescription = null, tint = colors.textMuted, modifier = Modifier.align(Alignment.TopCenter).size(14.dp).padding(top = 1.dp))
+    }
+}
+
+/** Arrange mode's checkbox, showing the pick's place in the new stack. */
+@Composable
+private fun PickBadge(pick: Int) {
+    val colors = RostrumTheme.colors
+    Box(Modifier.size(22.dp).clearAndSetSemantics { contentDescription = if (pick > 0) "Picked, number $pick" else "Not picked" }, contentAlignment = Alignment.Center) {
+        if (pick > 0) {
+            Box(Modifier.size(22.dp).background(colors.accent, androidx.compose.foundation.shape.CircleShape), contentAlignment = Alignment.Center) {
+                Text(pick.toString(), style = RostrumText.mono11, color = colors.onAccent)
+            }
+        } else {
+            io.github.rhizonymph.rostrum.ui.components.CheckboxVisual(false)
+        }
+    }
+}
+
+@Composable
+internal fun Dot(colors: RostrumColors) {
     Text("·", style = RostrumText.meta, color = colors.textMuted)
 }
 

@@ -38,12 +38,12 @@ import io.github.rhizonymph.rostrum.ui.theme.RostrumText
 import io.github.rhizonymph.rostrum.ui.theme.RostrumTheme
 
 /**
- * The feed's 64dp header: wordmark and open count, the profile pill, search
- * and filters (with the accent dot while any filter narrows the feed).
+ * The feed's 64dp header: wordmark, the profile pill, search, sort, and
+ * filters (with the accent dot while any filter narrows the feed). The open
+ * counts live on the tabs below.
  */
 @Composable
 fun FeedHeader(
-    openCount: Int?,
     desktop: PillView,
     filterActive: Boolean,
     filterCount: Int,
@@ -63,9 +63,6 @@ fun FeedHeader(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("rostrum", style = RostrumText.screenTitle, color = colors.text, modifier = Modifier.semantics { heading() })
-            if (openCount != null) {
-                Text(openCountText(openCount), style = RostrumText.mono12, color = colors.textMuted, modifier = Modifier.padding(top = 3.dp))
-            }
         }
         HeaderPill(
             label = desktop.label,
@@ -76,9 +73,10 @@ fun FeedHeader(
         )
         RostrumIconButton(
             icon = if (searchOpen) RostrumIcons.Close else RostrumIcons.Search,
-            contentDescription = if (searchOpen) "Close search" else "Search pull requests",
+            contentDescription = if (searchOpen) "Close search" else "Search",
             onClick = if (searchOpen) actions.closeSearch else actions.openSearch,
         )
+        RostrumIconButton(icon = RostrumIcons.Sort, contentDescription = "Sort", onClick = actions.openSort)
         Box {
             RostrumIconButton(
                 icon = RostrumIcons.Filter,

@@ -33,8 +33,10 @@ revokes paired phones.
   abort_in_progress}` (`local_git.md`); conflict handoffs are
   `rostrum-handoff` (`conflict_handoff.md`).
 - **Pushing.** Nothing here writes to a remote, ever.
-- **Writing rostrum's `config.json`.** It is read, on every request that needs
-  it; when it does not exist the defaults are used and nothing is created.
+- **Writing rostrum's `config.json`**, except a phone's settings push, which
+  replaces only the shareable keys. Otherwise it is read, on every request
+  that needs it; when it does not exist the defaults are used and nothing is
+  created.
 - **Building or publishing the APK** — `android/scripts/publish-apk.sh`. The
   JSON it writes beside the APK is a contract documented below.
 - **Firewalls.** `ufw` needs root; opening 8484/8485 to the LAN is the user's
@@ -178,7 +180,7 @@ minute has passed.
   tmux — is an empty list.
 - `DELETE device`: forgets the caller; its token fails from the next request.
 
-### Copying the desktop's config
+### Sharing the desktop's config
 
 `GET /api/v1/config` (bearer-authenticated) lets a phone start from the same
 repositories and feed preferences as the desktop. `rostrum_config::
@@ -194,6 +196,13 @@ desktop_config` builds the answer from an allowlist, field by field, from
 | `authors` | the `authors` set (logins already lowercased by `LoginKey`), empty ones skipped as `feed_filter` skips them |
 | `include_involved` | `include_involved` |
 | `autostash` | `autostash` |
+| `issues_per_repo` | `issues_per_repo` |
+| `repo_sort`, `item_sort` | `repo_sort`, `item_sort` |
+| `trunks` | `trunks`, valid repositories and names only |
+
+`GET` answers a `RevisedConfig`: those fields plus `revision`, the first 16
+bytes of the SHA-256 of the shareable settings (`SharedSettings::revision`),
+so a phone can push against exactly what it previewed.
 
 **Never sent:** `clones` (paths on this machine), `conflict_handler` (a
 command line that describes this machine and may carry secrets),
@@ -202,6 +211,32 @@ answer is built from an allowlist rather than by filtering the file, a
 setting added to `Config` later stays on the desktop until someone decides it
 should travel. A missing `config.json` answers with rostrum's defaults, as
 every other route does.
+
+**Pushed settings (`PUT /api/v1/config`, `api/config.rs`, `config_push.rs`).**
+The body is a `ConfigPush`. The handler validates it (`config_push::validate`:
+no duplicate repositories, `prs_per_repo` and `issues_per_repo` in 1–100,
+GitHub-shaped logins, no repository's trunks listed twice; 400 otherwise),
+then hands it to the **`ConfigWriter`**, the daemon's single writer of
+`config.json`: one task fed by a channel, so two pushes never interleave a
+read and a write. For each push the writer:
+
+1. reads the file (`rostrum_config::document::read`); a file that is not JSON
+   is refused (500) and left alone — a hand-edit with a typo is never erased;
+   a missing file starts from the defaults;
+2. if the push has a `base` that is not the revision of the shareable
+   settings on disk, writes nothing and answers 409 `config_changed` with the
+   current settings;
+3. applies the push to those settings (`config_push::apply`; an `Option`
+   field left `None` keeps its value) and, if anything changed, overlays only
+   the shareable keys onto the document (`rostrum_config::overlay_shared`) —
+   the desktop's own settings and keys this build does not know keep their
+   values — and writes it atomically (temporary file, fsync, rename, keeping
+   the file's permissions);
+4. answers with the new settings and revision, and logs which keys changed
+   with the device id.
+
+The running desktop app notices the new file within a couple of seconds and
+reloads it; see `author_filter.md` ("Which settings persist").
 
 ### Stacks
 
@@ -435,7 +470,10 @@ saw — printing none of them.
 | `crates/rostrumd/src/state_file.rs` | JSON state files | `StoreError`, `read_json`, `write_json` |
 | `crates/rostrumd/src/boxed.rs` | The boxed-future alias | `BoxFuture` |
 | `crates/rostrumd/src/convert.rs` | Wire types ↔ `rostrum-local` types | `job_outcome`, `local_status`, `in_progress_kind`, `handoff_status`, `local_op`, `autostash`, `pr_meta`, `branch` |
-| `crates/rostrumd/src/rostrum_config.rs` | rostrum's `config.json`, read fresh; `MachineInfo` and the copyable `DesktopConfig` built from it | `RostrumConfig`, `clones`, `machine_info`, `desktop_config` |
+| `crates/rostrumd/src/rostrum_config.rs` | rostrum's `config.json`, read fresh; `MachineInfo` and the shareable `DesktopConfig` (with its revision) built from it | `RostrumConfig`, `clones`, `machine_info`, `desktop_config`, `revised_config` |
+| `crates/rostrumd/src/config_push.rs` | Validating and applying a phone's settings push; the daemon's one writer of `config.json` | `validate`, `apply`, `ConfigWriter`, `PushResult`, `PushInvalid` |
+| `crates/rostrumd/src/api/config.rs` | `PUT /api/v1/config` | — |
+| `crates/rostrumd/src/api/config_tests.rs` | Router tests for the push | — |
 | `crates/rostrumd/src/github.rs` | GitHub token handover | `HandoverSource`, `GhHandover` |
 | `crates/rostrumd/src/tmux.rs` | Listing handoff sessions | `SessionLister`, `TmuxCli`, `TmuxSession`, `parse_sessions`, `is_no_server`, `handoff_sessions` |
 | `crates/rostrumd/src/stacks/mod.rs` | The stack request flow; the desktop's scratch directory | `default_scratch_dir` |
@@ -518,11 +556,14 @@ saw — printing none of them.
   a certificate without its key is an error, not a regeneration.
 - **Never pushes.** Every git operation is `rostrum-local`'s, which never
   writes to a remote.
-- **Read-only config.** rostrum's `config.json` is read per request and never
-  written.
-- **Only the copyable config travels.** `config` sends repositories, the PR
-  count, the feed filters and autostash — never clones, the conflict handler,
-  the refresh interval or notifications — and is built from an allowlist.
+- **rostrum's config is written only by a phone's push**, through one
+  writer, replacing only the shareable keys, atomically; it is read fresh on
+  every request.
+- **Only the shareable config travels, either way.** `config` sends, and a
+  push replaces, repositories, the per-repository counts, the feed filters
+  and sorts, trunks and autostash — never clones, the conflict handler, the
+  refresh interval, notifications or the open tab. A stale `base` writes
+  nothing.
 - **The APK JSON contract** above; a mismatched size is reported, not served
   as published.
 - **Advertised-host order**: LAN IPv4, tailnet IPv4, tailnet IPv6, MagicDNS
@@ -535,7 +576,7 @@ saw — printing none of them.
 
 ## Testing
 
-`cargo test -p rostrumd` — 210 tests:
+`cargo test -p rostrumd` — 224 tests:
 
 - Unit: code lifecycle (expiry, single use, five strikes, per-address throttle
   and its window, IPv6 `/64`), address classification including mapped IPv6
@@ -546,7 +587,11 @@ saw — printing none of them.
   fake interface list, `tailscale status` parsing, every wire ↔ local
   conversion, tmux output parsing and joining, the coordinator (ordering,
   one-at-a-time, busy, release after the last entry, detached work, handoff
-  records, shutdown), the copyable-config mapping, page rendering and
+  records, shutdown), the copyable-config mapping, the settings push (only
+  the shareable keys change; unknown and machine keys survive; a stale base
+  writes nothing; concurrent pushes on one base apply exactly once and
+  concurrent unconditional ones leave a whole file; a no-op writes nothing; a
+  file that is not JSON is left alone), page rendering and
   escaping, APK description and download headers.
 - Router (`tower::ServiceExt::oneshot` on scratch directories): every route,
   bearer auth (missing, garbage, other scheme, unknown, revoked), re-pairing
@@ -559,11 +604,15 @@ saw — printing none of them.
   route's 401, the dry run, the rewrite confirmation (missing, partial,
   extra, wrong — 409, nothing run), plan errors (400) and unknown repository,
   stack or job (404), the job lifecycle with progress, and the busy rule
-  (a second stack job and a local job on the clone are 409 while one runs).
+  (a second stack job and a local job on the clone are 409 while one runs);
+  `PUT /config`'s 401, 400s, the stale-base 409 carrying the desktop's
+  change, and a push that GET then reads back.
 - Integration: the phone's real `RemoteClient` over TLS (pinning, mismatch,
   probe, pair, use including `config()`, unpair) and real
   pull/merge/rebase/abort/sync-all over the
   API against a scratch origin, clone and worktree; stack jobs through the
   real `RemoteClient`, the real pipeline and real git with rostrum-stack's
   recording `gh` (a refused over-confirmation, then an arrangement that
-  rebases and lease-pushes exactly the confirmed branch, and a make).
+  rebases and lease-pushes exactly the confirmed branch, and a make); a
+  settings push over TLS with `push_config`, then a stale push turned back
+  with the current settings.

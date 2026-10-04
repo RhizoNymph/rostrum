@@ -15,6 +15,8 @@ import androidx.compose.ui.unit.dp
  */
 object RostrumIcons {
     val Search by lazy { icon("search", 1.8f, circle(11f, 11f, 6.5f), "M20 20l-4.3-4.3") }
+    /** Two arrows, up and down: the Sort button. */
+    val Sort by lazy { icon("sort", 1.8f, "M8 5v14M5 8l3-3 3 3M16 19V5M13 16l3 3 3-3") }
     val Filter by lazy { icon("filter", 1.8f, "M4 7h16M7 12h10M10 17h4") }
     val Check by lazy { icon("check", 2.2f, "M5 12.5l4.5 4.5L19 7") }
     val CheckBold by lazy { icon("check_bold", 3f, "M5 12.5l4.5 4.5L19 7") }
@@ -46,6 +48,8 @@ object RostrumIcons {
     val Commit by lazy { icon("commit", 2f, circle(12f, 12f, 3.5f), "M3 12h5.5M15.5 12H21") }
     val SoftWrap by lazy { icon("soft_wrap", 1.8f, "M4 6h16M4 12h13a3 3 0 0 1 0 6h-5M4 18h4", "M14 15.5L11.5 18 14 20.5") }
     val Edit by lazy { icon("edit", 1.8f, "M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4") }
+    /** A paper plane, for sending a comment. */
+    val Send by lazy { icon("send", 1.8f, "M4 12L20 4l-5 16-3-7-8-1zM12 13l8-9") }
     val Comment by lazy { icon("comment", 1.8f, "M5 5h14v10H10l-5 4z") }
     val Eye by lazy { icon("eye", 2f, "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z", circle(12f, 12f, 3f)) }
     val Alert by lazy { icon("alert", 2f, circle(12f, 12f, 9f), "M12 7.5v5.5M12 16.5v.01") }

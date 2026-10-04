@@ -41,10 +41,10 @@ and merges a whole stack at once. GitHub — through the `gh stack` extension
 
 ## Non-scope
 
-- **Android UI.** The phone's feed gets stack members in the same contiguous
-  order but no header and no actions (`rostrum-ffi` ignores
-  `FeedRow::StackHeader`). The *operations* are reachable from a paired phone
-  through `rostrumd` (below); a phone screen for them is not built yet.
+- **Android runs nothing locally.** The phone draws a stack's header and
+  members (`PullItem.Stack`, see `docs/features/android_issues_repo.md`) and
+  drives make/arrange/extend/merge/unstack through the paired desktop's
+  `rostrumd` (below); it never runs `gh` or git itself.
 - **Editing a stack in place** beyond adding to its top (`gh stack modify`,
   reordering or removing members, `gh stack sync`/`rebase`). Unstack and
   arrange again instead.
@@ -52,8 +52,8 @@ and merges a whole stack at once. GitHub — through the `gh stack` extension
   branches onto an already-tracked stack; an extension is made on GitHub
   only, and `gh stack sync` in the clone pulls the additions into local
   tracking (the outcome says so).
-- **Stack actions in the repo view.** It shows stack headers read-only; the
-  actions live in the feed.
+- **Stack actions in the desktop repo view.** It shows stack headers
+  read-only; the actions live in the feed.
 - **Creating pull requests.** Every member already has one; `gh stack submit`
   is never run, because it pushes on rostrum's behalf.
 - **Forks.** A pull request from a fork is never detected into a chain and

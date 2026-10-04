@@ -21,6 +21,8 @@ use crate::{
 const REFRESH_SECS: std::ops::RangeInclusive<u64> = 10..=3600;
 /// GitHub's page size caps a single query at 100.
 pub(crate) const PRS_PER_REPO: std::ops::RangeInclusive<u32> = 1..=100;
+/// Open issues fetched per repository: one GraphQL page, like pull requests.
+pub(crate) const ISSUES_PER_REPO: std::ops::RangeInclusive<u32> = 1..=100;
 
 /// Everything on the settings screen.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -39,6 +41,9 @@ pub struct Settings {
     pub autostash: bool,
     /// The feed's persisted filter preferences.
     pub feed: FeedPreferences,
+    /// Open issues fetched per repository (1..=100).
+    #[uniffi(default = 25)]
+    pub issues_per_repo: u32,
 }
 
 impl CoreState {
@@ -60,6 +65,9 @@ fn settings_of(config: &Config, feed: FeedPreferences) -> Settings {
         notify_review_requests: config.notify_review_requests,
         autostash: config.autostash,
         feed,
+        issues_per_repo: config
+            .issues_per_repo
+            .clamp(*ISSUES_PER_REPO.start(), *ISSUES_PER_REPO.end()),
     }
 }
 
@@ -87,44 +95,41 @@ impl RostrumCore {
     /// input and `DuplicateRepo` when it is already watched. The repository
     /// starts out `Idle`; call `refresh_repo` to fetch it.
     pub async fn add_repo(&self, input: String) -> Result<String, RostrumError> {
-        self.actor
-            .try_call(move |state| {
-                let mut added = None;
-                let mut failure = None;
-                state.edit_config(|config| match config.try_add_repo(&input) {
-                    Ok(id) => added = Some(id),
-                    Err(error) => failure = Some(error),
-                })?;
-                if let Some(error) = failure {
-                    return Err(add_repo_error(&input, error));
-                }
-                let id =
-                    added.ok_or_else(|| RostrumError::internal("add_repo reported nothing"))?;
+        self.change_config(
+            move |_, config| {
+                config
+                    .try_add_repo(&input)
+                    .map_err(|error| add_repo_error(&input, error))
+            },
+            |state, id| {
                 let order = state.config.repos.clone();
                 state.feed.add_repo(id.clone(), &order);
                 state.publish();
                 tracing::info!(repo = %id, "repository added");
                 Ok(id.to_string())
-            })
-            .await
+            },
+        )
+        .await
     }
 
     /// Stop watching a repository. Returns whether it was watched. Pending
     /// review drafts on its pull requests are kept.
     pub async fn remove_repo(&self, repo: String) -> Result<bool, RostrumError> {
         let id = parse_repo(&repo)?;
-        self.actor
-            .try_call(move |state| {
-                let mut removed = false;
-                state.edit_config(|config| removed = config.remove_repo(&id))?;
+        let forget = id.clone();
+        self.change_config(
+            move |_, config| Ok(config.remove_repo(&id)),
+            move |state, removed| {
                 if removed {
+                    let id = forget;
                     state.forget_repo(&id);
                     state.publish();
                     tracing::info!(repo = %id, "repository removed");
                 }
                 Ok(removed)
-            })
-            .await
+            },
+        )
+        .await
     }
 
     /// Set the foreground refresh interval; out-of-range values are clamped.
@@ -139,6 +144,14 @@ impl RostrumCore {
     pub async fn set_prs_per_repo(&self, count: u32) -> Result<Settings, RostrumError> {
         let count = count.clamp(*PRS_PER_REPO.start(), *PRS_PER_REPO.end());
         self.edit_settings(move |config| config.prs_per_repo = count)
+            .await
+    }
+
+    /// Set how many open issues are fetched per repository; clamped to
+    /// 1..=100.
+    pub async fn set_issues_per_repo(&self, count: u32) -> Result<Settings, RostrumError> {
+        let count = count.clamp(*ISSUES_PER_REPO.start(), *ISSUES_PER_REPO.end());
+        self.edit_settings(move |config| config.issues_per_repo = count)
             .await
     }
 
@@ -165,12 +178,14 @@ impl RostrumCore {
         &self,
         edit: impl FnOnce(&mut Config) + Send + 'static,
     ) -> Result<Settings, RostrumError> {
-        self.actor
-            .try_call(move |state| {
-                state.edit_config(edit)?;
-                Ok(state.settings())
-            })
-            .await
+        self.change_config(
+            move |_, config| {
+                edit(config);
+                Ok(())
+            },
+            |state, ()| Ok(state.settings()),
+        )
+        .await
     }
 }
 

@@ -2,8 +2,20 @@ package io.github.rhizonymph.rostrum.data.fake
 
 import io.github.rhizonymph.rostrum.data.BackendError
 import io.github.rhizonymph.rostrum.data.Outcome
+import io.github.rhizonymph.rostrum.data.IssuesApi
 import io.github.rhizonymph.rostrum.data.RostrumBackend
+import io.github.rhizonymph.rostrum.data.StackActionsApi
 import io.github.rhizonymph.rostrum.data.model.AuthorRoster
+import io.github.rhizonymph.rostrum.data.model.TrunkSettings
+import io.github.rhizonymph.rostrum.data.model.SortSettings
+import io.github.rhizonymph.rostrum.data.model.SortDirection
+import io.github.rhizonymph.rostrum.data.model.RepoSortKey
+import io.github.rhizonymph.rostrum.data.model.RepoOverview
+import io.github.rhizonymph.rostrum.data.model.PrSummary
+import io.github.rhizonymph.rostrum.data.model.ItemSortKey
+import io.github.rhizonymph.rostrum.data.model.IssueRef
+import io.github.rhizonymph.rostrum.data.model.FeedTab
+import io.github.rhizonymph.rostrum.data.model.BranchTree
 import io.github.rhizonymph.rostrum.data.model.BranchUpdateMethod
 import io.github.rhizonymph.rostrum.data.model.Chip
 import io.github.rhizonymph.rostrum.data.model.ColorRole
@@ -44,7 +56,7 @@ import io.github.rhizonymph.rostrum.data.model.ReviewEvent
 import io.github.rhizonymph.rostrum.data.model.ReviewState
 import io.github.rhizonymph.rostrum.data.model.ReviewThreadView
 import io.github.rhizonymph.rostrum.data.model.Settings
-import io.github.rhizonymph.rostrum.data.model.Side
+import io.github.rhizonymph.rostrum.data.model.StackJobState
 import io.github.rhizonymph.rostrum.data.model.SyncAllOp
 import io.github.rhizonymph.rostrum.data.model.SyncRun
 import io.github.rhizonymph.rostrum.data.model.ThreadCommentView
@@ -71,15 +83,24 @@ import java.time.Duration
  * @param paired start with nymph-desk set as the session's desktop.
  * @param desktopGitHubHost the host of the GitHub token the desktop hands over.
  */
-class FakeRostrumBackend(
-    private val clock: Clock = Clock.systemUTC(),
-    private val latency: Duration = Duration.ZERO,
-    signedIn: Boolean = false,
-    paired: Boolean = false,
-    desktopGitHubHost: String = "github.com",
-) : RostrumBackend {
+class FakeRostrumBackend private constructor(
+    private val clock: Clock,
+    private val latency: Duration,
+    signedIn: Boolean,
+    paired: Boolean,
+    desktopGitHubHost: String,
+    private val parts: FakeParts,
+) : RostrumBackend, IssuesApi by parts.issuesApi, StackActionsApi by parts.stacks {
+    constructor(
+        clock: Clock = Clock.systemUTC(),
+        latency: Duration = Duration.ZERO,
+        signedIn: Boolean = false,
+        paired: Boolean = false,
+        desktopGitHubHost: String = "github.com",
+    ) : this(clock, latency, signedIn, paired, desktopGitHubHost, FakeParts(clock))
+
     private val mutex = Mutex()
-    private val started = clock.instant()
+    private val started = parts.started
     private val failures = mutableMapOf<FakeCall, BackendError>()
 
     private var token: String? = if (signedIn) SAMPLE_TOKEN else null
@@ -98,6 +119,9 @@ class FakeRostrumBackend(
         includeInvolved = true,
     )
     private var query = ""
+    private var tab = FeedTab.PullRequests
+    private val sort = FakeSort()
+    private val repoView = FakeRepoView()
     private val collapsed = mutableSetOf(SamplePulls.RUST)
     private val loads = repos.associateWithTo(mutableMapOf<String, RepoLoad>()) {
         RepoLoad.Loaded(started.minus(Duration.ofMinutes(5)))
@@ -129,23 +153,31 @@ class FakeRostrumBackend(
         },
     )
 
+    private val issues get() = parts.issues
+
+    /** Older conversation entries "load earlier" brings in, per pull request, until it has. */
+    private val pullEarlier = SampleConversation.earlier(started).toMutableMap()
+
     private val updates = MutableSharedFlow<FeedSnapshot>(extraBufferCapacity = 64)
     override val feedUpdates: Flow<FeedSnapshot> = updates.asSharedFlow()
 
     init {
-        val diffOverview = PrRef(SamplePulls.ROSTRUM, 10)
-        drafts[diffOverview] = mutableListOf(
-            draft(CommentAnchor("crates/rostrum-diff/src/overview.rs", 60, Side.Right), null,
-                "A test with a rename-only diff would pin the sliver behaviour."),
-            draft(CommentAnchor("crates/rostrum/src/detail/files.rs", 271, Side.Right), null,
-                "Nit: the toggle bar repeats the tab bar's segment styling."),
-        )
-        draftedAgainst[diffOverview] = SamplePulls.DIFF_OVERVIEW_SHA
-        val authorFilter = PrRef(SamplePulls.ROSTRUM, 9)
-        drafts[authorFilter] = mutableListOf(
-            draft(CommentAnchor("src/lib.rs", 21, Side.Right), null, "Should the roster cap be configurable?"),
-        )
-        draftedAgainst[authorFilter] = "a41c9e05d3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8"
+        parts.host.host = object : FakeHost {
+            override suspend fun <T> call(op: FakeCall, block: () -> Outcome<T>): Outcome<T> = this@FakeRostrumBackend.call(op, block)
+            override fun <T> signedIn(block: () -> Outcome<T>): Outcome<T> = this@FakeRostrumBackend.signedIn(block)
+            override val viewerLogin: String? get() = this@FakeRostrumBackend.viewerLogin
+            override val isPaired: Boolean get() = desktop.isPaired
+            override fun labelsOf(repo: String) = this@FakeRostrumBackend.labelsOf(repo)
+            override fun openPulls(repo: String) = prSummaries(repo)
+            override fun highestPullNumber(repo: String) = pulls.keys.filter { it.repo == repo }.maxOfOrNull { it.number } ?: 0
+            override fun emitFeed() {
+                this@FakeRostrumBackend.emitFeed()
+            }
+        }
+        SampleDrafts.seed { anchor, body -> draft(anchor, null, body) }.forEach { (pr, seeded) ->
+            drafts[pr] = seeded.drafts.toMutableList()
+            draftedAgainst[pr] = seeded.against
+        }
     }
 
     /** Make the next call of [call] fail with [error] (once). */
@@ -264,6 +296,13 @@ class FakeRostrumBackend(
 
     // --- feed --------------------------------------------------------------------
 
+    private fun prSummaries(repo: String): List<PrSummary> = pulls.values
+        .filter { it.state == PullState.Open && it.repo == repo }
+        .map { it.summary(viewerLogin, labelsOf(repo)) }
+
+    private fun repoFacts(): List<FakeSort.RepoFacts> =
+        FakeSort.repoFacts(repos, pulls.values.toList(), issues.issues.values.toList(), started)
+
     private fun snapshot(): FeedSnapshot {
         val viewer = viewerLogin
         val candidates = pulls.values
@@ -272,15 +311,25 @@ class FakeRostrumBackend(
             .mapValues { (repo, list) ->
                 list.map { FakeFeedAssembler.Candidate(it.summary(viewer, labelsOf(repo)), it.involved) }
             }
+        val issueCandidates = issues.open(repos).mapValues { (repo, list) ->
+            list.map { FakeFeedAssembler.IssueCandidate(it.summary(viewer, labelsOf(repo)), it.involved) }
+        }
         return FakeFeedAssembler.assemble(
-            revision = revision,
-            repos = repos,
-            candidates = candidates,
-            loads = loads,
-            preferences = preferences,
-            query = query,
-            collapsed = collapsed,
-            viewer = viewer?.let { UserRef(it) },
+            FakeFeedAssembler.Inputs(
+                revision = revision,
+                tab = tab,
+                repos = repos,
+                repoFacts = repoFacts(),
+                pulls = candidates,
+                issues = issueCandidates,
+                loads = loads,
+                preferences = preferences,
+                query = query,
+                collapsed = collapsed,
+                viewer = viewer?.let { UserRef(it) },
+                sort = sort,
+                stacks = FakeStacks.samples,
+            ),
         )
     }
 
@@ -342,11 +391,66 @@ class FakeRostrumBackend(
     }
 
     override suspend fun authorRoster(limit: Int?): Outcome<AuthorRoster> = call(FakeCall.AuthorRoster) {
-        val viewer = viewerLogin
-        val open = pulls.values.filter { it.state == PullState.Open && it.repo in repos }
-            .map { it.summary(viewer, labelsOf(it.repo)) }
-        Outcome.Ok(FakeFeedAssembler.roster(open, viewer, preferences.authors, limit))
+        val authored = when (tab) {
+            FeedTab.PullRequests -> pulls.values.filter { it.state == PullState.Open && it.repo in repos }
+                .map { FakeFeedAssembler.Authored(it.author, it.updatedAt) }
+            FeedTab.Issues -> issues.open(repos).values.flatten().map { FakeFeedAssembler.Authored(it.author, it.updatedAt) }
+        }
+        Outcome.Ok(FakeFeedAssembler.roster(authored, viewerLogin, preferences.authors, limit))
     }
+
+    override suspend fun setFeedTab(tab: FeedTab): Outcome<FeedSnapshot> = call(FakeCall.SetFeedTab) {
+        this.tab = tab
+        emitFeed()
+    }
+
+    // --- sort ----------------------------------------------------------------------
+
+    override suspend fun sortSettings(): Outcome<SortSettings> = call(FakeCall.SortSettings) { Outcome.Ok(sort.settings()) }
+
+    override suspend fun setRepoSort(key: RepoSortKey, direction: SortDirection?): Outcome<FeedSnapshot> =
+        call(FakeCall.SetRepoSort) {
+            sort.setRepo(key, direction)
+            emitFeed()
+        }
+
+    override suspend fun setItemSort(key: ItemSortKey, direction: SortDirection?): Outcome<FeedSnapshot> =
+        call(FakeCall.SetItemSort) {
+            sort.setItem(key, direction)
+            emitFeed()
+        }
+
+    // --- issues and stack actions: delegated (FakeIssuesApi, FakeStackActions) ---------
+
+    /** Someone edits the issue's title and description on GitHub (tests of the edit conflict). */
+    fun editIssueElsewhere(issue: IssueRef, title: String, body: String) {
+        issues.editElsewhere(issue, title, body)
+    }
+
+    /** How the next stack job to finish ends (`null`: success). */
+    var nextStackOutcome: StackJobState?
+        get() = parts.stacks.nextOutcome
+        set(value) {
+            parts.stacks.nextOutcome = value
+        }
+
+    // --- one repository ------------------------------------------------------------
+
+    override suspend fun repoOverview(repo: String): Outcome<RepoOverview> = call(FakeCall.RepoOverview) {
+        if (repos.none { it == repo }) return@call Outcome.Err(BackendError.InvalidInput("$repo isn't watched"))
+        val openIssues = issues.open(listOf(repo))[repo].orEmpty().map { it.summary(viewerLogin, labelsOf(repo)) }
+        Outcome.Ok(repoView.overview(repo, prSummaries(repo), openIssues, loads[repo] ?: RepoLoad.Idle, sort))
+    }
+
+    override suspend fun branchTree(repo: String): Outcome<BranchTree> = call(FakeCall.BranchTree) {
+        signedIn { Outcome.Ok(repoView.tree(repo, prSummaries(repo), FakeStacks.samples, SamplePulls.stars[repo] ?: 0)) }
+    }
+
+    override suspend fun trunks(repo: String): Outcome<TrunkSettings> =
+        call(FakeCall.Trunks) { Outcome.Ok(repoView.trunks(repo, prSummaries(repo))) }
+
+    override suspend fun setTrunks(repo: String, names: List<String>?): Outcome<TrunkSettings> =
+        call(FakeCall.SetTrunks) { repoView.setTrunks(repo, names, prSummaries(repo)) }
 
     // --- one pull request --------------------------------------------------------
 
@@ -381,11 +485,21 @@ class FakeRostrumBackend(
             checks = conversation.checks,
             unresolvedThreads = conversation.threads.count { !it.resolved },
             pendingReview = pending(pull.ref),
+            hasEarlier = pull.ref in pullEarlier,
+            earlierCount = pullEarlier[pull.ref]?.size,
         )
     }
 
     override suspend fun pullDetail(pr: PrRef): Outcome<PullDetail> =
         call(FakeCall.PullDetail) { withPull(pr) { Outcome.Ok(detail(it)) } }
+
+    override suspend fun loadEarlierPull(pr: PrRef): Outcome<PullDetail> = call(FakeCall.LoadEarlierPull) {
+        withPull(pr) { pull ->
+            if (pr !in conversations) return@withPull Outcome.Err(BackendError.InvalidInput("Open the pull request first"))
+            pullEarlier.remove(pr)?.let { conversation(pull).timeline.addAll(1, it) }
+            Outcome.Ok(detail(pull))
+        }
+    }
 
     override suspend fun cachedPullDetail(pr: PrRef): Outcome<PullDetail?> = call(FakeCall.CachedPullDetail) {
         val pull = pulls[pr]

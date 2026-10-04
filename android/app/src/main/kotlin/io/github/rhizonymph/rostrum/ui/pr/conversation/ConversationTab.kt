@@ -13,6 +13,10 @@ import io.github.rhizonymph.rostrum.data.model.ReviewState
 import io.github.rhizonymph.rostrum.data.model.ReviewThreadView
 import io.github.rhizonymph.rostrum.data.model.TimelineEntry
 import io.github.rhizonymph.rostrum.data.model.TimelineKind
+import io.github.rhizonymph.rostrum.ui.components.CommentCard
+import io.github.rhizonymph.rostrum.ui.components.EventRow
+import io.github.rhizonymph.rostrum.ui.components.LoadEarlierRow
+import io.github.rhizonymph.rostrum.ui.components.eventIcon
 import io.github.rhizonymph.rostrum.ui.components.RostrumIcons
 import io.github.rhizonymph.rostrum.ui.format.relativeAge
 import io.github.rhizonymph.rostrum.ui.pr.ReplyDraft
@@ -32,6 +36,8 @@ fun ConversationTab(
     onAddLabel: () -> Unit,
     onMerge: () -> Unit,
     modifier: Modifier = Modifier,
+    loadingEarlier: Boolean = false,
+    onLoadEarlier: () -> Unit = {},
 ) {
     val threadsById = detail.threads.associateBy { it.id }
     val claimed = detail.timeline.flatMap { (it.kind as? TimelineKind.Review)?.threadIds.orEmpty() }.toSet()
@@ -44,7 +50,13 @@ fun ConversationTab(
         item(key = "summary") {
             PrSummaryBlock(detail.header, now, onAddLabel, onMerge)
         }
-        detail.timeline.forEach { entry -> timelineEntry(entry, threadsById, now, reply, replyActions) }
+        // Earlier pages come in after the description, so "Load earlier" sits there.
+        val description = detail.timeline.takeWhile { it.kind is TimelineKind.Description }
+        description.forEach { entry -> timelineEntry(entry, threadsById, now, reply, replyActions) }
+        if (detail.hasEarlier) {
+            item(key = "load-earlier") { LoadEarlierRow(detail.earlierCount, loadingEarlier, onLoadEarlier) }
+        }
+        detail.timeline.drop(description.size).forEach { entry -> timelineEntry(entry, threadsById, now, reply, replyActions) }
         orphans.forEach { thread ->
             item(key = "orphan-${thread.id}") { ThreadCard(thread, now, reply, replyActions) }
         }

@@ -1,5 +1,66 @@
 package io.github.rhizonymph.rostrum.data.ffi
 
+import io.github.rhizonymph.rostrum.data.model.StackCandidate
+import io.github.rhizonymph.rostrum.data.model.StackEligibility
+import io.github.rhizonymph.rostrum.data.model.StackJobKind
+import io.github.rhizonymph.rostrum.data.model.StackJobResult
+import io.github.rhizonymph.rostrum.data.model.StackJobState
+import io.github.rhizonymph.rostrum.data.model.StackMergeMethod
+import io.github.rhizonymph.rostrum.data.model.StackPlanCheck
+import io.github.rhizonymph.rostrum.data.model.StackPlanRequest
+import io.github.rhizonymph.rostrum.data.model.StackRewrite
+import io.github.rhizonymph.rostrum.data.model.StackRewritePlan
+import uniffi.rostrum_ffi.StackCandidate as FStackCandidate
+import uniffi.rostrum_ffi.StackEligibility as FStackEligibility
+import uniffi.rostrum_ffi.StackJob as FStackJob
+import uniffi.rostrum_ffi.StackJobKind as FStackJobKind
+import uniffi.rostrum_ffi.StackJobResult as FStackJobResult
+import uniffi.rostrum_ffi.StackJobState as FStackJobState
+import uniffi.rostrum_ffi.StackPlanCheck as FStackPlanCheck
+import uniffi.rostrum_ffi.StackPlanRequest as FStackPlanRequest
+import uniffi.rostrum_ffi.StackRewrite as FStackRewrite
+import uniffi.rostrum_ffi.StackRewritePlan as FStackRewritePlan
+import uniffi.rostrum_ffi.IssueDetail as FIssueDetail
+import io.github.rhizonymph.rostrum.data.model.BranchDrift
+import io.github.rhizonymph.rostrum.data.model.BranchNote
+import io.github.rhizonymph.rostrum.data.model.BranchRow
+import io.github.rhizonymph.rostrum.data.model.CloseIssueAs
+import io.github.rhizonymph.rostrum.data.model.FeedTab
+import io.github.rhizonymph.rostrum.data.model.IssueCloseReason
+import io.github.rhizonymph.rostrum.data.model.IssueRef
+import io.github.rhizonymph.rostrum.data.model.IssueStatus
+import io.github.rhizonymph.rostrum.data.model.ItemSortKey
+import io.github.rhizonymph.rostrum.data.model.PullItem
+import io.github.rhizonymph.rostrum.data.model.RepoSortKey
+import io.github.rhizonymph.rostrum.data.model.SortDirection
+import io.github.rhizonymph.rostrum.data.model.SortOption
+import io.github.rhizonymph.rostrum.data.model.StackKind
+import io.github.rhizonymph.rostrum.data.model.TabCounts
+import io.github.rhizonymph.rostrum.data.model.TrunkDrift
+import io.github.rhizonymph.rostrum.data.model.TrunkSettings
+import uniffi.rostrum_ffi.BranchDrift as FBranchDrift
+import uniffi.rostrum_ffi.BranchNote as FBranchNote
+import uniffi.rostrum_ffi.BranchRow as FBranchRow
+import uniffi.rostrum_ffi.BranchTree as FBranchTree
+import uniffi.rostrum_ffi.CloseIssueAs as FCloseIssueAs
+import uniffi.rostrum_ffi.FeedTab as FFeedTab
+import uniffi.rostrum_ffi.IssueCloseReason as FIssueCloseReason
+import uniffi.rostrum_ffi.IssueStatus as FIssueStatus
+import uniffi.rostrum_ffi.IssueSummary as FIssueSummary
+import uniffi.rostrum_ffi.ItemSortKey as FItemSortKey
+import uniffi.rostrum_ffi.ItemSortOption as FItemSortOption
+import uniffi.rostrum_ffi.PullItem as FPullItem
+import uniffi.rostrum_ffi.RepoOverview as FRepoOverview
+import uniffi.rostrum_ffi.RepoSortKey as FRepoSortKey
+import uniffi.rostrum_ffi.RepoSortOption as FRepoSortOption
+import uniffi.rostrum_ffi.SortDirection as FSortDirection
+import uniffi.rostrum_ffi.SortSettings as FSortSettings
+import uniffi.rostrum_ffi.StackKind as FStackKind
+import uniffi.rostrum_ffi.StackRollup as FStackRollup
+import uniffi.rostrum_ffi.StackSummary as FStackSummary
+import uniffi.rostrum_ffi.TabCounts as FTabCounts
+import uniffi.rostrum_ffi.TrunkDrift as FTrunkDrift
+import uniffi.rostrum_ffi.TrunkSettings as FTrunkSettings
 import io.github.rhizonymph.rostrum.data.BackendError
 import io.github.rhizonymph.rostrum.data.Outcome
 import io.github.rhizonymph.rostrum.data.RemoteErrorCode
@@ -30,6 +91,7 @@ import io.github.rhizonymph.rostrum.data.model.SyncEntryState
 import io.github.rhizonymph.rostrum.data.model.TimelineEvent
 import io.github.rhizonymph.rostrum.data.model.TimelineKind
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
@@ -140,6 +202,9 @@ class FfiMappingsTest {
                 RostrumException.InvalidRepo("x", "not owner/name") to BackendError.InvalidRepo("x", "not owner/name"),
                 RostrumException.DuplicateRepo("a/b") to BackendError.DuplicateRepo("a/b"),
                 RostrumException.InvalidInput("why") to BackendError.InvalidInput("why"),
+                RostrumException.EditConflict("t", "b", at) to BackendError.EditConflict("t", "b", at),
+                RostrumException.RewriteNotConfirmed(listOf(FStackRewrite(10u, "feat/x")), "changed") to
+                    BackendError.RewriteNotConfirmed(listOf(StackRewrite(10, "feat/x")), "changed"),
                 RostrumException.ProfileNotFound("0123456789abcdef") to BackendError.ProfileNotFound("0123456789abcdef"),
                 RostrumException.Storage("disk") to BackendError.Storage("disk"),
                 RostrumException.Internal("bug") to BackendError.Internal("bug"),
@@ -152,7 +217,7 @@ class FfiMappingsTest {
             val expected = listOf(
                 RemoteErrorCode.Unauthorized, RemoteErrorCode.Forbidden, RemoteErrorCode.BadRequest,
                 RemoteErrorCode.NotFound, RemoteErrorCode.PairingCodeInvalid, RemoteErrorCode.PairingCodeExpired,
-                RemoteErrorCode.RateLimited, RemoteErrorCode.Busy, RemoteErrorCode.Internal,
+                RemoteErrorCode.RateLimited, RemoteErrorCode.Busy, RemoteErrorCode.RewriteNotConfirmed, RemoteErrorCode.Internal,
             )
             assertEquals(expected, FRemoteErrorCode.entries.map { it.toModel() })
         }
@@ -225,8 +290,11 @@ class FfiMappingsTest {
         fun `a snapshot maps sections, bodies and the pull request row`() {
             val snapshot = FFeedSnapshot(
                 revision = 42uL,
+                tab = FFeedTab.ISSUES,
+                tabCounts = FTabCounts(3u, 5u),
+                sort = sortFixture,
                 repos = listOf(
-                    FRepoSection("RhizoNymph/rostrum", FRepoLoad.Loaded(at), 3u, 1u, false, FRepoBody.Pulls(listOf(summary))),
+                    FRepoSection("RhizoNymph/rostrum", FRepoLoad.Loaded(at), 3u, 1u, false, FRepoBody.Pulls(listOf(FPullItem.Single(summary)))),
                     FRepoSection("rust-lang/rust", FRepoLoad.Failed("rate", at), 0u, 0u, false, FRepoBody.Failed("rate")),
                     FRepoSection("x/y", FRepoLoad.Idle, 0u, 0u, true, FRepoBody.Collapsed),
                 ),
@@ -236,6 +304,9 @@ class FfiMappingsTest {
             )
             val model = snapshot.toModel()
             assertEquals(42L, model.revision)
+            assertEquals(FeedTab.Issues, model.tab)
+            assertEquals(TabCounts(3, 5), model.tabCounts)
+            assertEquals("pushed ↓ · created ↓", model.sort.summary)
             assertEquals(RepoLoad.Loaded(at), model.repos[0].load)
             assertEquals(RepoBody.Failed("rate"), model.repos[1].body)
             assertEquals(RepoBody.Collapsed, model.repos[2].body)
@@ -471,6 +542,137 @@ class FfiMappingsTest {
             assertEquals("framework", pairing.profile.label)
             assertEquals("rdt_x", pairing.pairing.deviceToken)
             assertEquals("framework", pairing.pairing.machine.name)
+        }
+    }
+
+    private val sortFixture = FSortSettings(
+        repoKey = FRepoSortKey.PUSHED, repoDirection = FSortDirection.DESCENDING, repoDirectionLabel = "Newest first",
+        itemKey = FItemSortKey.TITLE, itemDirection = FSortDirection.ASCENDING, itemDirectionLabel = "A→Z",
+        summary = "pushed ↓ · created ↓",
+        repoOptions = listOf(FRepoSortOption(FRepoSortKey.STARS, "Stars", FSortDirection.DESCENDING, "Most", "Fewest")),
+        itemOptions = listOf(FItemSortOption(FItemSortKey.AUTHOR, "Author", FSortDirection.ASCENDING, "Z→A", "A→Z")),
+    )
+
+    @Nested
+    inner class SortTabsIssuesStacksRepo {
+        private val at = Instant.parse("2026-09-28T10:00:00Z")
+        private val pr = FPrSummary(
+            repo = "a/b", number = 9u, title = "t", url = "u", author = null, createdAt = at, updatedAt = at,
+            isDraft = false, checks = null, checksRole = FColorRole.NEUTRAL, reviewDecision = null, reviewChip = null,
+            mergeStatus = FMergeStatus.READY, mergeChip = null, baseDivergence = null, behindChip = null, labels = emptyList(),
+            additions = 1u, deletions = 0u, changedFiles = 1u, commentCount = 0u, reviewRequested = false, isYours = true,
+            headRef = "feat/x", baseRef = "main",
+        )
+        private val issue = FIssueSummary(
+            repo = "a/b", number = 21u, title = "bug", url = "u", status = FIssueStatus.Closed(FIssueCloseReason.NOT_PLANNED),
+            statusChip = FChip("not planned", FColorRole.NEUTRAL, null), author = FUserRef("ada", null), createdAt = at, updatedAt = at,
+            labels = listOf(FLabelView("bug", 0xFFD73A4Au)), assignees = listOf(FUserRef("me", null)), commentCount = 2u,
+            milestone = "0.2", isYours = false, assignedToYou = true,
+        )
+
+        @Test
+        fun `sort settings keep keys, directions, labels and options`() {
+            val model = sortFixture.toModel()
+            assertEquals(RepoSortKey.Pushed, model.repoKey)
+            assertEquals(SortDirection.Descending, model.repoDirection)
+            assertEquals(ItemSortKey.Title, model.itemKey)
+            assertEquals(SortDirection.Ascending, model.itemDirection)
+            assertEquals(SortOption(RepoSortKey.Stars, "Stars", SortDirection.Descending, "Most", "Fewest"), model.repoOptions.single())
+            assertEquals("A→Z", model.itemOptions.single().directionLabel(SortDirection.Ascending))
+        }
+
+        @Test
+        fun `every sort key and direction maps both ways`() {
+            FRepoSortKey.entries.forEach { assertEquals(it, it.toModel().toFfi()) }
+            FItemSortKey.entries.forEach { assertEquals(it, it.toModel().toFfi()) }
+            FSortDirection.entries.forEach { assertEquals(it, it.toModel().toFfi()) }
+            FFeedTab.entries.forEach { assertEquals(it, it.toModel().toFfi()) }
+            assertEquals(FCloseIssueAs.NOT_PLANNED, CloseIssueAs.NotPlanned.toFfi())
+        }
+
+        @Test
+        fun `an issue keeps its status with the reason, labels and assignees`() {
+            val model = issue.toModel()
+            assertEquals(IssueStatus.Closed(IssueCloseReason.NotPlanned), model.status)
+            assertEquals(21, model.number)
+            assertEquals(listOf("me"), model.assignees.map { it.login })
+            assertEquals(2, model.commentCount)
+            assertEquals("0.2", model.milestone)
+            assertEquals(IssueRef("a/b", 21), model.ref)
+            assertEquals(IssueStatus.Open, FIssueStatus.Open.toModel())
+            assertEquals(IssueCloseReason.Duplicate, FIssueCloseReason.DUPLICATE.toModel())
+        }
+
+        @Test
+        fun `an issues body and a stack item map`() {
+            val body = FRepoBody.Issues(listOf(issue)).toModel() as RepoBody.Issues
+            assertEquals(21, body.issues.single().number)
+            val stack = FPullItem.Stack(
+                FStackSummary(FStackKind.GitHub(7u), "Stack 7 · 2 PRs", "main", 2u, 1u,
+                    FStackRollup(1u, 2u, FMergeStatus.CONFLICTS, "1/2 ready · conflict", FColorRole.DANGER)),
+                listOf(pr, pr.copy(number = 11u)),
+            ).toModel() as PullItem.Stack
+            assertEquals(StackKind.GitHub(7), stack.stack.kind)
+            assertEquals(1, stack.stack.absent)
+            assertEquals(MergeStatus.Conflicts, stack.stack.rollup!!.worst)
+            assertEquals(listOf(9, 11), stack.members.map { it.number })
+            assertEquals(StackKind.Chain, FStackKind.Chain.toModel())
+        }
+
+        @Test
+        fun `stack action records map both ways`() {
+            assertEquals(FStackPlanRequest.Arrange("a/b", listOf(9u, 11u), "main"), StackPlanRequest.Arrange("a/b", listOf(9, 11), "main").toFfi())
+            assertEquals(FStackPlanRequest.Extend("a/b", 7u, listOf(10u)), StackPlanRequest.Extend("a/b", 7, listOf(10)).toFfi())
+            assertEquals(StackRewritePlan(listOf(StackRewrite(10, "x")), true), FStackRewritePlan(listOf(FStackRewrite(10u, "x")), true).toModel())
+            assertEquals(StackPlanCheck.Invalid("no"), FStackPlanCheck.Invalid("no").toModel())
+            assertEquals(StackCandidate(10, "t", StackEligibility.Eligible(true)), FStackCandidate(10u, "t", FStackEligibility.Eligible(true)).toModel())
+            StackMergeMethod.entries.forEach { assertEquals(it.name.uppercase(), it.toFfi().name) }
+            val job = FStackJob(5uL, "a/b", FStackJobKind.EXTEND, at, null, false, FStackJobState.HandedOff(11u, "rostrum-11", "/w", "d")).toModel()
+            assertEquals(5L, job.id)
+            assertEquals(StackJobKind.Extend, job.kind)
+            assertEquals(StackJobState.HandedOff(11, "rostrum-11", "/w", "d"), job.state)
+            assertEquals(StackJobState.Done(StackJobResult.Extended(7, listOf(10)), "ok"),
+                FStackJobState.Done(FStackJobResult.Extended(7u, listOf(10u)), "ok").toModel())
+            assertEquals(StackJobState.Failed(listOf(9), "x"), FStackJobState.Failed(listOf(9u), "x").toModel())
+        }
+
+        @Test
+        fun `details carry their earlier pages`() {
+            val detail = FIssueDetail(issue, emptyList(), true, 4u).toModel()
+            assertTrue(detail.hasEarlier)
+            assertEquals(4, detail.earlierCount)
+        }
+
+        @Test
+        fun `new timeline events map`() {
+            assertEquals(TimelineEvent.ClosedAs(IssueCloseReason.Completed), FTimelineEvent.ClosedAs(FIssueCloseReason.COMPLETED).toModel())
+            assertEquals(TimelineEvent.Unassigned("ada"), FTimelineEvent.Unassigned("ada").toModel())
+            assertEquals(TimelineEvent.CrossReferenced("a/b#3", "t"), FTimelineEvent.CrossReferenced("a/b#3", "t").toModel())
+        }
+
+        @Test
+        fun `the repository overview and branch tree map`() {
+            val overview = FRepoOverview("a/b", "https://github.com/a/b", 12u, "main", listOf(FPullItem.Single(pr)), listOf(issue),
+                FRepoLoad.Loaded(at), FRepoLoad.Idle).toModel()
+            assertEquals(12, overview.stars)
+            assertEquals(RepoLoad.Idle, overview.issuesLoad)
+            val tree = FBranchTree(
+                "a/b", "u", 12u, "main", FTrunkSettings(false, listOf("main", "develop"), listOf("main")),
+                listOf(
+                    FBranchRow.Trunk("develop", FTrunkDrift.Known(FBranchDrift(2u, 5u)), 1u),
+                    FBranchRow.OtherBases,
+                    FBranchRow.Base("release", 1u),
+                    FBranchRow.Pull(1u, 9u, "feat/x", "develop", FBranchDrift(3u, 0u), FBranchNote.AMBIGUOUS_BASE, "stack 7", pr),
+                ),
+            ).toModel()
+            assertEquals(TrunkSettings(false, listOf("main", "develop"), listOf("main")), tree.trunks)
+            assertEquals(BranchRow.Trunk("develop", TrunkDrift.Known(BranchDrift(2, 5)), 1), tree.rows[0])
+            assertEquals(BranchRow.OtherBases, tree.rows[1])
+            val pull = tree.rows[3] as BranchRow.Pull
+            assertEquals(1, pull.depth)
+            assertEquals(BranchNote.AmbiguousBase, pull.note)
+            assertEquals("stack 7", pull.stackLabel)
+            assertEquals(TrunkDrift.Missing, FTrunkDrift.Missing.toModel())
         }
     }
 

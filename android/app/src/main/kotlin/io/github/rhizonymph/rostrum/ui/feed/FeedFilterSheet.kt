@@ -186,7 +186,7 @@ private fun AuthorRow(author: AuthorChip, onToggle: () -> Unit) {
         Avatar(author.login, size = 32.dp)
         Column(Modifier.weight(1f)) {
             Text(author.login, style = RostrumText.rowTitle, color = colors.text, maxLines = 1)
-            Text(authorSubline(author.isViewer, author.openPrs), style = RostrumText.caption, color = colors.textMuted)
+            Text(authorSubline(author.isViewer, author.openItems), style = RostrumText.caption, color = colors.textMuted)
         }
         CheckboxVisual(author.selected)
     }
