@@ -205,6 +205,9 @@ class FfiMappingsTest {
                 RostrumException.EditConflict("t", "b", at) to BackendError.EditConflict("t", "b", at),
                 RostrumException.RewriteNotConfirmed(listOf(FStackRewrite(10u, "feat/x")), "changed") to
                     BackendError.RewriteNotConfirmed(listOf(StackRewrite(10, "feat/x")), "changed"),
+                RostrumException.CiNoPermission("no workflow scope") to BackendError.CiNoPermission("no workflow scope"),
+                RostrumException.CiNotRerunnable("still running") to BackendError.CiNotRerunnable("still running"),
+                RostrumException.CiNotFound() to BackendError.CiNotFound,
                 RostrumException.ProfileNotFound("0123456789abcdef") to BackendError.ProfileNotFound("0123456789abcdef"),
                 RostrumException.Storage("disk") to BackendError.Storage("disk"),
                 RostrumException.Internal("bug") to BackendError.Internal("bug"),
@@ -217,7 +220,8 @@ class FfiMappingsTest {
             val expected = listOf(
                 RemoteErrorCode.Unauthorized, RemoteErrorCode.Forbidden, RemoteErrorCode.BadRequest,
                 RemoteErrorCode.NotFound, RemoteErrorCode.PairingCodeInvalid, RemoteErrorCode.PairingCodeExpired,
-                RemoteErrorCode.RateLimited, RemoteErrorCode.Busy, RemoteErrorCode.ConfigChanged, RemoteErrorCode.RewriteNotConfirmed, RemoteErrorCode.Internal,
+                RemoteErrorCode.RateLimited, RemoteErrorCode.Busy, RemoteErrorCode.ConfigChanged,
+                RemoteErrorCode.RewriteNotConfirmed, RemoteErrorCode.Internal,
             )
             assertEquals(expected, FRemoteErrorCode.entries.map { it.toModel() })
         }

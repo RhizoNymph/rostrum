@@ -20,6 +20,9 @@ internal fun RostrumException.toBackendError(): BackendError = when (this) {
     is RostrumException.DraftsStale -> BackendError.DraftsStale(draftedAgainst, head)
     is RostrumException.EditConflict -> BackendError.EditConflict(title, body, updatedAt)
     is RostrumException.RewriteNotConfirmed -> BackendError.RewriteNotConfirmed(branches.map { it.toModel() }, reason)
+    is RostrumException.CiNoPermission -> BackendError.CiNoPermission(reason)
+    is RostrumException.CiNotRerunnable -> BackendError.CiNotRerunnable(reason)
+    is RostrumException.CiNotFound -> BackendError.CiNotFound
     is RostrumException.NotPaired -> BackendError.NotPaired
     is RostrumException.DeviceRevoked -> BackendError.DeviceRevoked
     is RostrumException.DesktopUnreachable -> BackendError.DesktopUnreachable(reason)
@@ -27,9 +30,6 @@ internal fun RostrumException.toBackendError(): BackendError = when (this) {
     is RostrumException.DesktopTimeout -> BackendError.DesktopTimeout
     is RostrumException.IncompatibleDesktop -> BackendError.IncompatibleDesktop(desktop.toInt(), supported.toInt())
     is RostrumException.RemoteApi -> BackendError.RemoteApi(code.toModel(), reason)
-    is RostrumException.CiNoPermission -> BackendError.CiNoPermission(reason)
-    is RostrumException.CiNotRerunnable -> BackendError.CiNotRerunnable(reason)
-    is RostrumException.CiNotFound -> BackendError.CiNotFound
     is RostrumException.RemoteProtocol -> BackendError.RemoteProtocol(reason)
     is RostrumException.InvalidRepo -> BackendError.InvalidRepo(input, reason)
     is RostrumException.DuplicateRepo -> BackendError.DuplicateRepo(repo)

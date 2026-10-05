@@ -49,6 +49,21 @@ sealed interface BackendError {
      */
     data class RewriteNotConfirmed(val branches: List<StackRewrite>, val reason: String) : BackendError
 
+    /**
+     * This token may not re-run checks here: not a collaborator with write
+     * access, or the `workflow`/`checks` permission is missing.
+     */
+    data class CiNoPermission(val reason: String) : BackendError
+
+    /**
+     * GitHub will not re-run this one: too old (over a month), still
+     * running, or the app does not accept re-requests.
+     */
+    data class CiNotRerunnable(val reason: String) : BackendError
+
+    /** The run or job to re-run no longer exists. */
+    data object CiNotFound : BackendError
+
     /** No desktop is paired for this session. */
     data object NotPaired : BackendError
 
@@ -69,18 +84,6 @@ sealed interface BackendError {
 
     /** The desktop refused the request with a structured error. */
     data class RemoteApi(val code: RemoteErrorCode, val reason: String) : BackendError
-
-    /**
-     * A re-run was refused: this token may not re-run checks here (no write
-     * access, or missing the `workflow`/`checks` permission).
-     */
-    data class CiNoPermission(val reason: String) : BackendError
-
-    /** GitHub will not re-run this one: too old, still running, or the app refuses re-requests. */
-    data class CiNotRerunnable(val reason: String) : BackendError
-
-    /** The run or job to re-run no longer exists. */
-    data object CiNotFound : BackendError
 
     /** The desktop answered with something that is not the protocol. */
     data class RemoteProtocol(val reason: String) : BackendError
@@ -114,8 +117,6 @@ enum class RemoteErrorCode {
     PairingCodeExpired,
     RateLimited,
     Busy,
-
-    /** The desktop's settings changed since the revision a push named. */
     ConfigChanged,
     RewriteNotConfirmed,
     Internal,
@@ -145,14 +146,14 @@ fun BackendError.describe(): String = when (this) {
         RemoteErrorCode.PairingCodeExpired -> "That pairing code has expired. Show a new one on the desktop."
         RemoteErrorCode.Busy -> "The desktop is busy with another job."
         RemoteErrorCode.RewriteNotConfirmed -> "The desktop needs you to confirm the branches it rewrites: $reason"
-        RemoteErrorCode.ConfigChanged -> "The desktop's settings changed since you looked."
+        RemoteErrorCode.ConfigChanged -> "The desktop's settings changed since you loaded them. Reload and try again."
         else -> "The desktop refused: $reason"
     }
     is BackendError.EditConflict -> "This issue was changed on GitHub while you edited it."
     is BackendError.RewriteNotConfirmed -> "The desktop would rewrite other branches than you confirmed: $reason"
-    is BackendError.CiNoPermission -> "You don't have permission to re-run this: $reason"
-    is BackendError.CiNotRerunnable -> "GitHub won't re-run this: $reason"
-    BackendError.CiNotFound -> "That run or job no longer exists. Refresh the grid."
+    is BackendError.CiNoPermission -> "You can't re-run checks on this repository: $reason"
+    is BackendError.CiNotRerunnable -> "This can't be re-run: $reason"
+    BackendError.CiNotFound -> "That run or job no longer exists on GitHub."
     is BackendError.RemoteProtocol -> "Unexpected answer from the desktop: $reason"
     is BackendError.InvalidRepo -> "$input isn't a repository: $reason"
     is BackendError.DuplicateRepo -> "$repo is already in your feed"
