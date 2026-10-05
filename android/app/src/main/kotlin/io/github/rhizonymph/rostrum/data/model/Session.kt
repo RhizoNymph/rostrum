@@ -28,6 +28,8 @@ data class Settings(
     /** Default for the "stash local changes" switch on desktop jobs. */
     val autostash: Boolean,
     val feed: FeedPreferences,
+    /** Open issues fetched per repository (1..=100). */
+    val issuesPerRepo: Int = 25,
 )
 
 /** Something worth a system notification (`notifications.rs`). */

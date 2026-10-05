@@ -18,6 +18,10 @@ object RostrumIcons {
     /** Two arrows, up and down: the Sort button. */
     val Sort by lazy { icon("sort", 1.8f, "M8 5v14M5 8l3-3 3 3M16 19V5M13 16l3 3 3-3") }
     val Filter by lazy { icon("filter", 1.8f, "M4 7h16M7 12h10M10 17h4") }
+    /** A 2×2 grid of rounded cells: the CI grid. */
+    val Checks by lazy {
+        icon("checks", 1.8f, rect(4f, 4f, 7f, 7f, 1.5f), rect(13f, 4f, 7f, 7f, 1.5f), rect(4f, 13f, 7f, 7f, 1.5f), rect(13f, 13f, 7f, 7f, 1.5f))
+    }
     val Check by lazy { icon("check", 2.2f, "M5 12.5l4.5 4.5L19 7") }
     val CheckBold by lazy { icon("check_bold", 3f, "M5 12.5l4.5 4.5L19 7") }
     val ChevronDown by lazy { icon("chevron_down", 2f, "M6 9l6 6 6-6") }

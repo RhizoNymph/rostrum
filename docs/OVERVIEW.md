@@ -97,7 +97,8 @@ Overview:
       The Android client. Jetpack Compose screens for the feed, a pull
       request (conversation, files, checks, branch), the single-file diff with
       inline comments and pending reviews, merging, settings, the paired
-      desktop (including copying its settings onto the phone), sign-in and
+      desktop (including copying its settings onto the phone and sending the
+      phone's back), sign-in and
       pairing. ViewModels depend on one Kotlin interface,
       `RostrumBackend`, shaped after `RostrumCore`; secrets are sealed with an
       Android Keystore key; WorkManager runs the notification check.
@@ -107,6 +108,11 @@ Overview:
       their actions run on the paired desktop as polled jobs, "load earlier"
       on conversations, and a repository's own screen with its branch tree and
       trunks — ordered and assembled by the core, drawn by the app.
+    android_ci_config: >
+      The phone's CI grid (every open pull request's checks, scrolling both
+      ways, with job logs, check output and confirmed re-runs) and sending
+      this profile's settings to the paired desktop, guarded by the desktop's
+      revision — the core builds, times and parses; the app draws and polls.
     android_profiles: >
       Several paired desktops on one phone, each a profile with its own
       repositories, filters, cache, drafts and GitHub account (a desktop's
@@ -382,6 +388,11 @@ Features Index:
     entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/feed/FeedSortSheet.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/issue/IssueRoute.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/newissue/NewIssueRoute.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/repo/RepoRoute.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/items/ItemRows.kt]
     depends_on: [android_app, android_core, feed_sort, issues, stacks, repo_view]
     doc: docs/features/android_issues_repo.md
+  android_ci_config:
+    description: CI grid screen (two-way scrolling matrix, log viewer, check output, confirmed re-runs, tick and poll), sending settings to the paired desktop with a revision check, and the issues-per-repository setting, on Android.
+    entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/ci/CiGridScreen.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/ci/CiGridViewModel.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/desktopconfig/PushSettingsViewModel.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/CiApi.kt]
+    depends_on: [android_app, android_core, ci_grid, remote_protocol]
+    doc: docs/features/android_ci_config.md
   android_profiles:
     description: One profile per paired desktop or pasted token; ProfileManager over the core's profile registry, per-profile secrets, switching, pairing into profiles, notifications across profiles.
     entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/profiles/ProfileManager.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/ffi/FfiProfileRegistry.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/app/RostrumApp.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/profiles/ProfileSwitcherSheet.kt]

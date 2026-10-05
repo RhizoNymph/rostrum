@@ -59,6 +59,7 @@ internal fun FfiSettings.toModel() = Settings(
     notifyReviewRequests = notifyReviewRequests,
     autostash = autostash,
     feed = feed.toModel(),
+    issuesPerRepo = issuesPerRepo.toInt(),
 )
 
 internal fun FfiRepoLoad.toModel(): RepoLoad = when (this) {

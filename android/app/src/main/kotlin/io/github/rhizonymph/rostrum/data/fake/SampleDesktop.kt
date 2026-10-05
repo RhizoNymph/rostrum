@@ -48,6 +48,7 @@ internal object SampleDesktop {
     /** nymph-desk's own settings, which "copy settings" brings to the phone. */
     val configRepos = listOf(SamplePulls.ROSTRUM, SamplePulls.ZED, SamplePulls.TOKIO, "serde-rs/serde")
     const val CONFIG_PRS_PER_REPO = 25
+    const val CONFIG_ISSUES_PER_REPO = 25
     val configPreferences = FeedPreferences(hideDrafts = true, hideEmptyRepos = true, authors = emptyList(), includeInvolved = false)
     const val CONFIG_AUTOSTASH = true
 

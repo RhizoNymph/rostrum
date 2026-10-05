@@ -5,6 +5,8 @@ import io.github.rhizonymph.rostrum.data.Outcome
 import io.github.rhizonymph.rostrum.data.IssuesApi
 import io.github.rhizonymph.rostrum.data.RostrumBackend
 import io.github.rhizonymph.rostrum.data.StackActionsApi
+import io.github.rhizonymph.rostrum.data.CiApi
+import io.github.rhizonymph.rostrum.data.DesktopConfigApi
 import io.github.rhizonymph.rostrum.data.model.AuthorRoster
 import io.github.rhizonymph.rostrum.data.model.TrunkSettings
 import io.github.rhizonymph.rostrum.data.model.SortSettings
@@ -20,7 +22,6 @@ import io.github.rhizonymph.rostrum.data.model.BranchUpdateMethod
 import io.github.rhizonymph.rostrum.data.model.Chip
 import io.github.rhizonymph.rostrum.data.model.ColorRole
 import io.github.rhizonymph.rostrum.data.model.CommentAnchor
-import io.github.rhizonymph.rostrum.data.model.DesktopConfigPreview
 import io.github.rhizonymph.rostrum.data.model.DesktopGitHubToken
 import io.github.rhizonymph.rostrum.data.model.DesktopProbe
 import io.github.rhizonymph.rostrum.data.model.DraftAnchor
@@ -90,7 +91,11 @@ class FakeRostrumBackend private constructor(
     paired: Boolean,
     desktopGitHubHost: String,
     private val parts: FakeParts,
-) : RostrumBackend, IssuesApi by parts.issuesApi, StackActionsApi by parts.stacks {
+) : RostrumBackend,
+    IssuesApi by parts.issuesApi,
+    StackActionsApi by parts.stacks,
+    CiApi by parts.ci,
+    DesktopConfigApi by parts.desktopConfig {
     constructor(
         clock: Clock = Clock.systemUTC(),
         latency: Duration = Duration.ZERO,
@@ -106,18 +111,13 @@ class FakeRostrumBackend private constructor(
     private var token: String? = if (signedIn) SAMPLE_TOKEN else null
     private var tokenVerified = signedIn
 
-    private val repos = SamplePulls.repos.toMutableList()
-    private var refreshIntervalSecs = 60L
-    private var prsPerRepo = 30
-    private var notifyNew = true
-    private var notifyReviews = true
-    private var autostash = false
-    private var preferences = FeedPreferences(
-        hideDrafts = false,
-        hideEmptyRepos = true,
-        authors = listOf("rhizonymph", "ada-lin"),
-        includeInvolved = true,
-    )
+    private val repos get() = parts.phone.repos
+    private val phone get() = parts.phone
+    private var preferences: FeedPreferences
+        get() = phone.preferences
+        set(value) {
+            phone.preferences = value
+        }
     private var query = ""
     private var tab = FeedTab.PullRequests
     private val sort = FakeSort()
@@ -172,6 +172,11 @@ class FakeRostrumBackend private constructor(
             override fun highestPullNumber(repo: String) = pulls.keys.filter { it.repo == repo }.maxOfOrNull { it.number } ?: 0
             override fun emitFeed() {
                 this@FakeRostrumBackend.emitFeed()
+            }
+            override val watchedRepos: List<String> get() = repos.toList()
+            override fun adoptRepos(repos: List<String>) = repos.forEach { repo ->
+                loads.putIfAbsent(repo, RepoLoad.Idle)
+                labels.putIfAbsent(repo, SamplePulls.labels(repo))
             }
         }
         SampleDrafts.seed { anchor, body -> draft(anchor, null, body) }.forEach { (pr, seeded) ->
@@ -236,15 +241,7 @@ class FakeRostrumBackend private constructor(
 
     // --- settings ----------------------------------------------------------------
 
-    private fun currentSettings() = Settings(
-        repos = repos.toList(),
-        refreshIntervalSecs = refreshIntervalSecs,
-        prsPerRepo = prsPerRepo,
-        notifyNewPullRequests = notifyNew,
-        notifyReviewRequests = notifyReviews,
-        autostash = autostash,
-        feed = preferences,
-    )
+    private fun currentSettings() = parts.phone.toSettings()
 
     override suspend fun settings(): Outcome<Settings> = call(FakeCall.Settings) { Outcome.Ok(currentSettings()) }
 
@@ -273,24 +270,29 @@ class FakeRostrumBackend private constructor(
     }
 
     override suspend fun setRefreshInterval(seconds: Long): Outcome<Settings> = call(FakeCall.SetRefreshInterval) {
-        refreshIntervalSecs = seconds.coerceIn(10, 3600)
+        phone.refreshIntervalSecs = seconds.coerceIn(10, 3600)
         Outcome.Ok(currentSettings())
     }
 
     override suspend fun setPrsPerRepo(count: Int): Outcome<Settings> = call(FakeCall.SetPrsPerRepo) {
-        prsPerRepo = count.coerceIn(1, 100)
+        phone.prsPerRepo = count.coerceIn(1, 100)
+        Outcome.Ok(currentSettings())
+    }
+
+    override suspend fun setIssuesPerRepo(count: Int): Outcome<Settings> = call(FakeCall.SetIssuesPerRepo) {
+        phone.issuesPerRepo = count.coerceIn(1, 100)
         Outcome.Ok(currentSettings())
     }
 
     override suspend fun setNotifications(newPullRequests: Boolean, reviewRequests: Boolean): Outcome<Settings> =
         call(FakeCall.SetNotifications) {
-            notifyNew = newPullRequests
-            notifyReviews = reviewRequests
+            phone.notifyNew = newPullRequests
+            phone.notifyReviews = reviewRequests
             Outcome.Ok(currentSettings())
         }
 
     override suspend fun setAutostash(autostash: Boolean): Outcome<Settings> = call(FakeCall.SetAutostash) {
-        this.autostash = autostash
+        phone.autostash = autostash
         Outcome.Ok(currentSettings())
     }
 
@@ -873,7 +875,7 @@ class FakeRostrumBackend private constructor(
 
     override suspend fun remoteStatus(): Outcome<RemoteStatus> = call(FakeCall.RemoteStatus) { desktop.remoteStatus() }
 
-    override suspend fun machineInfo(): Outcome<MachineInfo> = call(FakeCall.MachineInfo) { desktop.machineInfo(autostash) }
+    override suspend fun machineInfo(): Outcome<MachineInfo> = call(FakeCall.MachineInfo) { desktop.machineInfo(phone.autostash) }
 
     override suspend fun localStatus(pr: PrRef): Outcome<LocalStatus> = call(FakeCall.LocalStatus) { desktop.localStatus(pr) }
 
@@ -894,53 +896,11 @@ class FakeRostrumBackend private constructor(
 
     override suspend fun unpair(): Outcome<Unit> = call(FakeCall.Unpair) { desktop.unpair() }
 
-    private fun desktopPreview(): DesktopConfigPreview {
-        val phone = repos.map { it.lowercase() }.toSet()
-        val desk = SampleDesktop.configRepos.map { it.lowercase() }.toSet()
-        val added = SampleDesktop.configRepos.filter { it.lowercase() !in phone }
-        val removed = repos.filter { it.lowercase() !in desk }
-        val changes = added.isNotEmpty() || removed.isNotEmpty() ||
-            repos != SampleDesktop.configRepos ||
-            prsPerRepo != SampleDesktop.CONFIG_PRS_PER_REPO ||
-            preferences != SampleDesktop.configPreferences ||
-            autostash != SampleDesktop.CONFIG_AUTOSTASH
-        val prefs = SampleDesktop.configPreferences
-        return DesktopConfigPreview(
-            machine = SampleDesktop.MACHINE,
-            repos = SampleDesktop.configRepos,
-            added = added,
-            removed = removed,
-            prsPerRepo = SampleDesktop.CONFIG_PRS_PER_REPO,
-            hideDrafts = prefs.hideDrafts,
-            hideEmptyRepos = prefs.hideEmptyRepos,
-            authors = prefs.authors,
-            includeInvolved = prefs.includeInvolved,
-            autostash = SampleDesktop.CONFIG_AUTOSTASH,
-            changesAnything = changes,
-        )
-    }
+    /** Change nymph-desk's settings behind the phone's back, so a push based on an older preview is refused. */
+    fun changeDesktopConfigElsewhere(prsPerRepo: Int) = parts.desktopConfig.changeElsewhere(prsPerRepo)
 
-    override suspend fun desktopConfig(): Outcome<DesktopConfigPreview> = call(FakeCall.DesktopConfig) {
-        if (!desktop.isPaired) Outcome.Err(BackendError.NotPaired) else Outcome.Ok(desktopPreview())
-    }
-
-    override suspend fun copyDesktopConfig(): Outcome<Settings> = call(FakeCall.CopyDesktopConfig) {
-        if (!desktop.isPaired) {
-            Outcome.Err(BackendError.NotPaired)
-        } else {
-            repos.clear()
-            repos += SampleDesktop.configRepos
-            SampleDesktop.configRepos.forEach { repo ->
-                loads.putIfAbsent(repo, RepoLoad.Idle)
-                labels.putIfAbsent(repo, SamplePulls.labels(repo))
-            }
-            prsPerRepo = SampleDesktop.CONFIG_PRS_PER_REPO
-            preferences = SampleDesktop.configPreferences
-            autostash = SampleDesktop.CONFIG_AUTOSTASH
-            emitFeed()
-            Outcome.Ok(currentSettings())
-        }
-    }
+    /** The fake CI grid, for tests (re-runs asked for). */
+    internal val ci: FakeCi get() = parts.ci
 
     // --- notifications -------------------------------------------------------------
 
@@ -961,8 +921,8 @@ class FakeRostrumBackend private constructor(
             pulls[pull.ref] = pull
             emitFeed()
             val kind = when {
-                notifyReviews -> NotificationKind.ReviewRequested
-                notifyNew -> NotificationKind.NewPullRequest
+                phone.notifyReviews -> NotificationKind.ReviewRequested
+                phone.notifyNew -> NotificationKind.NewPullRequest
                 else -> return@signedIn Outcome.Ok(emptyList())
             }
             Outcome.Ok(listOf(NotificationEvent(kind, pull.repo, pull.number, pull.title, pull.author, "https://github.com/${pull.repo}/pull/12")))

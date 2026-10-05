@@ -28,6 +28,12 @@ internal interface FakeHost {
     fun highestPullNumber(repo: String): Int
 
     fun emitFeed()
+
+    /** The watched repositories, in the feed's order. */
+    val watchedRepos: List<String>
+
+    /** Start tracking repositories copied in from the desktop (load state, labels). */
+    fun adoptRepos(repos: List<String>)
 }
 
 /** The owner's [FakeHost], bound once the owner is built (the parts are built first, for delegation). */
@@ -42,9 +48,15 @@ internal class FakeHostRef : FakeHost {
     override fun openPulls(repo: String): List<PrSummary> = host.openPulls(repo)
     override fun highestPullNumber(repo: String): Int = host.highestPullNumber(repo)
     override fun emitFeed() = host.emitFeed()
+    override val watchedRepos: List<String> get() = host.watchedRepos
+    override fun adoptRepos(repos: List<String>) = host.adoptRepos(repos)
 }
 
-/** The parts [FakeRostrumBackend] delegates [io.github.rhizonymph.rostrum.data.IssuesApi] and the stack actions to. */
+/**
+ * The parts [FakeRostrumBackend] delegates to: issues, stack actions, the CI
+ * grid, and sharing settings with the desktop (over [phone], the settings the
+ * backend's setters change).
+ */
 internal class FakeParts(clock: Clock) {
     val started: Instant = clock.instant()
     val host = FakeHostRef()
@@ -57,4 +69,7 @@ internal class FakeParts(clock: Clock) {
     )
     val issuesApi = FakeIssuesApi(host, issues)
     val stacks = FakeStackActions(host, clock)
+    val phone = FakePhoneSettings()
+    val desktopConfig = FakeDesktopConfig(host, phone)
+    val ci = FakeCi(host, clock, started)
 }

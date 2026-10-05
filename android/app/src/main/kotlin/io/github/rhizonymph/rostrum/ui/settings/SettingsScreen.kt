@@ -48,11 +48,13 @@ fun SettingsScreen(
     onPairDesktop: () -> Unit,
     modifier: Modifier = Modifier,
     onCopySettings: () -> Unit = {},
+    onSendSettings: () -> Unit = {},
     profilesSection: @Composable () -> Unit = {},
 ) {
     val colors = RostrumTheme.colors
     var confirmSignOut by rememberSaveable { mutableStateOf(false) }
     var chooseInterval by rememberSaveable { mutableStateOf(false) }
+    var chooseLimit by rememberSaveable { mutableStateOf<FetchLimit?>(null) }
     Column(modifier.fillMaxSize().background(colors.bg)) {
         ScreenHeader("Settings")
         when (val content = state.content) {
@@ -89,7 +91,19 @@ fun SettingsScreen(
                         onAdd = actions::addRepo,
                         onRemove = actions::removeRepo,
                     )
-                    DesktopSection(data.desktop, onOpenDesktop = onOpenDesktop, onPairDesktop = onPairDesktop, onCopySettings = onCopySettings)
+                    FetchSection(
+                        prsPerRepo = data.prsPerRepo,
+                        issuesPerRepo = data.issuesPerRepo,
+                        onChoosePrs = { chooseLimit = FetchLimit.PullRequests },
+                        onChooseIssues = { chooseLimit = FetchLimit.Issues },
+                    )
+                    DesktopSection(
+                        data.desktop,
+                        onOpenDesktop = onOpenDesktop,
+                        onPairDesktop = onPairDesktop,
+                        onCopySettings = onCopySettings,
+                        onSendSettings = onSendSettings,
+                    )
                     SyncSection(
                         refreshIntervalSecs = data.refreshIntervalSecs,
                         notifyNewPullRequests = data.notifyNewPullRequests,
@@ -99,6 +113,20 @@ fun SettingsScreen(
                         onNotifyReviewsChange = actions::setNotifyReviewRequests,
                     )
                     Spacer(Modifier.height(12.dp))
+                }
+                chooseLimit?.let { limit ->
+                    val current = if (limit == FetchLimit.PullRequests) data.prsPerRepo else data.issuesPerRepo
+                    ChoiceDialog(
+                        title = limit.title,
+                        choices = FetchLimitChoices.forValue(current),
+                        current = current,
+                        label = Int::toString,
+                        onChoose = {
+                            chooseLimit = null
+                            if (limit == FetchLimit.PullRequests) actions.setPrsPerRepo(it) else actions.setIssuesPerRepo(it)
+                        },
+                        onDismiss = { chooseLimit = null },
+                    )
                 }
                 if (chooseInterval) {
                     RefreshIntervalDialog(
@@ -128,28 +156,45 @@ fun SettingsScreen(
     }
 }
 
+/** Which per-repository limit the choice dialog sets. */
+private enum class FetchLimit(val title: String) {
+    PullRequests("Pull requests per repository"),
+    Issues("Issues per repository"),
+}
+
 @Composable
-private fun RefreshIntervalDialog(current: Long, onChoose: (Long) -> Unit, onDismiss: () -> Unit) {
+private fun RefreshIntervalDialog(current: Long, onChoose: (Long) -> Unit, onDismiss: () -> Unit) =
+    ChoiceDialog("Refresh while open", RefreshIntervalChoices, current, ::refreshIntervalLabel, onChoose, onDismiss)
+
+@Composable
+private fun <T> ChoiceDialog(
+    title: String,
+    choices: List<T>,
+    current: T,
+    label: (T) -> String,
+    onChoose: (T) -> Unit,
+    onDismiss: () -> Unit,
+) {
     val colors = RostrumTheme.colors
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = colors.raised,
         titleContentColor = colors.text,
         shape = RoundedCornerShape(28.dp),
-        title = { Text("Refresh while open", style = RostrumText.sheetTitle) },
+        title = { Text(title, style = RostrumText.sheetTitle) },
         text = {
             Column {
-                RefreshIntervalChoices.forEach { seconds ->
+                choices.forEach { choice ->
                     Row(
                         Modifier
                             .fillMaxWidth()
                             .heightIn(min = 48.dp)
-                            .selectable(selected = seconds == current, role = Role.RadioButton, onClick = { onChoose(seconds) }),
+                            .selectable(selected = choice == current, role = Role.RadioButton, onClick = { onChoose(choice) }),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
-                        RadioVisual(seconds == current)
-                        Text(refreshIntervalLabel(seconds), style = RostrumText.rowTitle, color = colors.text)
+                        RadioVisual(choice == current)
+                        Text(label(choice), style = RostrumText.rowTitle, color = colors.text)
                     }
                 }
             }

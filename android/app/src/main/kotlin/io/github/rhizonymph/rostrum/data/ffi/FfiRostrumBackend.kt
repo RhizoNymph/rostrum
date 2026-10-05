@@ -5,6 +5,14 @@ import io.github.rhizonymph.rostrum.data.Outcome
 import io.github.rhizonymph.rostrum.data.RostrumBackend
 import io.github.rhizonymph.rostrum.data.RostrumLog
 import io.github.rhizonymph.rostrum.data.describe
+import io.github.rhizonymph.rostrum.data.model.CiCheckKey
+import io.github.rhizonymph.rostrum.data.model.CiCheckOutput
+import io.github.rhizonymph.rostrum.data.model.CiGrid
+import io.github.rhizonymph.rostrum.data.model.CiGridFilter
+import io.github.rhizonymph.rostrum.data.model.CiJobLog
+import io.github.rhizonymph.rostrum.data.model.CiRerun
+import io.github.rhizonymph.rostrum.data.model.CiRerunChoice
+import io.github.rhizonymph.rostrum.data.model.ConfigPushResult
 import io.github.rhizonymph.rostrum.data.model.AuthorRoster
 import io.github.rhizonymph.rostrum.data.model.StackRewritePlan
 import io.github.rhizonymph.rostrum.data.model.StackPlanRequest
@@ -141,6 +149,9 @@ class FfiRostrumBackend(name: String, openCore: CoreOpener) : RostrumBackend {
 
     override suspend fun setPrsPerRepo(count: Int): Outcome<Settings> =
         core("setPrsPerRepo") { it.setPrsPerRepo(count.coerceAtLeast(0).toUInt()).toModel() }
+
+    override suspend fun setIssuesPerRepo(count: Int): Outcome<Settings> =
+        core("setIssuesPerRepo") { it.setIssuesPerRepo(count.coerceAtLeast(0).toUInt()).toModel() }
 
     override suspend fun setNotifications(newPullRequests: Boolean, reviewRequests: Boolean): Outcome<Settings> =
         core("setNotifications") { it.setNotifications(newPullRequests, reviewRequests).toModel() }
@@ -442,6 +453,32 @@ class FfiRostrumBackend(name: String, openCore: CoreOpener) : RostrumBackend {
 
     override suspend fun copyDesktopConfig(): Outcome<Settings> =
         core("copyDesktopConfig") { it.copyDesktopConfig().toModel() }
+
+    override suspend fun pushConfigToDesktop(base: String): Outcome<ConfigPushResult> =
+        core("pushConfigToDesktop") { it.pushConfigToDesktop(base).toModel() }
+
+    // --- ci ------------------------------------------------------------------
+
+    override suspend fun ciGrid(filter: CiGridFilter): Outcome<CiGrid> =
+        core("ciGrid") { it.ciGrid(filter.toFfi()).toModel() }
+
+    override suspend fun refreshCi(filter: CiGridFilter): Outcome<CiGrid> =
+        core("refreshCi") { it.refreshCi(filter.toFfi()).toModel() }
+
+    override suspend fun refreshCiRepo(repo: String, filter: CiGridFilter): Outcome<CiGrid> =
+        core("refreshCiRepo") { it.refreshCiRepo(repo, filter.toFfi()).toModel() }
+
+    override suspend fun jobLog(repo: String, jobId: Long, full: Boolean): Outcome<CiJobLog> =
+        core("jobLog") { it.jobLog(repo, jobId.toULong(), full).toModel() }
+
+    override suspend fun checkOutput(repo: String, checkRunId: Long): Outcome<CiCheckOutput> =
+        core("checkOutput") { it.checkOutput(repo, checkRunId.toULong()).toModel() }
+
+    override suspend fun rerunTargets(repo: String, pr: Int, key: CiCheckKey): Outcome<CiRerunChoice> =
+        core("rerunTargets") { it.rerunTargets(repo, pr.toUInt(), key.toFfi()).toModel() }
+
+    override suspend fun rerun(repo: String, target: CiRerun): Outcome<Unit> =
+        core("rerun") { it.rerun(repo, target.toFfi()) }
 
     // --- notifications -------------------------------------------------------
 

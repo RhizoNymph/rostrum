@@ -25,6 +25,7 @@ fun RepoRoute(
     onNewIssue: (repo: String) -> Unit,
     modifier: Modifier = Modifier,
     onPairDesktop: () -> Unit = {},
+    onOpenChecks: (repo: String) -> Unit = {},
 ) {
     val viewModel = profileViewModel(key = "repo:$repo") { container, profile ->
         RepoViewModel(profile.backend, repo, container.clock)
@@ -47,6 +48,7 @@ fun RepoRoute(
         onOpenIssue = onOpenIssue,
         onNewIssue = { onNewIssue(repo) },
         modifier = modifier,
+        onOpenChecks = { onOpenChecks(repo) },
         rows = RowCallbacks(
             openPullRequest = onOpenPullRequest,
             openIssue = onOpenIssue,
