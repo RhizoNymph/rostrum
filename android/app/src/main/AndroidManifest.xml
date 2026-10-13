@@ -30,6 +30,16 @@
                     android:host="pair"
                     android:scheme="rostrum" />
             </intent-filter>
+            <!-- A pull request or issue from another app ("Open in Rostrum"):
+                 rostrum://pr?repo=owner%2Fname&number=42, rostrum://issue?… -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="rostrum" />
+                <data android:host="pr" />
+                <data android:host="issue" />
+            </intent-filter>
         </activity>
     </application>
 </manifest>

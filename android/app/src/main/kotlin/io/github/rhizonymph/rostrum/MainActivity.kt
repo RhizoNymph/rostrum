@@ -13,11 +13,14 @@ import io.github.rhizonymph.rostrum.ui.navigation.AppLinks
 import io.github.rhizonymph.rostrum.ui.theme.RostrumTheme
 
 /**
- * The single activity, and the target of `rostrum://pair` deep links and
- * notification taps. Being `singleTop`, a link opened while running arrives
- * through [onNewIntent]; either way it is handed to the container's link
- * inbox. The root switches to a notification's profile first, then that
- * profile's navigation host opens the pull request.
+ * The single activity, and the target of `rostrum://pair`, `rostrum://pr`
+ * and `rostrum://issue` deep links and of notification taps. Being
+ * `singleTop`, a link opened while it is on top arrives through
+ * [onNewIntent]; a cold start (or a fresh instance in another app's task)
+ * through [onCreate]. Either way it is handed to the container's link
+ * inbox, which the navigation host drains once the profiles are ready. The
+ * root switches to a notification's profile first, then that profile's
+ * navigation host opens the pull request or issue.
  */
 class MainActivity : ComponentActivity() {
     private val container get() = (application as RostrumApplication).container

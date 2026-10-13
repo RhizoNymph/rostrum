@@ -1,5 +1,6 @@
 package io.github.rhizonymph.rostrum.ui.navigation
 
+import io.github.rhizonymph.rostrum.data.model.IssueRef
 import io.github.rhizonymph.rostrum.data.model.PrRef
 import io.github.rhizonymph.rostrum.data.model.ProfileId
 import io.github.rhizonymph.rostrum.data.profiles.ProfilesState
@@ -14,10 +15,17 @@ sealed interface AppLink {
     data class Pair(val uri: String) : AppLink
 
     /**
-     * A tapped notification about a pull request, in [profile] (`null` when
-     * the intent named none: the active profile).
+     * A pull request to open: a tapped notification, in [profile], or a
+     * `rostrum://pr?…` link from another app (`null` profile: the active
+     * one).
      */
     data class OpenPullRequest(val pr: PrRef, val profile: ProfileId? = null) : AppLink
+
+    /** A `rostrum://issue?…` link from another app: one issue, in the active profile. */
+    data class OpenIssue(val issue: IssueRef) : AppLink
+
+    /** A `rostrum://pr` or `rostrum://issue` link that does not parse; [reason] says why. */
+    data class Invalid(val reason: String) : AppLink
 }
 
 object AppLinks {
@@ -28,12 +36,19 @@ object AppLinks {
 
     /**
      * Read an intent's parts (kept as plain values so this runs on the JVM):
-     * a VIEW of `rostrum://pair…`, or the extras a notification sets. A
-     * malformed profile id is ignored (the pull request opens in the active
-     * profile).
+     * a VIEW of `rostrum://pair…`, `rostrum://pr…` or `rostrum://issue…`
+     * ([ItemLinks]), or the extras a notification sets. A malformed profile
+     * id is ignored (the pull request opens in the active profile).
      */
     fun parse(action: String?, data: String?, repo: String?, number: Int?, profile: String? = null): AppLink? {
         if (action == ACTION_VIEW && data != null && isPairLink(data)) return AppLink.Pair(data)
+        if (action == ACTION_VIEW && data != null && ItemLinks.isItemLink(data)) {
+            return when (val item = ItemLinks.parse(data)) {
+                is ItemLink.Pull -> AppLink.OpenPullRequest(item.pr)
+                is ItemLink.Issue -> AppLink.OpenIssue(item.issue)
+                is ItemLink.Invalid -> AppLink.Invalid(item.reason)
+            }
+        }
         if (repo != null && number != null && number > 0 && '/' in repo) {
             return AppLink.OpenPullRequest(PrRef(repo, number), profile?.let(ProfileId::of))
         }
@@ -78,9 +93,47 @@ sealed interface LinkRoute {
 }
 
 fun routeOf(link: AppLink, profiles: ProfilesState.Ready): LinkRoute = when (link) {
-    is AppLink.Pair -> LinkRoute.Show
+    is AppLink.Pair, is AppLink.OpenIssue, is AppLink.Invalid -> LinkRoute.Show
     is AppLink.OpenPullRequest -> when (val target = link.profile) {
         null, profiles.active -> LinkRoute.Show
         else -> if (profiles.profile(target) != null) LinkRoute.SwitchFirst(target) else LinkRoute.ProfileGone
     }
 }
+
+/** What a profile's navigation graph does with the pending link. */
+sealed interface LinkStep {
+    /** Go to [destination]; the link is done. */
+    data class Navigate(val destination: Destination) : LinkStep
+
+    /** Say [message] instead; the link is done. */
+    data class Say(val message: String) : LinkStep
+
+    /** Another profile's notification: leave it for the root, which switches profiles first. */
+    data object Wait : LinkStep
+}
+
+/**
+ * The graph's half of handling [link], given whether this profile is signed
+ * in and which profile it is ([profile], `null` before any exists). A pull
+ * request or issue opens on its own screen, which fetches it whether or not
+ * the feed holds it; a pull request outside the feed is looked up on GitHub
+ * by the core. Without a GitHub token nothing can load, so the link is
+ * answered with a sentence instead.
+ */
+fun stepFor(link: AppLink, signedIn: Boolean, profile: ProfileId?): LinkStep = when (link) {
+    is AppLink.Pair -> LinkStep.Navigate(Destination.Pair(link.uri))
+    is AppLink.OpenPullRequest -> when {
+        link.profile != null && link.profile != profile -> LinkStep.Wait
+        signedIn -> LinkStep.Navigate(Destination.PullRequest(link.pr.repo, link.pr.number))
+        else -> LinkStep.Say(signInFirst("${link.pr.repo}#${link.pr.number}"))
+    }
+    is AppLink.OpenIssue ->
+        if (signedIn) {
+            LinkStep.Navigate(Destination.Issue(link.issue.repo, link.issue.number))
+        } else {
+            LinkStep.Say(signInFirst("${link.issue.repo}#${link.issue.number}"))
+        }
+    is AppLink.Invalid -> LinkStep.Say("Rostrum can't open this link: ${link.reason}")
+}
+
+private fun signInFirst(item: String) = "Sign in to GitHub first, then open the link to $item again."
