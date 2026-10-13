@@ -8,6 +8,7 @@
 mod ci;
 mod config_file;
 mod issues;
+mod linked;
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -214,6 +215,9 @@ pub struct Store {
     file: config_file::FileState,
     /// Held so the config-file watch is not dropped.
     config_watch: Option<Task<()>>,
+    /// Pull requests opened from a `rostrum://pr` link that the feed does
+    /// not hold, looked up by themselves; see [`linked`].
+    pub linked: crate::link::linked::LinkedPulls,
 }
 
 impl Store {
@@ -250,6 +254,7 @@ impl Store {
             _hydrate: None,
             file,
             config_watch: None,
+            linked: Default::default(),
         };
         store.open_database(cx);
         store.authenticate(cx);
