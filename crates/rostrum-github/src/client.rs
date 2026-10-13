@@ -20,8 +20,8 @@ use crate::{
     error::GitHubError,
     graphql::{
         self, AuthorNode, BranchUpdateMethod, DivergenceBatchData, DivergenceQueryData, DraftState,
-        GraphQlResponse, PrNode, RateLimit, RepoQueryData, SetDraftData, UpdateBranchData,
-        ViewerQueryData,
+        GraphQlResponse, PrNode, PullQueryData, RateLimit, RepoQueryData, SetDraftData,
+        UpdateBranchData, ViewerQueryData,
     },
     rest::{AddLabels, IssueState, MergePullRequest, PullRequestFile, SubmitReview},
 };
@@ -136,6 +136,30 @@ impl GitHubClient {
             rate_limit,
             viewer,
         })
+    }
+
+    /// One pull request by number, in any state: what a `rostrum://pr` link
+    /// opens when the feed does not hold it. `NotFound` names the pull
+    /// request when the repository or the number does not exist, or the token
+    /// cannot see it.
+    pub async fn pull_request(
+        &self,
+        repo: &RepoId,
+        number: PrNumber,
+    ) -> Result<PullRequest, GitHubError> {
+        let resource = format!("pull request {repo}#{}", number.0);
+        let data: PullQueryData = self
+            .graphql(
+                graphql::PULL_REQUEST,
+                json!({
+                    "owner": repo.owner(),
+                    "name": repo.name(),
+                    "number": number.0,
+                }),
+                &resource,
+            )
+            .await?;
+        data.into_domain().ok_or(GitHubError::NotFound { resource })
     }
 
     /// Everything the detail pane shows for one pull request: description,
