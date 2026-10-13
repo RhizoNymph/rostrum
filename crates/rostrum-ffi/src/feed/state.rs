@@ -217,6 +217,14 @@ impl FeedState {
         }
     }
 
+    /// Remember a pull request looked up by itself (a `rostrum://pr` link to
+    /// one the feed does not hold), so its detail and actions work. Never
+    /// replaces the feed's own copy, which a refresh keeps current, and never
+    /// adds a row to the feed.
+    pub(crate) fn remember(&mut self, key: PullKey, pr: PullRequest) {
+        self.known.entry(key).or_insert(pr);
+    }
+
     /// Watch a repository, in the position `order` (the settings list) puts
     /// it.
     pub(crate) fn add_repo(&mut self, id: RepoId, order: &[String]) {
@@ -715,6 +723,33 @@ mod tests {
             number: PrNumber(2)
         }));
         assert!(state.hydrated);
+    }
+
+    #[test]
+    fn a_looked_up_pull_request_is_known_but_not_listed_and_never_overrides_the_feed() {
+        let mut state = feed(&["a/b"]);
+        let mut fresh = pull(1);
+        fresh.title = "from the feed".into();
+        load(&mut state, "a/b", vec![fresh]);
+
+        let mut stale = pull(1);
+        stale.title = "looked up".into();
+        let listed = PullKey {
+            repo: repo_id("a/b"),
+            number: PrNumber(1),
+        };
+        state.remember(listed.clone(), stale);
+        assert_eq!(state.known[&listed].title, "from the feed");
+
+        let outside = PullKey {
+            repo: repo_id("x/y"),
+            number: PrNumber(7),
+        };
+        state.remember(outside.clone(), pull(7));
+        assert_eq!(state.known[&outside].number, PrNumber(7));
+        let snapshot = state.snapshot(None, false);
+        assert_eq!(snapshot.repos.len(), 1);
+        assert_eq!(pulls(&snapshot.repos[0]), vec![1]);
     }
 
     #[test]

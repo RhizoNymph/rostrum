@@ -333,6 +333,25 @@ fn graphql(world: &World, body: &Value) -> Value {
         }
         return json!({"data": {"repository": repository}});
     }
+    // One pull request by number, any state: a link's lookup. The
+    // conversation query also names `pullRequest(number:`, but asks for
+    // threads.
+    if query.contains("pullRequest(number:") && !query.contains("reviewThreads") {
+        let Some(prs) = find(world, variables) else {
+            return json!({
+                "data": {"repository": null},
+                "errors": [{"type": "NOT_FOUND", "message": "Could not resolve to a Repository", "path": ["repository"]}]
+            });
+        };
+        let number = variables["number"].as_u64().unwrap_or_default();
+        return match prs.iter().find(|pr| u64::from(pr.number) == number) {
+            Some(pr) => json!({"data": {"repository": {"pullRequest": pr_node(pr)}}}),
+            None => json!({
+                "data": {"repository": {"pullRequest": null}},
+                "errors": [{"type": "NOT_FOUND", "message": "Could not resolve to a PullRequest", "path": ["repository", "pullRequest"]}]
+            }),
+        };
+    }
     if query.contains("reviewThreads") {
         return json!({"data": {"repository": {"pullRequest": conversation(world.paged, variables)}}});
     }
