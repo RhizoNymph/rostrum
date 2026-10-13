@@ -123,6 +123,14 @@ Overview:
       clones, and drives stacks (make, arrange, add to stack, merge, unstack)
       through rostrum-stack as polled jobs. State is owned by two actors:
       pairing codes and devices, and which clone is busy (plus the jobs).
+    open_links: >
+      `rostrum://pr?repo=owner/name&number=N` and `rostrum://issue?…` links
+      from other apps ("Open in Rostrum"). One grammar (rostrum-core, mirrored
+      in Kotlin); on the desktop an `x-scheme-handler/rostrum` desktop entry,
+      a hand-off to the already-running window over a Unix socket, and
+      opening the item there; on Android two intent filters into the link
+      inbox. Items the feed does not hold are looked up on GitHub by
+      themselves.
 
   data_flow: >
     At startup the app resolves a GitHub token (`gh auth token`, falling back to
@@ -263,6 +271,18 @@ Overview:
     are compare-and-swaps that re-apply the user's edit on top of anything
     written meanwhile (`rostrum_config::save_merged`).
 
+    Links from other apps enter at process start on the desktop:
+    `rostrum <link>` parses it (`rostrum_core::RostrumLink`), then either
+    writes it to the running window's socket
+    (`$XDG_RUNTIME_DIR/rostrum/desktop.sock`) and exits, or becomes the
+    window. A listener thread forwards each link over a channel to a GPUI
+    task that calls `Workspace::open_link`, which selects the item through
+    `Store::reveal` once auth has resolved; a pull request the feed lacks is
+    fetched alone (`GitHubClient::pull_request`) into `Store::linked`, which
+    `PrDetail` falls back to. On Android the intent reaches the same link
+    inbox as pairing links and notification taps, and the core's
+    `pull_detail` looks up and remembers a pull request it has never held.
+
     A phone drives stacks the same way it drives local jobs, but as jobs it
     polls: a stack request names the repository and pull requests; rostrumd
     takes the clone's lease, fetches the repository's open pull requests and
@@ -392,6 +412,11 @@ Features Index:
     entry_points: [crates/rostrumd/src/main.rs, crates/rostrumd/src/app.rs, crates/rostrumd/src/api/mod.rs, crates/rostrumd/src/web/mod.rs, crates/rostrumd/src/stacks/mod.rs]
     depends_on: [remote_protocol, local_git, conflict_handoff, github_sync, stacks]
     doc: docs/features/rostrumd.md
+  open_links:
+    description: rostrum://pr and rostrum://issue links — grammar, desktop scheme handler and single-window hand-off, Android intent filters, lookup of items outside the feed.
+    entry_points: [crates/rostrum-core/src/link.rs, crates/rostrum/src/link/mod.rs, crates/rostrum/src/link/instance.rs, crates/rostrum/src/sync/linked.rs, scripts/install-rostrum.sh, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/navigation/ItemLinks.kt]
+    depends_on: [github_sync, pr_detail, issues, repo_feed, android_app, android_core]
+    doc: docs/features/open_links.md
 ```
 
 ## Workspace layout
@@ -402,7 +427,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 
 | Crate | gpui? | Responsibility |
 |---|---|---|
-| `rostrum-core` | no | Domain types (pull requests and issues), feed flattening per tab and sorting, conversation model, branch tree, screen navigation |
+| `rostrum-core` | no | Domain types (pull requests and issues), feed flattening per tab and sorting, conversation model, branch tree, screen navigation, `rostrum://` link grammar |
 | `rostrum-db` | no | SQLite cache (pull requests, issues, repository metadata, conversations) and draft persistence |
 | `rostrum-github` | no | GraphQL reads, REST mutations, auth, rate limiting, errors |
 | `rostrum-diff` | no | Unified-diff parsing, `DiffRow` model, syntax highlighting |

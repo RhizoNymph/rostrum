@@ -419,7 +419,12 @@ pull requests on the next launch.
 
 - `pullDetail` fetches the conversation (one GraphQL query, which also
   reports open/closed/merged), keeps it in memory and caches it;
-  `cachedPullDetail` and the diff read it from memory or SQLite.
+  `cachedPullDetail` and the diff read it from memory or SQLite. A pull
+  request the core has never held (a `rostrum://pr` link to an unwatched
+  repository, or past the feed's limit) is first looked up by itself
+  (`GitHubClient::pull_request`) and remembered in `known`
+  (`FeedState::remember`, never over the feed's copy); one GitHub does not
+  have is a 404 `GitHubApi` naming it. See `open_links.md`.
 - Changed files are keyed on the head sha the feed reports: memory, then
   `rostrum_db::Db::load_pull_request_files`, then GitHub. A diff is fetched
   once per push.

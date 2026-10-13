@@ -44,6 +44,19 @@ cargo run -p rostrum --example review -- zed-industries/zed
 cargo run -p rostrum --example review -- zed-industries/zed 62051
 ```
 
+## Install, and open links from other apps
+
+```sh
+bash scripts/install-rostrum.sh   # build, install to ~/.local/bin, register rostrum://
+```
+
+This also installs a desktop entry that makes rostrum the handler for
+`rostrum://pr?repo=owner%2Fname&number=42` and `rostrum://issue?…` links
+(Orchestral's "Open in Rostrum"). A link opens that pull request or issue in
+the rostrum window already running — or starts one — even when its repository
+is not in your feed. `rostrum '<link>'` does the same from a terminal. See
+`docs/features/open_links.md`.
+
 ## Configure
 
 `~/.config/rostrum/config.json`, written with defaults on first run:
