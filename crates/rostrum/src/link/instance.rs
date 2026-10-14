@@ -396,6 +396,8 @@ mod tests {
             taking
         })
         .expect("served");
+        // The answer is read to the end, so the server end must close first.
+        drop(server);
         let mut answer = String::new();
         client.read_to_string(&mut answer).expect("answer");
         (answer, served, seen.into_inner().expect("seen"))
