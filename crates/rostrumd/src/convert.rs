@@ -5,11 +5,15 @@
 //! meet. Every conversion is a total function here, so a new variant on either
 //! side is a compile error in exactly one place.
 
-use rostrum_git::{Autostash, BranchName, InProgress};
+use rostrum_git::{Autostash, BranchName, GitError, InProgress, PushRejection};
 use rostrum_handoff::PrMeta;
-use rostrum_local::{HandoffState, LocalBranch, LocalOp, LocalResult, LocalState};
+use rostrum_local::{
+    HandoffState, LocalBranch, LocalOp, LocalResult, LocalState, PushKind, PushPlan, PushResult,
+    PushSkip,
+};
 use rostrum_remote::{
     HandoffStatus, InProgressKind, JobOutcome, LocalBranchStatus, LocalOpKind, LocalStatus, PrRef,
+    PushOutcomeView, PushPlanView,
 };
 
 pub fn job_outcome(result: LocalResult) -> JobOutcome {
@@ -101,6 +105,70 @@ pub fn pr_meta(pr: &PrRef) -> PrMeta {
 /// argument vector. The error is `rostrum-git`'s own sentence.
 pub fn branch(raw: &str) -> Result<BranchName, String> {
     BranchName::new(raw).map_err(|err| err.to_string())
+}
+
+/// Whether a skip is unremarkable: the phone shows no chip for it.
+fn quiet(skip: &PushSkip) -> bool {
+    matches!(skip, PushSkip::NotCheckedOut | PushSkip::UpToDate)
+}
+
+/// What a push would do, for the phone's dry run.
+pub fn push_plan_view(plan: Result<PushPlan, GitError>) -> PushPlanView {
+    match plan {
+        Err(error) => PushPlanView::Failed {
+            reason: error.to_string(),
+        },
+        Ok(PushPlan::Skip(skip)) => PushPlanView::Skip {
+            reason: skip.reason(),
+            quiet: quiet(&skip),
+        },
+        Ok(PushPlan::Ready(planned)) => match planned.kind {
+            PushKind::FastForward { ahead } => PushPlanView::FastForward {
+                upstream: planned.upstream.to_string(),
+                local: planned.local.to_string(),
+                ahead: ahead.get(),
+            },
+            PushKind::Rewrite {
+                ahead,
+                behind,
+                expected,
+            } => PushPlanView::Rewrite {
+                upstream: planned.upstream.to_string(),
+                local: planned.local.to_string(),
+                expected: expected.to_string(),
+                ahead: ahead.get(),
+                behind: behind.get(),
+            },
+        },
+    }
+}
+
+/// What a push did, for the phone.
+pub fn push_outcome_view(result: PushResult) -> PushOutcomeView {
+    match result {
+        PushResult::Pushed { upstream, rewrote } => PushOutcomeView::Pushed {
+            upstream: upstream.to_string(),
+            rewrote,
+        },
+        PushResult::Skipped(skip) => PushOutcomeView::Skipped {
+            reason: skip.reason(),
+            quiet: quiet(&skip),
+        },
+        PushResult::NotConfirmed { expected } => PushOutcomeView::NotConfirmed {
+            expected: expected.to_string(),
+        },
+        PushResult::ConfirmationStale { confirmed, current } => {
+            PushOutcomeView::ConfirmationStale {
+                confirmed: confirmed.to_string(),
+                current: current.to_string(),
+            }
+        }
+        PushResult::Rejected(rejection) => PushOutcomeView::Rejected {
+            stale_lease: rejection == PushRejection::StaleLease,
+            reason: rejection.describe(),
+        },
+        PushResult::Failed(reason) => PushOutcomeView::Failed { reason },
+    }
 }
 
 #[cfg(test)]

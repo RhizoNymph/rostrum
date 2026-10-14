@@ -23,6 +23,7 @@ pub mod config;
 pub mod fingerprint;
 pub mod host;
 pub mod pairing;
+pub mod push;
 pub mod secret;
 pub mod stack;
 
@@ -45,6 +46,10 @@ pub use host::{Host, HostError};
 pub use pairing::{
     Endpoint, EndpointError, GitHubHandover, Hello, PairRequest, PairResponse, PairingOffer,
     PairingUriError,
+};
+pub use push::{
+    LeaseConfirmation, PushEntry, PushOutcomeView, PushPlanEntry, PushPlanRequest,
+    PushPlanResponse, PushPlanView, PushRequest, PushResponse, PushTargetRef,
 };
 pub use secret::{DeviceId, DeviceToken, GitHubToken, SecretError, TokenHash};
 pub use stack::{
@@ -82,6 +87,14 @@ pub mod routes {
     pub const LOCAL_JOB: &str = "/api/v1/local/job";
     /// `POST` [`crate::AbortRequest`] → `null`.
     pub const LOCAL_ABORT: &str = "/api/v1/local/abort";
+    /// `POST` [`crate::PushPlanRequest`] → [`crate::PushPlanResponse`]: what
+    /// pushing each pull request's branch would do, and the rewrites that
+    /// would need confirming. Reads (and fetches) only.
+    pub const LOCAL_PUSH_PLAN: &str = "/api/v1/local/push/plan";
+    /// `POST` [`crate::PushRequest`] → [`crate::PushResponse`]: push each
+    /// branch to its head repository, rewriting only the confirmed ones, with
+    /// a lease. Runs to completion before answering.
+    pub const LOCAL_PUSH: &str = "/api/v1/local/push";
     /// `POST` [`crate::SyncAllRequest`] → [`crate::SyncRun`] (just started);
     /// `GET` → `Option<`[`crate::SyncRun`]`>` (the latest, running or finished).
     pub const SYNC_ALL: &str = "/api/v1/sync-all";

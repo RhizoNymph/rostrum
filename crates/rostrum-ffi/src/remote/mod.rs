@@ -5,12 +5,16 @@
 //! self-signed certificate is trusted by fingerprint alone, and a request is
 //! sent to at most one of its addresses.
 
+mod branch_push;
 mod config;
 mod convert;
 mod push;
 mod refs;
 mod types;
 
+pub use branch_push::{
+    BranchPushOutcome, PushItemResult, PushPlanItem, PushPlanKind, PushRewriteConfirmation,
+};
 pub use config::{ConfigChange, ConfigField, DesktopConfigPreview};
 pub use push::ConfigPushResult;
 

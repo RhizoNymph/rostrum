@@ -11,6 +11,7 @@ mod config;
 mod local;
 mod machine;
 mod pairing;
+mod push;
 mod stacks;
 mod sync;
 
@@ -35,6 +36,8 @@ pub fn router(daemon: Daemon) -> Router {
         .route(routes::LOCAL_STATUS, post(local::status))
         .route(routes::LOCAL_JOB, post(local::job))
         .route(routes::LOCAL_ABORT, post(local::abort))
+        .route(routes::LOCAL_PUSH_PLAN, post(push::plan))
+        .route(routes::LOCAL_PUSH, post(push::push))
         .route(routes::SYNC_ALL, post(sync::start).get(sync::latest))
         .route(routes::HANDOFFS, get(machine::handoffs))
         .route(routes::DEVICE, delete(machine::forget))
