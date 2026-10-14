@@ -4,6 +4,7 @@ mod ci;
 mod detail;
 mod feed;
 mod issue;
+mod link;
 mod loadable;
 mod markdown_editor;
 mod nav;
@@ -12,14 +13,15 @@ mod pickers;
 mod repo_view;
 mod sync;
 
-use std::rc::Rc;
+use std::{process::ExitCode, rc::Rc};
 
+use futures::StreamExt as _;
 use gpui::{
     App, Bounds, Context, Entity, FocusHandle, Focusable, Subscription, TitlebarOptions, Window,
-    WindowBounds, WindowOptions, actions, div, prelude::*, px, rems, size,
+    WindowBounds, WindowHandle, WindowOptions, actions, div, prelude::*, px, rems, size,
 };
 use gpui_platform::application;
-use rostrum_core::{FeedTab, RepoId, Screen, Selection};
+use rostrum_core::{FeedTab, RepoId, RostrumLink, Screen, Selection};
 use rostrum_diff::Highlighter;
 use rostrum_ui::{
     ActiveTheme,
@@ -30,6 +32,7 @@ use crate::{
     detail::PrDetail,
     feed::{FeedEvent, FeedView},
     issue::{IssuePane, NewIssueEvent, NewIssueForm},
+    link::{Startup, instance::Listener},
     notify::Notifier,
     repo_view::{RepoView, RepoViewEvent, branches::BranchesPane, model::RepoBranches},
     sync::AuthStatus,
@@ -115,6 +118,9 @@ struct Workspace {
     ci: Entity<ci::CiView>,
     /// Whether the window shows the CI grid instead of the feed and detail.
     showing_ci: bool,
+    /// A `rostrum://` link that arrived before GitHub auth resolved. Opened
+    /// as soon as it does: the panes cannot load anything without a client.
+    pending_link: Option<RostrumLink>,
     /// Watches the store for newly arrived pull requests. Held so it is not
     /// dropped; it has no rendered form.
     _notifier: Entity<Notifier>,
@@ -132,7 +138,12 @@ impl Workspace {
             cx.subscribe_in(&ci, window, |this, _, event, window, cx| match event {
                 ci::CiEvent::Leave => this.show_ci(false, window, cx),
             }),
-            cx.observe(&store, |this, _, cx| this.sync_detail(cx)),
+            cx.observe_in(&store, window, |this, _, window, cx| {
+                this.sync_detail(cx);
+                if let Some(link) = this.pending_link.take() {
+                    this.open_link(link, window, cx);
+                }
+            }),
             cx.subscribe_in(&feed, window, |this, _, event, window, cx| match event {
                 FeedEvent::FocusDetail => {
                     window.focus(&this.detail_focus, cx);
@@ -157,6 +168,7 @@ impl Workspace {
             highlighter: Rc::new(Highlighter::new()),
             ci,
             showing_ci: false,
+            pending_link: None,
             _notifier: notifier,
             _subscriptions: subscriptions,
         }
@@ -228,6 +240,33 @@ impl Workspace {
             let focus = panes.view.focus_handle(cx);
             window.focus(&focus, cx);
         }
+        cx.notify();
+    }
+
+    /// Show what a `rostrum://pr` or `rostrum://issue` link names, and raise
+    /// the window. Leaves the CI grid, and a repository view of another
+    /// repository; selects the item on its feed tab (the detail pane follows
+    /// the selection); and looks up a pull request the feed does not hold.
+    /// An issue needs no lookup: its pane fetches it by itself. Held until
+    /// GitHub auth resolves.
+    fn open_link(&mut self, link: RostrumLink, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.store.read(cx).auth, AuthStatus::Resolving) {
+            tracing::info!(%link, "holding the link until GitHub auth resolves");
+            self.pending_link = Some(link);
+            return;
+        }
+        tracing::info!(%link, "opening link");
+        self.show_ci(false, window, cx);
+        if self.screen.repo().is_some_and(|open| open != link.repo()) {
+            self.close_repo(window, cx);
+        }
+        self.store.update(cx, |store, cx| {
+            if let RostrumLink::PullRequest { repo, number } = &link {
+                store.look_up_pull(repo.clone(), *number, cx);
+            }
+            store.reveal(link.selection(), cx);
+        });
+        window.activate_window();
         cx.notify();
     }
 
@@ -481,7 +520,7 @@ impl Render for Workspace {
     }
 }
 
-fn main() {
+fn main() -> ExitCode {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -489,7 +528,30 @@ fn main() {
         )
         .init();
 
-    application().run(|cx: &mut App| {
+    // `rostrum <link>`, as the x-scheme-handler/rostrum desktop entry runs
+    // it: hand the link to a running window if there is one, else become
+    // the window and open it.
+    let link = match link::link_from_args(std::env::args_os().skip(1)) {
+        Ok(link) => link,
+        Err(error) => {
+            eprintln!("rostrum: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let socket = link::instance::socket_path();
+    let (initial, listener) = match link::start(link, socket.as_deref()) {
+        Startup::HandedOff => {
+            tracing::info!("handed the link to the running rostrum");
+            return ExitCode::SUCCESS;
+        }
+        Startup::Failed(error) => {
+            eprintln!("rostrum: {error}");
+            return ExitCode::FAILURE;
+        }
+        Startup::Run { initial, listener } => (initial, listener),
+    };
+
+    application().run(move |cx: &mut App| {
         gpui_tokio::init(cx);
         rostrum_ui::theme::init(cx);
         rostrum_ui::input::bind_keys(cx);
@@ -507,19 +569,57 @@ fn main() {
         cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
 
         let bounds = Bounds::centered(None, size(px(1440.), px(900.)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("rostrum".into()),
+        let window = cx
+            .open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    titlebar: Some(TitlebarOptions {
+                        title: Some("rostrum".into()),
+                        ..Default::default()
+                    }),
+                    // Matches `packaging/desktop/rostrum.desktop`, so the
+                    // compositor ties the window to its desktop entry.
+                    app_id: Some("rostrum".into()),
                     ..Default::default()
-                }),
-                ..Default::default()
-            },
-            |window, cx| cx.new(|cx| Workspace::new(window, cx)),
-        )
-        .expect("failed to open window");
+                },
+                |window, cx| cx.new(|cx| Workspace::new(window, cx)),
+            )
+            .expect("failed to open window");
+
+        if let Some(link) = initial
+            && let Err(error) = window.update(cx, |workspace, window, cx| {
+                workspace.open_link(link, window, cx)
+            })
+        {
+            tracing::warn!(%error, "could not open the startup link");
+        }
+        if let Some(listener) = listener {
+            forward_links(listener, window, cx);
+        }
 
         cx.activate(true);
     });
+    ExitCode::SUCCESS
+}
+
+/// Serve the link socket on its own thread and open every link it hands
+/// over in `window`, until the window is gone.
+fn forward_links(listener: Listener, window: WindowHandle<Workspace>, cx: &mut App) {
+    let (tx, mut rx) = futures::channel::mpsc::unbounded::<RostrumLink>();
+    if let Err(error) = listener.serve(move |link| tx.unbounded_send(link).is_ok()) {
+        tracing::warn!(%error, "could not start listening for links");
+        return;
+    }
+    cx.spawn(async move |cx| {
+        while let Some(link) = rx.next().await {
+            let opened = window.update(cx, |workspace, window, cx| {
+                workspace.open_link(link, window, cx)
+            });
+            if opened.is_err() {
+                // Dropping the receiver makes the listener refuse and stop.
+                break;
+            }
+        }
+    })
+    .detach();
 }

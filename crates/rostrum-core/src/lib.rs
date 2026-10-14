@@ -9,6 +9,7 @@ pub mod branches;
 pub mod ci;
 pub mod feed;
 pub mod issue;
+pub mod link;
 pub mod model;
 pub mod paging;
 pub mod navigation;
@@ -33,6 +34,7 @@ pub use feed::{flatten, flatten_in, flatten_tab, flatten_tab_in, repo_pull_rows}
 pub use issue::{
     CloseReason, EmptyTitle, Issue, IssueDetail, IssueNumber, IssueState, IssueTitle, Milestone,
 };
+pub use link::{LinkError, RostrumLink};
 pub use model::{
     CheckState, Divergence, Label, LoginKey, MergeStateStatus, MergeStatus, Mergeable, NodeId,
     PrNumber, PullRequest, PullState, Relation, RepoId, ReviewDecision, Side, User,

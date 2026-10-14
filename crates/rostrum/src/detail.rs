@@ -318,10 +318,16 @@ impl PrDetail {
         self.store.read(cx).client()
     }
 
+    /// The feed's copy, or — for one a link opened that the feed does not
+    /// hold — the one looked up for it.
     fn pull(&self, cx: &Context<Self>) -> Option<PullRequest> {
         let store = self.store.read(cx);
-        let repo = store.state.repo(&self.repo)?;
-        repo.prs.iter().find(|pr| pr.number == self.number).cloned()
+        store
+            .state
+            .repo(&self.repo)
+            .and_then(|repo| repo.prs.iter().find(|pr| pr.number == self.number))
+            .or_else(|| store.linked.found(&self.repo, self.number))
+            .cloned()
     }
 
     // --- loading -----------------------------------------------------------
@@ -1648,13 +1654,19 @@ impl Render for PrDetail {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let Some(pull) = self.pull(cx) else {
+            let message = crate::link::linked::placeholder(
+                self.store.read(cx).linked.get(&self.repo, self.number),
+                &self.repo,
+                self.number,
+            );
             return div()
                 .size_full()
                 .flex()
                 .items_center()
                 .justify_center()
+                .px_6()
                 .text_color(theme.text_subtle)
-                .child("This pull request is no longer open")
+                .child(message)
                 .into_any_element();
         };
 

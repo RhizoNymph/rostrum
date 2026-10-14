@@ -28,7 +28,9 @@ inline commenting and pending reviews, merging, and the paired desktop
   an app-private file, per profile; each profile's `SessionRepository`
   restores them into its backend at start-up and persists what sign-in and
   pairing return.
-- Deep links (`rostrum://pair?…`, cold and warm start) and notification taps.
+- Deep links (`rostrum://pair?…`, and `rostrum://pr?…` / `rostrum://issue?…`
+  from other apps — see `open_links.md`; cold and warm start) and
+  notification taps.
 - Background notifications: a WorkManager periodic check (15 min, network
   connected) posting to two channels, and the runtime permission request.
 - Every screen of the approved mockups, as amended (see *Decisions*).
@@ -140,14 +142,17 @@ while paired).
 `MainActivity` (`singleTop`) reads its intent in `onCreate` (only when
 `savedInstanceState == null`, so a rotation does not replay the launch
 intent) and in `onNewIntent`. `AppLinks.parse` turns a VIEW of
-`rostrum://pair…` into `AppLink.Pair(uri)` and a notification's extras
-(`EXTRA_REPO`, `EXTRA_NUMBER`, `EXTRA_PROFILE`) into
+`rostrum://pair…` into `AppLink.Pair(uri)`, a VIEW of `rostrum://pr…` or
+`rostrum://issue…` (parsed by `ItemLinks`) into `AppLink.OpenPullRequest(pr)`,
+`AppLink.OpenIssue(issue)` or `AppLink.Invalid(reason)`, and a notification's
+extras (`EXTRA_REPO`, `EXTRA_NUMBER`, `EXTRA_PROFILE`) into
 `AppLink.OpenPullRequest(pr, profile)`. The link waits in `AppLinkInbox`.
 The root routes it first (`routeOf`): another profile's pull request →
 switch to that profile (the link stays pending); a removed profile's → drop
 it with a snackbar. Then the `MainScaffold` of the right graph — which on a
-cold start is after the profiles are restored — navigates (`Pair(link)`, or
-the pull request when signed in) and consumes it. A newer link replaces an
+cold start is after the profiles are restored — asks `stepFor` what to do
+(navigate to `Pair(link)`, the pull request or the issue; or, signed out or
+malformed, say so in the snackbar) and consumes it. A newer link replaces an
 unconsumed older one.
 
 ## Data flow
@@ -568,7 +573,8 @@ What the core does not provide, and what the app does instead:
 | `ui/app/ShellViewModel.kt` | Desktop badge |
 | `ui/navigation/Destinations.kt` | `Destination` (incl. `Issue`, `NewIssue`, `Repo`), `PrTab`, `TopLevel` |
 | `ui/navigation/RostrumNavHost.kt` | The graph; `openPullRequest`, `navigateTopLevel` |
-| `ui/navigation/AppLinks.kt` | `AppLink`, `AppLinks.parse`, `AppLinkInbox`, `LinkRoute`, `routeOf` |
+| `ui/navigation/AppLinks.kt` | `AppLink`, `AppLinks.parse`, `AppLinkInbox`, `LinkRoute`, `routeOf`, `LinkStep`, `stepFor` |
+| `ui/navigation/ItemLinks.kt` | `ItemLinks.parse`/`isItemLink`, `ItemLink`: the `rostrum://pr`/`issue` grammar |
 | `ui/desktopconfig/DesktopConfigCopier.kt` | Preview, and copy + feed refresh, shared by pairing and Settings |
 | `ui/desktopconfig/DesktopConfigText.kt` | Titles, replace/removal copy, the preferences summary, repository rows |
 | `ui/desktopconfig/DesktopConfigPreviewView.kt` | The desktop's repositories ("+" for added), the removed group, the summary line |

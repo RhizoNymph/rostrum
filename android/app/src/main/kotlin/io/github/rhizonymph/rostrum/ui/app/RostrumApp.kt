@@ -46,16 +46,16 @@ import io.github.rhizonymph.rostrum.ui.common.LocalProfileHandle
 import io.github.rhizonymph.rostrum.ui.common.LocalSnackbarHostState
 import io.github.rhizonymph.rostrum.ui.common.profileViewModel
 import io.github.rhizonymph.rostrum.ui.components.ErrorView
-import io.github.rhizonymph.rostrum.ui.navigation.AppLink
 import io.github.rhizonymph.rostrum.ui.navigation.AppLinkInbox
 import io.github.rhizonymph.rostrum.ui.navigation.BottomNavBar
 import io.github.rhizonymph.rostrum.ui.navigation.Destination
 import io.github.rhizonymph.rostrum.ui.navigation.LinkRoute
+import io.github.rhizonymph.rostrum.ui.navigation.LinkStep
 import io.github.rhizonymph.rostrum.ui.navigation.RostrumNavHost
 import io.github.rhizonymph.rostrum.ui.navigation.TopLevel
 import io.github.rhizonymph.rostrum.ui.navigation.navigateTopLevel
-import io.github.rhizonymph.rostrum.ui.navigation.openPullRequest
 import io.github.rhizonymph.rostrum.ui.navigation.routeOf
+import io.github.rhizonymph.rostrum.ui.navigation.stepFor
 import io.github.rhizonymph.rostrum.ui.profiles.ProfileSwitcherSheet
 import io.github.rhizonymph.rostrum.ui.theme.RostrumText
 import io.github.rhizonymph.rostrum.ui.theme.RostrumTheme
@@ -176,15 +176,14 @@ private fun MainScaffold(
     val pending by links.pending.collectAsStateWithLifecycle()
     var switcherOpen by rememberSaveable { mutableStateOf(false) }
 
+    val messages = LocalAppContainer.current.appMessages
     LaunchedEffect(pending) {
         val link = pending ?: return@LaunchedEffect
-        when (link) {
-            is AppLink.Pair -> navController.navigate(Destination.Pair(link.uri))
-            is AppLink.OpenPullRequest -> {
-                // Another profile's notification: the root switches first, then this graph is replaced.
-                if (link.profile != null && link.profile != handle?.id) return@LaunchedEffect
-                if (signedIn) navController.openPullRequest(link.pr)
-            }
+        when (val step = stepFor(link, signedIn, handle?.id)) {
+            // Another profile's notification: the root switches first, then this graph is replaced.
+            LinkStep.Wait -> return@LaunchedEffect
+            is LinkStep.Navigate -> navController.navigate(step.destination)
+            is LinkStep.Say -> messages.send(step.message)
         }
         links.consume(link)
     }

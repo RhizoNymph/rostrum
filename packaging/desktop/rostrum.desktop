@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Rostrum
+GenericName=Pull request review
+Comment=Open pull requests and issues across many GitHub repositories
+# scripts/install-rostrum.sh rewrites this line to the installed binary's
+# absolute path. %u is a rostrum://pr or rostrum://issue link, or nothing.
+Exec=rostrum %u
+Terminal=false
+Categories=Development;RevisionControl;
+MimeType=x-scheme-handler/rostrum;
+StartupNotify=true
+StartupWMClass=rostrum

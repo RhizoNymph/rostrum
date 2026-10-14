@@ -104,17 +104,35 @@ impl RostrumCore {
 #[uniffi::export(async_runtime = "tokio")]
 impl RostrumCore {
     /// Fetch the conversation, threads and checks from GitHub and cache them.
+    ///
+    /// A pull request the feed has never held — one a `rostrum://pr` link
+    /// names, in a repository that is not watched or past the feed's limit —
+    /// is looked up on GitHub first and remembered for this session, so
+    /// every other call on it works as on one from the feed. A repository or
+    /// number GitHub does not know, or will not show this token, is a 404
+    /// `GitHubApi` naming the pull request.
     pub async fn pull_detail(&self, repo: String, number: u32) -> Result<PullDetail, RostrumError> {
         let key = PullKey::parse(&repo, number)?;
         self.ensure_hydrated().await?;
         let lookup = key.clone();
-        let client = self
+        let (client, known) = self
             .actor
-            .try_call(move |state| {
-                state.known(&lookup)?;
-                state.github()
-            })
+            .try_call(move |state| Ok((state.github()?, state.known(&lookup).is_ok())))
             .await?;
+        if !known {
+            let found = self
+                .github(client.pull_request(&key.repo, key.number).await)
+                .await?;
+            tracing::info!(
+                repo = %key.repo,
+                number = key.number.0,
+                "looked up a pull request outside the feed"
+            );
+            let remember = key.clone();
+            self.actor
+                .call(move |state| state.feed.remember(remember, found))
+                .await?;
+        }
         let fetched = self
             .github(client.conversation(&key.repo, key.number).await)
             .await?;

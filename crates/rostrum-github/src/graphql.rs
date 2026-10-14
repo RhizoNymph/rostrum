@@ -16,21 +16,17 @@ use crate::error::GraphQlError;
 
 pub mod sort_fields;
 
+#[cfg(test)]
+mod single_pull_tests;
+
 use sort_fields::{ForcePushNode, RepoMetaNode, head_pushed_at};
 
-/// Open pull requests for one repository, most recently updated first.
-pub const OPEN_PULL_REQUESTS: &str = r#"
-query($owner: String!, $name: String!, $first: Int!) {
-  rateLimit { cost remaining resetAt }
-  viewer { login avatarUrl }
-  repository(owner: $owner, name: $name) {
-    pushedAt
-    createdAt
-    updatedAt
-    stargazerCount
-    owner { __typename login }
-    pullRequests(states: OPEN, first: $first, orderBy: {field: UPDATED_AT, direction: DESC}) {
-      nodes {
+/// The selection every pull request query makes, so the feed and a single
+/// lookup ([`PULL_REQUEST`]) decode into the same [`PrNode`]. A macro rather
+/// than a `const` because `concat!` takes literals only.
+macro_rules! pr_fields {
+    () => {
+        r#"
         id
         number
         title
@@ -67,11 +63,47 @@ query($owner: String!, $name: String!, $first: Int!) {
         timelineItems(last: 1, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
           nodes { ... on HeadRefForcePushedEvent { createdAt } }
         }
-      }
+"#
+    };
+}
+
+/// Open pull requests for one repository, most recently updated first.
+pub const OPEN_PULL_REQUESTS: &str = concat!(
+    r#"
+query($owner: String!, $name: String!, $first: Int!) {
+  rateLimit { cost remaining resetAt }
+  viewer { login avatarUrl }
+  repository(owner: $owner, name: $name) {
+    pushedAt
+    createdAt
+    updatedAt
+    stargazerCount
+    owner { __typename login }
+    pullRequests(states: OPEN, first: $first, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes {"#,
+    pr_fields!(),
+    r#"      }
     }
   }
 }
-"#;
+"#
+);
+
+/// One pull request by number, whatever its state: what a `rostrum://pr`
+/// link opens when the feed does not hold it (a repository that is not
+/// watched, or a pull request past the feed's limit). The same fields as the
+/// feed, so it becomes the same [`PullRequest`].
+pub const PULL_REQUEST: &str = concat!(
+    r#"
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {"#,
+    pr_fields!(),
+    r#"    }
+  }
+}
+"#
+);
 
 /// Who the token belongs to, alone: the cheapest authenticated query there
 /// is, used to verify a freshly handed-in token before any repository is
@@ -603,6 +635,29 @@ pub struct RepositoryNode {
     #[serde(flatten)]
     pub meta: RepoMetaNode,
     pub pull_requests: Connection<PrNode>,
+}
+
+/// The answer to [`PULL_REQUEST`].
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullQueryData {
+    /// `null` when the repository does not exist or is not visible.
+    pub repository: Option<PullRepositoryNode>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRepositoryNode {
+    /// `null` when no pull request has that number (an issue's number, or
+    /// none at all).
+    pub pull_request: Option<PrNode>,
+}
+
+impl PullQueryData {
+    /// The pull request, or `None` when either level came back `null`.
+    pub fn into_domain(self) -> Option<PullRequest> {
+        self.repository?.pull_request.map(PrNode::into_domain)
+    }
 }
 
 #[derive(Debug, Deserialize)]
