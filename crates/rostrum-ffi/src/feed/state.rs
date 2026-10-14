@@ -23,6 +23,11 @@ use crate::{
     types::UserRef,
 };
 
+/// The tabs the phone shows — the core's tabs without Closed. Matching on
+/// this rather than on the core's tab keeps the phone's code total without
+/// an arm for a tab it never shows.
+type PhoneTab = crate::feed::FeedTab;
+
 /// What the cache held for one repository.
 #[derive(Default)]
 pub(crate) struct Cached {
@@ -301,7 +306,8 @@ impl FeedState {
     /// The feed as Kotlin renders it: the active tab, in the saved sort,
     /// stacks grouped — `rostrum_core::flatten_tab`, the desktop's own layout.
     pub(crate) fn snapshot(&self, viewer: Option<&User>, settling: bool) -> FeedSnapshot {
-        let feed = flatten_tab(&self.repos, &self.filter, self.tab);
+        let tab = PhoneTab::from(self.tab);
+        let feed = flatten_tab(&self.repos, &self.filter, tab.into());
         let viewer_key = viewer.map(User::key);
 
         let mut sections: Vec<RepoSection> = Vec::new();
@@ -310,7 +316,7 @@ impl FeedState {
             building.finish(
                 &self.repos,
                 &self.filter,
-                self.tab,
+                tab,
                 feed.stacks(),
                 viewer_key.as_ref(),
             )
@@ -328,13 +334,16 @@ impl FeedState {
                         current.rows.push(*row);
                     }
                 }
+                // Only the Closed tab produces these, and the phone does not
+                // show it.
+                FeedRow::ClosedRow { .. } => {}
                 FeedRow::RepoEmpty { .. } => set_body(&mut building, RepoBody::Empty),
                 FeedRow::RepoLoading { .. } => set_body(&mut building, RepoBody::Loading),
                 FeedRow::RepoError { repo } => {
                     let reason = self
                         .repos
                         .get(repo.0)
-                        .and_then(|state| load_for(state, self.tab).error_message())
+                        .and_then(|state| load_for(state, tab).error_message())
                         .unwrap_or("the last refresh failed")
                         .to_string();
                     set_body(&mut building, RepoBody::Failed { reason });
@@ -347,13 +356,13 @@ impl FeedState {
         }
 
         let counts = tab_counts(&self.repos, &self.filter);
-        let total_open = match self.tab {
-            FeedTab::PullRequests => self.repos.iter().map(|repo| repo.prs.len()).sum(),
-            FeedTab::Issues => self.repos.iter().map(|repo| repo.issues.len()).sum(),
+        let total_open = match tab {
+            PhoneTab::PullRequests => self.repos.iter().map(|repo| repo.prs.len()).sum(),
+            PhoneTab::Issues => self.repos.iter().map(|repo| repo.issues.len()).sum(),
         };
         FeedSnapshot {
             revision: self.revision,
-            tab: self.tab.into(),
+            tab,
             tab_counts: TabCounts {
                 pull_requests: count(counts.pull_requests),
                 issues: count(counts.issues),
@@ -362,7 +371,7 @@ impl FeedState {
             repos: sections,
             hidden_empty_repos: count(feed.hidden_repos()),
             total_open: count(total_open),
-            visible_open: count(counts.get(self.tab)),
+            visible_open: count(counts.get(tab.into())),
             query: self.filter.query.clone(),
             preferences: self.preferences(),
             filter_active: self.filter.is_active(),
@@ -373,10 +382,10 @@ impl FeedState {
 }
 
 /// The load state governing a tab: pull requests and issues load apart.
-fn load_for(repo: &RepoState, tab: FeedTab) -> &LoadState {
+fn load_for(repo: &RepoState, tab: PhoneTab) -> &LoadState {
     match tab {
-        FeedTab::PullRequests => &repo.load,
-        FeedTab::Issues => &repo.issues_load,
+        PhoneTab::PullRequests => &repo.load,
+        PhoneTab::Issues => &repo.issues_load,
     }
 }
 
@@ -401,13 +410,13 @@ impl Building {
         self,
         repos: &[RepoState],
         filter: &FeedFilter,
-        tab: FeedTab,
+        tab: PhoneTab,
         stacks: &[FeedStack],
         viewer: Option<&LoginKey>,
     ) -> RepoSection {
         let state = &repos[self.repo];
         let items = match tab {
-            FeedTab::PullRequests => {
+            PhoneTab::PullRequests => {
                 let mut items = PullItems::new(state, stacks, viewer);
                 for row in &self.rows {
                     items.push(*row);
@@ -415,7 +424,7 @@ impl Building {
                 let items = items.finish();
                 (!items.is_empty()).then_some(RepoBody::Pulls { items })
             }
-            FeedTab::Issues => {
+            PhoneTab::Issues => {
                 let issues: Vec<_> = self
                     .rows
                     .iter()
@@ -436,11 +445,11 @@ impl Building {
             items.unwrap_or(RepoBody::Empty)
         };
         let (open, visible) = match tab {
-            FeedTab::PullRequests => (
+            PhoneTab::PullRequests => (
                 state.prs.len(),
                 state.prs.iter().filter(|pr| filter.accepts(pr)).count(),
             ),
-            FeedTab::Issues => (
+            PhoneTab::Issues => (
                 state.issues.len(),
                 state
                     .issues

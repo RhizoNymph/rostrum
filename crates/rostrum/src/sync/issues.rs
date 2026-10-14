@@ -117,7 +117,8 @@ impl Store {
         .detach();
     }
 
-    /// Show the other list, and remember the choice across restarts.
+    /// Show another list, and remember the choice across restarts. Showing
+    /// the Closed tab fetches whatever closed lists are due.
     pub fn set_tab(&mut self, tab: FeedTab, cx: &mut Context<Self>) {
         if self.state.tab == tab {
             return;
@@ -126,6 +127,7 @@ impl Store {
         self.state.tab = tab;
         self.config.feed_tab = tab;
         self.persist_config(cx);
+        self.refresh_closed_if_shown(cx);
         cx.notify();
     }
 

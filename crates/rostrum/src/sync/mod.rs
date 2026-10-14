@@ -6,6 +6,7 @@
 //! Results are applied back on the main thread through `entity.update`.
 
 mod ci;
+mod closed;
 mod config_file;
 mod issues;
 mod linked;
@@ -20,10 +21,10 @@ use chrono::Utc;
 use gpui::{Context, Task};
 use gpui_tokio::Tokio;
 use rostrum_core::{
-    AppState, AuthorEntry, Divergence, FeedFilter, FeedTab, Issue, ItemSortKey, LoadState,
-    LoginKey, MergeProbeBudget, PrNumber, PullRequest, RepoId, RepoMeta, RepoSortKey, RepoState,
-    Stack, User, apply_divergences, carry_forward_divergence, divergence_query, issue_roster,
-    needs_merge_probe, roster,
+    AppState, AuthorEntry, ClosedPull, Divergence, FeedFilter, FeedTab, Issue, ItemSortKey,
+    LoadState, LoginKey, MergeProbeBudget, PrNumber, PullRequest, RepoId, RepoMeta, RepoSortKey,
+    RepoState, Stack, User, apply_divergences, carry_forward_divergence, closed_roster,
+    divergence_query, issue_roster, needs_merge_probe, roster,
 };
 use rostrum_db::Db;
 use rostrum_git::{Autostash, BranchName};
@@ -155,6 +156,7 @@ struct Cached {
     repo: RepoId,
     prs: Vec<PullRequest>,
     issues: Vec<Issue>,
+    closed: Vec<ClosedPull>,
     meta: Option<RepoMeta>,
     stacks: Vec<Stack>,
 }
@@ -172,6 +174,9 @@ pub struct Store {
     /// apart from `pending` so a merge probe's pull request refresh never
     /// waits on, or cancels, an issue fetch.
     pending_issues: HashMap<RepoId, Task<()>>,
+    /// In-flight closed pull request fetch per repository, guarded the same
+    /// way; see [`closed`].
+    pending_closed: HashMap<RepoId, Task<()>>,
     /// Every watched repository's CI checks, for the CI view.
     pub ci: rostrum_core::ci::CiChecks,
     /// In-flight checks refresh per repository, guarded like the others.
@@ -239,6 +244,7 @@ impl Store {
             client: None,
             pending: HashMap::new(),
             pending_issues: HashMap::new(),
+            pending_closed: HashMap::new(),
             ci: Default::default(),
             pending_ci: HashMap::new(),
             ci_watch: None,
@@ -288,14 +294,20 @@ impl Store {
                 for repo in repos {
                     let prs = db.load_pull_requests(&repo).await?;
                     let issues = db.load_issues(&repo).await?;
+                    let closed = db.load_closed_pulls(&repo).await?;
                     let meta = db.load_repo_meta(&repo).await?;
                     let stacks = db.load_stacks(&repo).await?;
-                    if !prs.is_empty() || !issues.is_empty() || meta.is_some() || !stacks.is_empty()
+                    if !prs.is_empty()
+                        || !issues.is_empty()
+                        || !closed.is_empty()
+                        || meta.is_some()
+                        || !stacks.is_empty()
                     {
                         cached.push(Cached {
                             repo,
                             prs,
                             issues,
+                            closed,
                             meta,
                             stacks,
                         });
@@ -325,6 +337,7 @@ impl Store {
             repo: id,
             prs,
             issues,
+            closed,
             meta,
             stacks,
         } in cached
@@ -343,6 +356,10 @@ impl Store {
             if repo.issues.is_empty() && !issues.is_empty() {
                 tracing::debug!(repo = %id, count = issues.len(), "restored issues from cache");
                 repo.issues = issues;
+            }
+            if repo.closed.is_empty() && !closed.is_empty() {
+                tracing::debug!(repo = %id, count = closed.len(), "restored closed pull requests from cache");
+                repo.closed = closed;
             }
             if repo.meta.is_none() && meta.is_some() {
                 tracing::debug!(repo = %id, "restored repository metadata from cache");
@@ -364,6 +381,7 @@ impl Store {
         self.persist_config(cx);
         self.refresh_repo(id.clone(), cx);
         self.refresh_issues(id, cx);
+        self.refresh_closed_if_shown(cx);
         cx.notify();
         Ok(())
     }
@@ -395,6 +413,7 @@ impl Store {
         // Dropping the in-flight tasks cancels their requests.
         self.pending.remove(id);
         self.pending_issues.remove(id);
+        self.pending_closed.remove(id);
         self.pending_ci.remove(id);
         self.ci.forget(id);
         self.divergence_probes.remove(id);
@@ -487,6 +506,7 @@ impl Store {
         let build = match self.state.tab {
             FeedTab::PullRequests => roster,
             FeedTab::Issues => issue_roster,
+            FeedTab::Closed => closed_roster,
         };
         build(
             &self.state.repos,
@@ -517,7 +537,9 @@ impl Store {
     }
 
     pub fn is_refreshing(&self) -> bool {
-        !self.pending.is_empty() || !self.pending_issues.is_empty()
+        !self.pending.is_empty()
+            || !self.pending_issues.is_empty()
+            || !self.pending_closed.is_empty()
     }
 
     /// The authenticated client, once auth has resolved.
@@ -736,9 +758,15 @@ impl Store {
             .iter()
             .map(|repo| repo.id.clone())
             .collect();
+        // Closed pull requests ride the poll only while their tab is
+        // showing; see [`closed`].
+        let closed_shown = self.state.tab == FeedTab::Closed;
         for id in ids {
             self.refresh_repo(id.clone(), cx);
             self.refresh_issues(id.clone(), cx);
+            if closed_shown {
+                self.refresh_closed(id.clone(), cx);
+            }
             self.refresh_ci(id, cx);
         }
     }

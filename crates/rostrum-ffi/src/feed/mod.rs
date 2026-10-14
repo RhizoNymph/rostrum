@@ -136,13 +136,10 @@ impl RostrumCore {
             .call(move |state| {
                 let selected = state.feed.filter.authors.clone();
                 let viewer = state.session.viewer();
-                let entries = match state.feed.tab {
-                    rostrum_core::FeedTab::PullRequests => {
-                        roster(&state.feed.repos, viewer, &selected)
-                    }
-                    rostrum_core::FeedTab::Issues => {
-                        issue_roster(&state.feed.repos, viewer, &selected)
-                    }
+                // The phone's tab: Closed is not one of them.
+                let entries = match FeedTab::from(state.feed.tab) {
+                    FeedTab::PullRequests => roster(&state.feed.repos, viewer, &selected),
+                    FeedTab::Issues => issue_roster(&state.feed.repos, viewer, &selected),
                 };
                 let cap = limit.map_or(usize::MAX, |limit| limit as usize);
                 let shown = visible(entries, &selected, cap);

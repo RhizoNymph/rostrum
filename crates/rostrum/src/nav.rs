@@ -5,7 +5,7 @@
 //! store's identity-based [`Selection`] to a row index at the moment it fires
 //! rather than caching one.
 
-use rostrum_core::{Feed, FeedRow, IssueIx, PrIx, RepoIx, RepoState, Selection};
+use rostrum_core::{ClosedIx, Feed, FeedRow, IssueIx, PrIx, RepoIx, RepoState, Selection};
 
 /// A navigation request from the keyboard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,9 +20,11 @@ pub enum Nav {
 ///
 /// Returns `None` when nothing is selected, when the selected repository is
 /// gone, when the selected item has closed, when the active filter or a
-/// collapsed repository has hidden its row, or when it belongs to the other
+/// collapsed repository has hidden its row, or when it belongs to another
 /// tab — a feed holds one kind of row, so a pull request selection has no row
-/// in the Issues feed and navigation there starts afresh.
+/// in the Issues feed and navigation there starts afresh. A pull request is
+/// found on the Pull requests tab while open and on the Closed tab once it
+/// has ended.
 pub fn selected_row(
     feed: &Feed,
     repos: &[RepoState],
@@ -35,15 +37,25 @@ pub fn selected_row(
     // Matched on identity alone: a stack member's row also carries its slot,
     // which says nothing about which pull request it is.
     match selection {
+        // A pull request has a row in the open list or in the Closed tab's,
+        // whichever this feed was built for; it can be in both lists for a
+        // poll after it merges, so each is looked up on its own.
         Selection::PullRequest { number, .. } => {
-            let pr = PrIx(
-                repos[repo_ix]
-                    .prs
-                    .iter()
-                    .position(|pr| pr.number == *number)?,
-            );
-            feed.rows().iter().position(|row| {
-                matches!(row, FeedRow::PrRow { repo: r, pr: p, .. } if *r == repo && *p == pr)
+            let state = &repos[repo_ix];
+            let pr = state
+                .prs
+                .iter()
+                .position(|pr| pr.number == *number)
+                .map(PrIx);
+            let closed = state
+                .closed
+                .iter()
+                .position(|closed| closed.number() == *number)
+                .map(ClosedIx);
+            feed.rows().iter().position(|row| match *row {
+                FeedRow::PrRow { repo: r, pr: p, .. } => r == repo && Some(p) == pr,
+                FeedRow::ClosedRow { repo: r, closed: c } => r == repo && Some(c) == closed,
+                _ => false,
             })
         }
         Selection::Issue { number, .. } => {
@@ -384,5 +396,70 @@ mod tests {
         assert_eq!(navigate(&feed, Some(1), Nav::Previous), Some(1));
         assert_eq!(navigate(&feed, None, Nav::Last), Some(6));
         assert_eq!(navigate(&feed, Some(6), Nav::First), Some(1));
+    }
+
+    // --- the Closed tab -------------------------------------------------------
+
+    fn ended(number: u32, minutes: i64) -> rostrum_core::ClosedPull {
+        rostrum_core::ClosedPull {
+            pull: pr(number),
+            ending: rostrum_core::PullEnding::Merged {
+                at: fixed_time() + chrono::Duration::minutes(minutes),
+            },
+        }
+    }
+
+    /// Two repositories whose closed pull requests interleave by end time:
+    /// c/d #4 (newest), a/b #2, c/d #3, a/b #1. a/b's #1 is also still in its
+    /// open list — the open list a poll behind its merge.
+    fn closed_repos() -> (Vec<RepoState>, Feed) {
+        let mut first = repo("a/b", &[1]);
+        first.closed = vec![ended(1, 10), ended(2, 30)];
+        first.closed_load = LoadState::Loaded { at: Utc::now() };
+        let mut second = repo("c/d", &[]);
+        second.closed = vec![ended(3, 20), ended(4, 40)];
+        second.closed_load = LoadState::Loaded { at: Utc::now() };
+        let repos = vec![first, second];
+        let feed = flatten_tab(&repos, &FeedFilter::default(), FeedTab::Closed);
+        (repos, feed)
+    }
+
+    #[test]
+    fn a_pull_request_selection_resolves_to_its_closed_row() {
+        let (repos, feed) = closed_repos();
+        assert_eq!(
+            selected_row(&feed, &repos, Some(&selection("c/d", 4))),
+            Some(0)
+        );
+        assert_eq!(
+            selected_row(&feed, &repos, Some(&selection("c/d", 3))),
+            Some(2)
+        );
+        // Held in both lists: on this tab, its closed row.
+        assert_eq!(
+            selected_row(&feed, &repos, Some(&selection("a/b", 1))),
+            Some(3)
+        );
+        // And on the open tab, its open row.
+        let open = flatten(&repos, &FeedFilter::default());
+        assert_eq!(
+            selected_row(&open, &repos, Some(&selection("a/b", 1))),
+            Some(1)
+        );
+        assert_eq!(
+            selected_row(&feed, &repos, Some(&issue_selection("a/b", 1))),
+            None
+        );
+    }
+
+    #[test]
+    fn navigation_walks_the_closed_list_across_repositories() {
+        let (_, feed) = closed_repos();
+        // closed x4, spacer
+        assert_eq!(navigate(&feed, None, Nav::Next), Some(0));
+        assert_eq!(navigate(&feed, Some(0), Nav::Next), Some(1));
+        assert_eq!(navigate(&feed, Some(3), Nav::Next), Some(3));
+        assert_eq!(navigate(&feed, None, Nav::Last), Some(3));
+        assert_eq!(navigate(&feed, Some(1), Nav::Previous), Some(0));
     }
 }

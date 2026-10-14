@@ -118,7 +118,9 @@ pub enum RepoBody {
     },
 }
 
-/// The feed's two lists.
+/// The feed's lists the phone shows. The desktop's third tab, Closed, is not
+/// offered on the phone yet; see `docs/features/closed_prs.md` for what it
+/// will need.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum FeedTab {
     PullRequests,
@@ -132,10 +134,15 @@ pub struct TabCounts {
     pub issues: u32,
 }
 
+/// The tab the phone shows for a tab the core names. The phone has no
+/// Closed tab, so a config that says "closed" — the phone's own settings,
+/// hand-edited — shows the pull requests, the default tab.
 impl From<rostrum_core::FeedTab> for FeedTab {
     fn from(tab: rostrum_core::FeedTab) -> Self {
         match tab {
-            rostrum_core::FeedTab::PullRequests => Self::PullRequests,
+            rostrum_core::FeedTab::PullRequests | rostrum_core::FeedTab::Closed => {
+                Self::PullRequests
+            }
             rostrum_core::FeedTab::Issues => Self::Issues,
         }
     }

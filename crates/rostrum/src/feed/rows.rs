@@ -43,27 +43,46 @@ impl FeedView {
                 self.render_pr_row(repo, pr, stack, chrome, ix, cx)
             }
             FeedRow::IssueRow { repo, issue } => self.render_issue_row(repo, issue, chrome, ix, cx),
+            FeedRow::ClosedRow { repo, closed } => {
+                self.render_closed_row(repo, closed, chrome, ix, cx)
+            }
             FeedRow::RepoEmpty { repo } => self.render_notice(
                 repo,
                 chrome,
                 match tab {
                     FeedTab::PullRequests => "No open pull requests",
                     FeedTab::Issues => "No open issues",
+                    FeedTab::Closed => "No closed pull requests",
                 },
                 cx,
             ),
-            FeedRow::RepoLoading { repo } => self.render_notice(repo, chrome, "Loading…", cx),
+            FeedRow::RepoLoading { repo } => {
+                // The Closed tab has no repository headers, so its notices
+                // name the repository themselves.
+                let message = match (tab, self.repo_state(repo, cx)) {
+                    (FeedTab::Closed, Some(state)) => {
+                        format!("{}: loading closed pull requests…", state.id)
+                    }
+                    _ => "Loading…".to_string(),
+                };
+                self.render_notice(repo, chrome, &message, cx)
+            }
             FeedRow::RepoError { repo } => {
-                let message = self
-                    .repo_state(repo, cx)
+                let state = self.repo_state(repo, cx);
+                let message = state
                     .and_then(|r| {
                         let load = match tab {
                             FeedTab::PullRequests => &r.load,
                             FeedTab::Issues => &r.issues_load,
+                            FeedTab::Closed => &r.closed_load,
                         };
                         load.error_message().map(str::to_string)
                     })
                     .unwrap_or_else(|| "Refresh failed".to_string());
+                let message = match (tab, state) {
+                    (FeedTab::Closed, Some(state)) => format!("{}: {message}", state.id),
+                    _ => message,
+                };
                 self.render_error(repo, chrome, message, cx)
             }
         }
@@ -88,6 +107,9 @@ impl FeedView {
         let (count, failed) = match tab {
             FeedTab::PullRequests => (state.prs.len(), state.load.is_failed()),
             FeedTab::Issues => (state.issues.len(), state.issues_load.is_failed()),
+            // The Closed tab draws no repository headers; counted for
+            // completeness.
+            FeedTab::Closed => (state.closed.len(), state.closed_load.is_failed()),
         };
         let collapsed = state.collapsed;
         let id = state.id.clone();

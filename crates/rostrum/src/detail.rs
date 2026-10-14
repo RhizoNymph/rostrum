@@ -6,6 +6,7 @@
 
 mod checks;
 pub(crate) mod conversation;
+mod ended;
 mod files;
 mod overview;
 
@@ -13,8 +14,8 @@ use std::{collections::HashSet, rc::Rc, sync::Arc};
 
 use futures::future::BoxFuture;
 use gpui::{
-    App, Context, Entity, Hsla, ListAlignment, ListState, Subscription, Task, Window, div,
-    prelude::*, px, rems,
+    AnyElement, App, Context, Entity, Hsla, ListAlignment, ListState, Subscription, Task, Window,
+    div, prelude::*, px, rems,
 };
 use gpui_tokio::Tokio;
 use rostrum_core::{
@@ -318,16 +319,58 @@ impl PrDetail {
         self.store.read(cx).client()
     }
 
-    /// The feed's copy, or — for one a link opened that the feed does not
-    /// hold — the one looked up for it.
+    /// The feed's copy — from the open list, or the Closed tab's — or, for
+    /// one a link opened that the feed does not hold, the one looked up for
+    /// it.
     fn pull(&self, cx: &Context<Self>) -> Option<PullRequest> {
         let store = self.store.read(cx);
-        store
-            .state
-            .repo(&self.repo)
-            .and_then(|repo| repo.prs.iter().find(|pr| pr.number == self.number))
+        let repo = store.state.repo(&self.repo);
+        repo.and_then(|repo| repo.prs.iter().find(|pr| pr.number == self.number))
+            .or_else(|| {
+                repo.and_then(|repo| rostrum_core::find_closed(repo, self.number))
+                    .map(|closed| &closed.pull)
+            })
             .or_else(|| store.linked.found(&self.repo, self.number))
             .cloned()
+    }
+
+    /// Whether the pull request has been merged or closed, from the Closed
+    /// tab's list and the conversation's state; see [`ended::ended`].
+    fn ended(&self, cx: &Context<Self>) -> Option<ended::Ended> {
+        let listed = self
+            .store
+            .read(cx)
+            .state
+            .repo(&self.repo)
+            .and_then(|repo| rostrum_core::find_closed(repo, self.number))
+            .map(|closed| closed.ending);
+        let state = self.conversation.loaded().and_then(|c| c.state);
+        ended::ended(listed, state)
+    }
+
+    /// The error, notice and in-flight lines both action bars open with.
+    fn status_lines(&self, theme: &rostrum_ui::Theme) -> Vec<AnyElement> {
+        let line = |text: String, color: Hsla| {
+            div()
+                .text_size(rems(0.75))
+                .text_color(color)
+                .child(text)
+                .into_any_element()
+        };
+        self.error
+            .clone()
+            .map(|message| line(message, theme.danger))
+            .into_iter()
+            .chain(
+                self.notice
+                    .clone()
+                    .map(|message| line(message, theme.accent)),
+            )
+            .chain(
+                self.busy
+                    .map(|label| line(format!("{label}…"), theme.text_subtle)),
+            )
+            .collect()
     }
 
     // --- loading -----------------------------------------------------------
@@ -1094,6 +1137,7 @@ impl PrDetail {
 
     fn render_header(&self, pull: &PullRequest, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
+        let ended = self.ended(cx);
         let author = pull.author.as_ref().map(|a| a.login.clone());
         // A label mutation is a whole-pane operation: while one is in flight the
         // chips still show the pre-mutation truth, so every affordance that
@@ -1146,6 +1190,9 @@ impl PrDetail {
                 h_flex()
                     .gap_2()
                     .flex_wrap()
+                    .when_some(ended, |el, ended| {
+                        el.child(Chip::new(ended.describe()).color(ended.color(&theme)))
+                    })
                     .when(pull.is_draft, |el| {
                         el.child(Chip::new("draft").color(theme.draft))
                     })
@@ -1448,10 +1495,13 @@ impl PrDetail {
             )
     }
 
-    fn render_actions(&self, pull: &PullRequest, cx: &Context<Self>) -> impl IntoElement {
+    fn render_actions(&self, pull: &PullRequest, cx: &Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         let merge = pull.merge_status();
         let busy = self.busy.is_some();
+        if let Some(ended) = self.ended(cx) {
+            return self.render_ended_actions(ended, busy, cx);
+        }
         let pending = self.pending.len();
         let stale = self.drafts_are_stale(pull);
 
@@ -1462,30 +1512,7 @@ impl PrDetail {
             .border_t_1()
             .border_color(theme.border)
             .bg(theme.surface)
-            .when_some(self.error.clone(), |el, message| {
-                el.child(
-                    div()
-                        .text_size(rems(0.75))
-                        .text_color(theme.danger)
-                        .child(message),
-                )
-            })
-            .when_some(self.notice.clone(), |el, message| {
-                el.child(
-                    div()
-                        .text_size(rems(0.75))
-                        .text_color(theme.accent)
-                        .child(message),
-                )
-            })
-            .when_some(self.busy, |el, label| {
-                el.child(
-                    div()
-                        .text_size(rems(0.75))
-                        .text_color(theme.text_subtle)
-                        .child(format!("{label}…")),
-                )
-            })
+            .children(self.status_lines(&theme))
             .when_some(self.confirm.clone(), |el, action| {
                 el.child(
                     h_flex()
@@ -1647,6 +1674,7 @@ impl PrDetail {
                             })),
                     ),
             )
+            .into_any_element()
     }
 }
 

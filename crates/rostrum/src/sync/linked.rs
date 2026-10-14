@@ -15,11 +15,13 @@ use super::{AuthStatus, Store};
 use crate::link::linked::{Lookup, failure_message};
 
 impl Store {
-    /// Whether the feed already holds this pull request.
+    /// Whether the feed already holds this pull request, open or on the
+    /// Closed tab.
     pub fn feed_has_pull(&self, repo: &RepoId, number: PrNumber) -> bool {
-        self.state
-            .repo(repo)
-            .is_some_and(|state| state.prs.iter().any(|pr| pr.number == number))
+        self.state.repo(repo).is_some_and(|state| {
+            state.prs.iter().any(|pr| pr.number == number)
+                || rostrum_core::find_closed(state, number).is_some()
+        })
     }
 
     /// Look the pull request up on GitHub unless the feed holds it, or a
