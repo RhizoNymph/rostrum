@@ -1,10 +1,11 @@
-//! The one push rostrum makes: a leased force-push of a rewritten stack
-//! branch.
+//! The pushes rostrum makes: a leased force-push of a rewritten stack branch,
+//! and a user-initiated push of a checked-out pull request branch.
 //!
-//! rostrum's standing rule is that it never writes to a remote. Arranging pull
-//! requests into a stack is the single, deliberate exception — rebasing a
-//! branch onto another rewrites it, and the pull request only sees the
-//! rewrite once it is pushed. So the exception is made as narrow as the type
+//! rostrum's standing rule is that it never writes to a remote unasked. There
+//! are two deliberate exceptions. Arranging pull requests into a stack rebases
+//! a branch onto another, and the pull request only sees the rewrite once it
+//! is pushed. And the Push / Push all buttons publish what a local merge or
+//! rebase left ahead of the remote. Both are made as narrow as the type
 //! system allows:
 //!
 //! - There is **no bare force**. [`push_args`] always writes
@@ -15,8 +16,12 @@
 //!   from an exact [`Oid`] rather than from whatever a local branch points at.
 //! - The verdict is read from `--porcelain` output into a [`PushOutcome`], so
 //!   a rejected lease is a value the caller must handle, not prose.
+//! - A push that is not a rewrite is [`PushMode::FastForward`]: no force and
+//!   no lease at all, so the remote itself refuses anything but a
+//!   fast-forward ([`fast_forward_push_args`]).
 //!
-//! The spawn lives in [`crate::Repo::push_with_lease`]; this module is pure.
+//! The spawn lives in [`crate::Repo::push_branch`] (and
+//! [`crate::Repo::push_with_lease`], its leased form); this module is pure.
 
 use crate::{
     error::GitError,
@@ -89,6 +94,60 @@ pub fn push_args(remote: &Remote, branch: &BranchName, new: &Oid, expected: &Oid
         format!("{new}:{destination}"),
     ]
 }
+
+/// How a push may move the remote branch.
+///
+/// There is no variant for an unconditional force: a rewrite always names the
+/// exact oid it expects to replace.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PushMode {
+    /// Forward only. No force and no lease: the remote refuses anything that
+    /// would drop a commit it has.
+    FastForward,
+    /// Rewrite, but only if the remote branch is still exactly `expected` —
+    /// `--force-with-lease=refs/heads/<branch>:<expected>`.
+    Lease { expected: Oid },
+}
+
+/// The arguments for one fast-forward push of `new` to `refs/heads/<branch>`
+/// on `remote`: the leased form's shape with the lease left out, and nothing
+/// that could force.
+pub fn fast_forward_push_args(remote: &Remote, branch: &BranchName, new: &Oid) -> Vec<String> {
+    let destination = branch.qualified();
+    vec![
+        "-c".into(),
+        "credential.interactive=false".into(),
+        "push".into(),
+        "--porcelain".into(),
+        "--".into(),
+        remote.as_str().into(),
+        format!("{new}:{destination}"),
+    ]
+}
+
+/// The arguments for one push of `new` to `refs/heads/<branch>` in `mode`.
+pub fn branch_push_args(
+    remote: &Remote,
+    branch: &BranchName,
+    new: &Oid,
+    mode: &PushMode,
+) -> Vec<String> {
+    match mode {
+        PushMode::FastForward => fast_forward_push_args(remote, branch, new),
+        PushMode::Lease { expected } => push_args(remote, branch, new, expected),
+    }
+}
+
+/// Configuration pinned ahead of every push, so a user's settings cannot
+/// widen it: `push.followTags` would publish tags alongside the branch, and
+/// `push.recurseSubmodules` (or `submodule.recurse`) would push submodule
+/// commits too. Each push names one ref and publishes nothing else.
+pub const PUSH_CONFIG: [&str; 4] = [
+    "-c",
+    "push.followTags=false",
+    "-c",
+    "push.recurseSubmodules=no",
+];
 
 /// Read the verdict for `refs/heads/<branch>` out of `git push --porcelain`.
 ///
@@ -205,6 +264,70 @@ mod tests {
         assert!(!args.iter().any(|a| a == "--force-with-lease"));
         assert!(!args.iter().any(|a| a == "--no-verify"));
         assert!(!args.iter().any(|a| a.starts_with('+')));
+
+        // The user-initiated forms: a fast-forward carries no force and no
+        // lease at all; a rewrite is exactly the leased form above.
+        let ff = fast_forward_push_args(&Remote::origin(), &branch("feat/a"), &oid('b'));
+        assert_eq!(
+            ff,
+            vec![
+                "-c",
+                "credential.interactive=false",
+                "push",
+                "--porcelain",
+                "--",
+                "origin",
+                &format!("{}:refs/heads/feat/a", "b".repeat(40)),
+            ]
+        );
+        assert_eq!(
+            branch_push_args(
+                &Remote::origin(),
+                &branch("feat/a"),
+                &oid('b'),
+                &PushMode::FastForward
+            ),
+            ff
+        );
+        assert_eq!(
+            branch_push_args(
+                &Remote::origin(),
+                &branch("feat/a"),
+                &oid('b'),
+                &PushMode::Lease { expected: oid('a') }
+            ),
+            args
+        );
+        for form in [&ff, &args] {
+            assert!(!form.iter().any(|a| a == "--force" || a == "-f"));
+            assert!(!form.iter().any(|a| a == "--force-with-lease"));
+            assert!(!form.iter().any(|a| a.starts_with("--force-if-includes")));
+            assert!(!form.iter().any(|a| a == "--no-verify"));
+            assert!(!form.iter().any(|a| a.starts_with('+')));
+            assert!(
+                !form
+                    .iter()
+                    .any(|a| a == "--mirror" || a == "--all" || a == "--tags")
+            );
+            assert!(!form.iter().any(|a| a == "--delete" || a == "-d"));
+            assert_eq!(
+                form.iter()
+                    .filter(|a| a.contains(':') && !a.starts_with("--"))
+                    .count(),
+                1
+            );
+        }
+        assert!(!ff.iter().any(|a| a.starts_with("--force")));
+        // The pinned configuration only ever narrows a push.
+        assert_eq!(
+            PUSH_CONFIG,
+            [
+                "-c",
+                "push.followTags=false",
+                "-c",
+                "push.recurseSubmodules=no"
+            ]
+        );
     }
 
     fn porcelain(line: &str) -> String {

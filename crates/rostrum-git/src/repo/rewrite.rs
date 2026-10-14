@@ -11,8 +11,8 @@
 //! - [`Repo::rebase_scratch`] replays `upstream..HEAD` onto a commit there,
 //!   with `rerere` on, so a conflict someone resolved once is reapplied
 //!   automatically the next time.
-//! - [`Repo::push_with_lease`] publishes the result — the single push in
-//!   rostrum, always leased; see [`crate::push`].
+//! - [`Repo::push_with_lease`] publishes the result, always leased; see
+//!   [`crate::push`].
 //! - [`Repo::set_branch`] moves a local branch only from an exact expected
 //!   value, and never one a worktree has checked out.
 //!
@@ -26,7 +26,7 @@ use crate::{
     error::GitError,
     outcome::{Outcome, RunReport, classify_run},
     preflight::Operation,
-    push::{PushOutcome, classify_push, push_args},
+    push::{PushMode, PushOutcome},
     refs::{BranchName, Oid, Remote, Rev},
     status::{Head, InProgress},
 };
@@ -301,7 +301,7 @@ impl Repo {
     /// Push `new` to `refs/heads/<branch>` on `remote`, but only if the remote
     /// branch is still at `expected`.
     ///
-    /// The one push rostrum makes; see [`crate::push`] for why it is shaped
+    /// The stack pipeline's push; see [`crate::push`] for why it is shaped
     /// this way. A rejected lease is an `Ok(PushOutcome::Rejected(..))`: the
     /// remote is unchanged, and the caller decides what to tell the user.
     pub async fn push_with_lease(
@@ -311,21 +311,14 @@ impl Repo {
         new: &Oid,
         expected: &Oid,
     ) -> Result<PushOutcome, GitError> {
-        let run = self
-            .run(
-                &push_args(remote, branch, new, expected),
-                CommandKind::Network,
-            )
-            .await?;
-        let outcome = classify_push(&run.stdout, &run.stderr, run.success, run.code, branch)?;
-        tracing::info!(
-            branch = %branch,
-            remote = %remote,
-            new = %new.short(),
-            expected = %expected.short(),
-            ?outcome,
-            "leased push"
-        );
-        Ok(outcome)
+        self.push_branch(
+            remote,
+            branch,
+            new,
+            &PushMode::Lease {
+                expected: expected.clone(),
+            },
+        )
+        .await
     }
 }

@@ -20,6 +20,11 @@ pub enum Operation {
     Merge,
     Rebase,
     Abort,
+    /// Publishing a checked-out branch to its upstream. It moves nothing
+    /// locally, but it is only offered on a worktree that is settled: a
+    /// half-finished rebase or uncommitted work means the branch tip is not
+    /// what the user is about to publish.
+    Push,
 }
 
 impl Operation {
@@ -30,13 +35,20 @@ impl Operation {
             Self::Merge => "merge",
             Self::Rebase => "rebase",
             Self::Abort => "abort",
+            Self::Push => "push",
         }
     }
 
-    /// Whether the operation moves HEAD or touches the worktree. A fetch writes
-    /// only `refs/remotes/`, so nothing about the worktree can block it.
-    fn touches_worktree(self) -> bool {
-        matches!(self, Self::PullRebase | Self::Merge | Self::Rebase)
+    /// Whether the worktree's state can block the operation: it moves HEAD
+    /// or touches the worktree, or (a push) it must not publish a branch
+    /// whose worktree is mid-operation or holds uncommitted work. A fetch
+    /// writes only `refs/remotes/`, so nothing about the worktree can block
+    /// it.
+    fn guards_worktree(self) -> bool {
+        matches!(
+            self,
+            Self::PullRebase | Self::Merge | Self::Rebase | Self::Push
+        )
     }
 }
 
@@ -179,7 +191,7 @@ pub fn blockers(
     // A fetch writes only `refs/remotes/`; nothing about the worktree can stop
     // it. An abort is only reachable through an `AbortTarget` handed out by
     // `Conflict::abort_target`, which already proves the matching state exists.
-    if !operation.touches_worktree() {
+    if !operation.guards_worktree() {
         return Vec::new();
     }
 
@@ -385,6 +397,56 @@ mod tests {
         );
         assert!(blockers(Operation::Fetch, &status, None, Autostash::Disabled).is_empty());
         assert!(blockers(Operation::Abort, &status, None, Autostash::Disabled).is_empty());
+    }
+
+    /// A push is offered only from a settled worktree: uncommitted work or
+    /// an unfinished rebase means the tip is not what the user meant to
+    /// publish. Autostash is irrelevant to it and never clears dirt here.
+    #[test]
+    fn a_push_is_blocked_by_dirt_and_by_an_unfinished_operation() {
+        let clean = on("feat", Worktree::default(), None);
+        assert!(
+            blockers(
+                Operation::Push,
+                &clean,
+                Some(&branch("feat")),
+                Autostash::Disabled
+            )
+            .is_empty()
+        );
+
+        let dirty = on(
+            "feat",
+            Worktree {
+                unstaged: 1,
+                ..Worktree::default()
+            },
+            None,
+        );
+        assert_eq!(
+            blockers(
+                Operation::Push,
+                &dirty,
+                Some(&branch("feat")),
+                Autostash::Disabled
+            ),
+            vec![Blocker::DirtyWorktree {
+                staged: 0,
+                unstaged: 1
+            }]
+        );
+
+        let rebasing = on("feat", Worktree::default(), Some(InProgress::Rebase));
+        assert_eq!(
+            blockers(
+                Operation::Push,
+                &rebasing,
+                Some(&branch("feat")),
+                Autostash::Disabled
+            ),
+            vec![Blocker::InProgress(InProgress::Rebase)]
+        );
+        assert_eq!(Operation::Push.as_str(), "push");
     }
 
     /// The most fundamental cause is reported first, so a single-line tooltip
