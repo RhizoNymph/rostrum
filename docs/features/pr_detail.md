@@ -110,6 +110,12 @@ diff view.
 | Convert to draft / Ready for review | Fires immediately; one button, labelled by the state it moves to |
 | Update: Merge / Update: Rebase | Shown only when behind the base; sends `expectedHeadOid` as a race guard |
 | Pull (rebase) / Merge remote / Merge base / Rebase onto base | On the local worktree, when a clone is configured; nothing is pushed |
+
+A pull request that has **ended** — merged or closed, known from the Closed
+tab's list or the conversation's `state` — offers none of the above but
+Comment: its action bar states how and when it ended, and the header carries
+a "merged …" / "closed …" chip. See `docs/features/closed_prs.md` and
+`crates/rostrum/src/detail/ended.rs`.
 | Abort | When a rebase or merge is in progress in the worktree |
 | Add / remove label | Toggles a label via the issues API |
 
@@ -291,6 +297,8 @@ scheduled in phase 2.
 - A `ThreadId` maps to exactly one stored thread, shared by both views.
 - Timeline items are ordered by `created_at` ascending.
 - Destructive or outward-facing actions (merge, close) require confirmation.
+- An ended pull request is never offered review, merge, close, draft, branch
+  update or local-clone actions.
   Draft conversion is exempt: it is reversible by the same button.
 - The draft button's target is an end state fixed at render, never a toggle
   evaluated at click time.
@@ -307,4 +315,5 @@ scheduled in phase 2.
 | `crates/rostrum/src/detail/composer.rs` | Text input, drafts, submission |
 | `crates/rostrum/src/detail/actions.rs` | Merge/close/review, confirmations |
 | `crates/rostrum/src/detail/checks.rs` | Check run list |
+| `crates/rostrum/src/detail/ended.rs` | Whether the pull request has ended (`ended`), and its reduced action bar |
 | `crates/rostrum-core/src/timeline.rs` | `TimelineItem`, merge/sort logic, `Conversation::state`, `ReviewThread::{reply_target, is_anchored_at}` |

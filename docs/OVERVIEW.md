@@ -4,8 +4,9 @@
 Overview:
   description: >
     A native Rust desktop application built on GPUI that aggregates open pull
-    requests — and, on a second tab, open issues — across a user-configured
-    set of GitHub repositories into a single vertically scrolling feed, and
+    requests — and, on a second tab, open issues, and on a third, recently
+    merged and closed pull requests — across a user-configured set of GitHub
+    repositories into a single vertically scrolling feed, and
     provides full in-app review: reading the PR body and comment chain, viewing
     the diff with syntax highlighting, leaving inline line comments, submitting
     reviews, and merging; and for issues, reading, commenting, closing,
@@ -33,6 +34,14 @@ Overview:
       with collapsible sections and the failing step highlighted, and
       confirmed re-runs that flip cells to queued at once. Matrix, timing, log
       parsing and re-run rules are pure in `rostrum_core::ci`.
+    closed_prs: >
+      The Closed tab: each watched repository's 50 most recently updated
+      merged or closed-unmerged pull requests, fetched only while the tab is
+      in use and cached, shown as one cross-repository list newest ending
+      first (merges by mergedAt, closes by closedAt). The ending is a
+      two-variant type reconciled once from GitHub's state and timestamps;
+      the pull request pane shows an ended pull request without review or
+      merge controls.
     issues: >
       The Issues tab and everything behind it: fetching and caching each
       repository's open issues in the poll cycle, the issue pane (header with
@@ -158,7 +167,10 @@ Overview:
     document with its own overlap guard and its own `LoadState` on
     `RepoState` — and caches them, so a cold start paints both tabs.
     `AppState.tab` (persisted as `feed_tab`) picks which list `flatten_tab`
-    builds; `Selection` is an enum over a pull request and an issue, by
+    builds — or, for the Closed tab, `flatten_closed`'s single list across
+    repositories in ending order, whose per-repository closed lists are
+    fetched (`CLOSED_PULL_REQUESTS`, cached in `cache_closed_pull`) only when
+    the tab is shown and on each poll while it stays shown; `Selection` is an enum over a pull request and an issue, by
     `(RepoId, number)`, and the workspace's `DetailPane` follows it: a
     `PrDetail`, an `IssuePane`, or — not a selection — the new-issue form.
     Issue mutations go out over REST as `IssueMutation`s and reload the pane
@@ -314,6 +326,11 @@ Features Index:
     entry_points: [crates/rostrum/src/ci/mod.rs, crates/rostrum/src/sync/ci.rs, crates/rostrum-core/src/ci/mod.rs, crates/rostrum-github/src/ci/mod.rs]
     depends_on: [repo_feed, feed_sort, github_sync, ui_foundation]
     doc: docs/features/ci_grid.md
+  closed_prs:
+    description: Closed tab — merged and closed-unmerged pull requests across repositories, newest ending first; fetch on tab use, cache, ending model, read-only pane for ended pull requests.
+    entry_points: [crates/rostrum-core/src/closed/mod.rs, crates/rostrum-github/src/closed/mod.rs, crates/rostrum/src/sync/closed.rs, crates/rostrum/src/feed/closed.rs, crates/rostrum/src/detail/ended.rs]
+    depends_on: [repo_feed, pr_detail, github_sync, author_filter, ui_foundation]
+    doc: docs/features/closed_prs.md
   issues:
     description: Issues tab, issue fetch and cache, issue pane with labels/assignees/close/reopen, and issue creation.
     entry_points: [crates/rostrum/src/issue/mod.rs, crates/rostrum/src/sync/issues.rs, crates/rostrum-core/src/issue.rs, crates/rostrum-core/src/tabs.rs, crates/rostrum-github/src/issues/mod.rs]
@@ -427,8 +444,8 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 
 | Crate | gpui? | Responsibility |
 |---|---|---|
-| `rostrum-core` | no | Domain types (pull requests and issues), feed flattening per tab and sorting, conversation model, branch tree, screen navigation, `rostrum://` link grammar |
-| `rostrum-db` | no | SQLite cache (pull requests, issues, repository metadata, conversations) and draft persistence |
+| `rostrum-core` | no | Domain types (pull requests, issues, closed pull requests), feed flattening per tab and sorting, conversation model, branch tree, screen navigation, `rostrum://` link grammar |
+| `rostrum-db` | no | SQLite cache (open and closed pull requests, issues, repository metadata, conversations) and draft persistence |
 | `rostrum-github` | no | GraphQL reads, REST mutations, auth, rate limiting, errors |
 | `rostrum-diff` | no | Unified-diff parsing, `DiffRow` model, syntax highlighting |
 | `rostrum-git` | no | Worktrees, clone status, divergence, pull/merge/rebase, conflict context via the `git` CLI |
@@ -450,6 +467,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 | Auth | `gh auth token`, `$GITHUB_TOKEN` fallback | No secret storage of our own; `gh` handles SSO and refresh |
 | Reads | GraphQL v4 | One round-trip per repo instead of dozens; cost-based rate limit |
 | CI checks | A third GraphQL document per repository (`statusCheckRollup` contexts of each open PR's head commit), on the feed's poll plus a 15 s poll while the grid shows something running | Keeps the feed query lean; a point-1 request per repository; the fast poll touches only repositories with running checks |
+| Closed pull requests | A fourth GraphQL document per repository (`states: [MERGED, CLOSED]`, 50 most recently updated), fetched only while the Closed tab is shown, sorted locally by `mergedAt`/`closedAt` | GitHub cannot order by either time; update order is the closest proxy. Unused, the tab costs no requests; shown, one point per repository per poll. See `docs/features/closed_prs.md` for what the window can miss |
 | Issues | A second GraphQL document per repository, not a selection on the pull request query | Separate load states per list, no coupling to the merge-probe timer; one extra point-1 request per repository per poll |
 | Mutations | REST v3, except draft conversion and branch updates | Simpler, better-documented endpoints for merge/review/comment. REST accepts `draft` only at creation, and its `update-branch` endpoint can only merge, so those two go through GraphQL |
 | Node ids | Fetched with the feed query | GraphQL mutations address a pull request by node id only. Carrying it on `PullRequest` makes a conversion one round trip, and is what the other GraphQL-only operations will need |
@@ -567,12 +585,18 @@ Each phase leaves a usable application.
 
 ## Status
 
-All five phases are complete and verified against the live API. 1622 tests pass
-(154 of them in `rostrum-ffi`); clippy is clean across the workspace.
+All five phases are complete and verified against the live API. 1821 tests pass
+(223 of them in `rostrum-ffi`); clippy is clean across the workspace.
 
 Issues are on the desktop: a tab beside pull requests, an issue pane with
 title and description editing, and issue creation; see `docs/features/issues.md`. The phone does not show them
 yet.
+
+Closed pull requests are on the desktop too: a third tab listing every
+watched repository's recent merges and closes as one list, newest ending
+first, opening the usual pull request pane without its review and merge
+controls; see `docs/features/closed_prs.md`. The phone does not show the tab
+yet, and that doc lists what it will need.
 
 The Android app's core, `rostrum-ffi`, exposes the same feed, detail, diff,
 review, desktop and notification behaviour to Kotlin through UniFFI, one

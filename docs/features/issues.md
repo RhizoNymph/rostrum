@@ -7,7 +7,8 @@ new one.
 ## Scope
 
 - The feed's **Pull requests | Issues** tab bar, with per-tab counts, the
-  `[`/`]` keys, and the selected tab persisted in the config.
+  `[`/`]` keys, and the selected tab persisted in the config. The bar's third
+  tab, **Closed**, is `closed_prs`; see `docs/features/closed_prs.md`.
 - Fetching each repository's open issues in the same poll cycle as its pull
   requests, caching them, and painting them on a cold start.
 - Flattening issues into the feed with the same container layout, filters,
@@ -339,10 +340,12 @@ stays, with GitHub's reason, and nothing typed is lost.
 
 ## Invariants and constraints
 
-- **A feed holds one kind of item row.** `flatten_tab` emits `PrRow`s or
-  `IssueRow`s, never both; navigation and selection rely on it.
+- **A feed holds one kind of item row.** `flatten_tab` emits `PrRow`s,
+  `IssueRow`s or (Closed tab) `ClosedRow`s, never two kinds; navigation and
+  selection rely on it.
 - **Contiguity and chrome rules are shared.** The repo_feed invariants hold on
-  both tabs because one function builds both.
+  both open tabs because one function builds both. The Closed tab is built by
+  `flatten_closed` and has no repository containers.
 - **Selection is by identity and kind**, never by feed index; an issue
   selection never resolves against a pull request with the same number, nor
   the reverse (`a_selection_resolves_only_against_its_own_kind`).
