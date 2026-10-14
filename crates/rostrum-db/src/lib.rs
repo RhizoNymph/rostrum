@@ -1,9 +1,10 @@
 //! Local SQLite store, with two deliberately separate responsibilities.
 //!
-//! 1. **Cache.** Pull request lists, repository metadata, conversations, and
-//!    HTTP ETag/body pairs fetched from GitHub. Disposable by design: a schema
-//!    bump drops it, and an undecodable row is treated as a miss rather than
-//!    an error. The cost of being wrong is one extra network round-trip.
+//! 1. **Cache.** Pull request lists (open and closed), repository metadata,
+//!    conversations, and HTTP ETag/body pairs fetched from GitHub. Disposable
+//!    by design: a schema bump drops it, and an undecodable row is treated
+//!    as a miss rather than an error. The cost of being wrong is one extra
+//!    network round-trip.
 //!
 //! 2. **Drafts.** Review comments the user authored locally and has never sent
 //!    anywhere. There is no other copy. Draft rows survive a cache schema
@@ -19,6 +20,7 @@
 
 mod baseline;
 mod cache;
+mod closed;
 mod drafts;
 mod error;
 mod files;

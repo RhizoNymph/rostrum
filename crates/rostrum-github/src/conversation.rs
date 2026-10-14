@@ -619,7 +619,7 @@ pub(crate) fn close_reason(raw: &str) -> Option<CloseReason> {
 
 /// Decode `state`, treating a value this build does not know as absent
 /// rather than failing the whole conversation over one field.
-fn lenient_state<'de, D>(deserializer: D) -> Result<Option<PullState>, D::Error>
+pub(crate) fn lenient_state<'de, D>(deserializer: D) -> Result<Option<PullState>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {

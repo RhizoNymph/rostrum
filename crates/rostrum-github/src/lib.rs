@@ -4,6 +4,7 @@ pub mod auth;
 pub mod branches;
 pub mod ci;
 pub mod client;
+pub mod closed;
 pub mod conversation;
 pub mod error;
 pub mod graphql;
@@ -13,6 +14,7 @@ pub mod stacks;
 
 pub use auth::{Token, resolve_token};
 pub use client::GitHubClient;
+pub use closed::{CLOSED_PER_REPO, RepoClosedPulls};
 pub use conversation::PULL_REQUEST_CONVERSATION;
 pub use error::GitHubError;
 pub use graphql::{BranchUpdateMethod, DraftState};
