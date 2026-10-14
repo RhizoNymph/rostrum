@@ -261,8 +261,9 @@ The filter bar writes into `AppState.filter`, which `flatten` already consults â
 filter state has exactly one home, and the existing store-changed path rebuilds
 rows live as the query is typed.
 
-The bar holds, top to bottom: the search box with the `drafts`, `authors`,
-`repos` and `Sort` buttons; the `hide empty repos` checkbox; the sync-all row when any repo has a
+The bar holds, top to bottom: the search box, on a row of its own so the
+buttons never squeeze it; the `drafts`, `authors`, `repos`, `Sort` and `CI`
+buttons, wrapping when the sidebar is narrow; the `hide empty repos` checkbox; the sync-all row when any repo has a
 clone; and the author row â€” a chip per person with open work, the viewer first
 and everyone else by recency, with the `include involved in` checkbox beneath
 it. The author row and its ordering, capping and persistence rules belong to

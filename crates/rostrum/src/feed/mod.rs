@@ -720,10 +720,13 @@ impl FeedView {
             .pb_2()
             .gap_1p5()
             .key_context(FILTER_CONTEXT)
+            // The search field gets a row of its own: sharing one with the
+            // buttons squeezed it to a sliver in a narrow sidebar.
+            .child(div().w_full().child(self.filter.clone()))
             .child(
                 h_flex()
                     .gap_2()
-                    .child(div().flex_1().min_w_0().child(self.filter.clone()))
+                    .flex_wrap()
                     // Drafts are a pull request notion; on the Issues tab the
                     // toggle would do nothing, so it is not offered there.
                     .when(tab == FeedTab::PullRequests, |el| {
