@@ -478,6 +478,14 @@ pub struct PullRequest {
     /// `merge_state`: a row cached before it existed must still decode.
     #[serde(default)]
     pub is_cross_repository: bool,
+    /// The repository the head branch lives in, as GitHub names it
+    /// (`headRepository.nameWithOwner`). `None` when the fork has been
+    /// deleted, and for rows cached before this field existed — defaulted
+    /// for the same reason as `merge_state`. Read through
+    /// [`PullRequest::head_repository_in`], which knows that a same-repository
+    /// pull request's head is the repository it was listed under.
+    #[serde(default)]
+    pub head_repository: Option<RepoId>,
 }
 
 impl PullRequest {
@@ -503,6 +511,20 @@ impl PullRequest {
             // mergeable, and calling that "computing" forever would be worse
             // than calling it ready.
             (Mergeable::Mergeable, _) => MergeStatus::Ready,
+        }
+    }
+
+    /// The repository this pull request's head branch lives in, given the
+    /// repository it was listed under.
+    ///
+    /// A same-repository pull request's head is `base` by definition, even
+    /// when `head_repository` was not fetched. A fork's is whatever GitHub
+    /// said, and `None` when it did not say — never a guess.
+    pub fn head_repository_in(&self, base: &RepoId) -> Option<RepoId> {
+        if self.is_cross_repository {
+            self.head_repository.clone()
+        } else {
+            Some(base.clone())
         }
     }
 
@@ -552,6 +574,22 @@ impl PullRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A same-repository pull request's head is the repository it was
+    /// listed under even when the field was never fetched; a fork's is only
+    /// ever what GitHub said.
+    #[test]
+    fn the_head_repository_is_the_base_unless_the_head_is_a_fork() {
+        let base = RepoId::new("octo", "repo");
+        let fork = RepoId::new("forker", "repo");
+        let mut pull = crate::test_support::pull(1);
+        assert_eq!(pull.head_repository_in(&base), Some(base.clone()));
+
+        pull.is_cross_repository = true;
+        assert_eq!(pull.head_repository_in(&base), None);
+        pull.head_repository = Some(fork.clone());
+        assert_eq!(pull.head_repository_in(&base), Some(fork));
+    }
 
     #[test]
     fn parses_plain_owner_name() {
@@ -666,6 +704,7 @@ mod tests {
             checks: None,
             base_divergence: None,
             is_cross_repository: false,
+            head_repository: None,
             pushed_at: None,
         }
     }

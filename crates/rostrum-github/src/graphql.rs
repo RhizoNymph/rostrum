@@ -39,6 +39,7 @@ macro_rules! pr_fields {
         headRefOid
         baseRefName
         isCrossRepository
+        headRepository { nameWithOwner }
         additions
         deletions
         changedFiles
@@ -660,6 +661,13 @@ impl PullQueryData {
     }
 }
 
+/// `headRepository { nameWithOwner }`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeadRepositoryNode {
+    pub name_with_owner: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrNode {
@@ -682,6 +690,10 @@ pub struct PrNode {
     /// from before the field was requested must still decode.
     #[serde(default)]
     pub is_cross_repository: bool,
+    /// `null` when the fork has been deleted; defaulted like
+    /// `is_cross_repository` for replayed fixtures.
+    #[serde(default)]
+    pub head_repository: Option<HeadRepositoryNode>,
     pub additions: u32,
     pub deletions: u32,
     pub changed_files: u32,
@@ -843,6 +855,12 @@ impl PrNode {
             // query itself.
             base_divergence: None,
             is_cross_repository: self.is_cross_repository,
+            // A name GitHub returns that does not parse is dropped rather
+            // than guessed at; a push from a fork then says it cannot tell
+            // where the branch lives.
+            head_repository: self
+                .head_repository
+                .and_then(|node| node.name_with_owner.parse().ok()),
         }
     }
 }
@@ -940,6 +958,32 @@ mod tests {
         assert!(prs[0].is_cross_repository);
         assert!(!prs[1].is_cross_repository);
         assert!(OPEN_PULL_REQUESTS.contains("isCrossRepository"));
+    }
+
+    /// A push from a fork goes only to the repository GitHub says the head
+    /// lives in, so the name is decoded, and a missing or unparseable one is
+    /// `None` rather than a guess.
+    #[test]
+    fn decodes_the_head_repository_and_leaves_an_unknown_one_unset() {
+        let node = |head: serde_json::Value| -> PullRequest {
+            let mut value: serde_json::Value = serde_json::from_str(SAMPLE).expect("json");
+            let pr = &mut value["data"]["repository"]["pullRequests"]["nodes"][0];
+            pr["headRepository"] = head;
+            let node: PrNode = serde_json::from_value(pr.clone()).expect("node decodes");
+            node.into_domain()
+        };
+        assert_eq!(
+            node(serde_json::json!({ "nameWithOwner": "forker/b" })).head_repository,
+            Some(rostrum_core::RepoId::new("forker", "b"))
+        );
+        assert_eq!(node(serde_json::Value::Null).head_repository, None);
+        assert_eq!(
+            node(serde_json::json!({ "nameWithOwner": "not a repo" })).head_repository,
+            None
+        );
+        assert_eq!(parse()[1].head_repository, None);
+        assert!(OPEN_PULL_REQUESTS.contains("headRepository { nameWithOwner }"));
+        assert!(PULL_REQUEST.contains("headRepository { nameWithOwner }"));
     }
 
     #[test]

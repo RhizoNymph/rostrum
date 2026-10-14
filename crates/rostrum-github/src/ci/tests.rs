@@ -233,6 +233,7 @@ fn repo_state(name: &str, prs: &[PrChecks]) -> RepoState {
             checks: None,
             base_divergence: None,
             is_cross_repository: false,
+            head_repository: None,
             pushed_at: None,
         })
         .collect();

@@ -608,6 +608,7 @@ mod tests {
             checks: None,
             base_divergence: None,
             is_cross_repository: false,
+            head_repository: None,
             pushed_at: None,
         }
     }
