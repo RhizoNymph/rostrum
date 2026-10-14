@@ -78,7 +78,7 @@ pub fn issue_roster(
     roster_from(authored, viewer, selected)
 }
 
-fn roster_from<'a>(
+pub(crate) fn roster_from<'a>(
     authored: impl Iterator<Item = (Option<&'a User>, DateTime<Utc>)>,
     viewer: Option<&User>,
     selected: &BTreeSet<LoginKey>,

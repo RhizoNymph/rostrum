@@ -3,6 +3,7 @@
 use chrono::{DateTime, Utc};
 
 use crate::{
+    closed::ClosedPull,
     feed::FeedFilter,
     issue::{Issue, IssueNumber},
     model::{Divergence, PrNumber, PullRequest, RepoId},
@@ -56,6 +57,13 @@ pub struct RepoState {
     /// are separate requests: one can fail while the other succeeds, and each
     /// tab must report its own.
     pub issues_load: LoadState,
+    /// Recently merged or closed pull requests — the fetch window's worth,
+    /// most recently updated first as fetched; the Closed tab orders them
+    /// by when they ended.
+    pub closed: Vec<ClosedPull>,
+    /// Fetch status of `closed`. Closed pull requests are fetched only for
+    /// the Closed tab, so this stays `Idle` until that tab is first shown.
+    pub closed_load: LoadState,
     /// Collapsing is per repository, not per tab: it hides the repository's
     /// body on both.
     pub collapsed: bool,
@@ -77,6 +85,8 @@ impl RepoState {
             load: LoadState::Idle,
             issues: Vec::new(),
             issues_load: LoadState::Idle,
+            closed: Vec::new(),
+            closed_load: LoadState::Idle,
             collapsed: false,
             stacks: Vec::new(),
             meta: None,
@@ -104,7 +114,10 @@ impl Selection {
         }
     }
 
-    /// The feed tab this selection lives on.
+    /// The feed tab this selection lives on. A pull request is filed under
+    /// the open tab even once it has closed: a selection names an item, not
+    /// a list, and the open tab is where a revealed pull request is looked
+    /// for first.
     pub fn tab(&self) -> FeedTab {
         match self {
             Self::PullRequest { .. } => FeedTab::PullRequests,

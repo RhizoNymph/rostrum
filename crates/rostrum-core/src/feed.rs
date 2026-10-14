@@ -10,6 +10,7 @@
 use std::collections::BTreeSet;
 
 use crate::{
+    closed::{ClosedIx, flatten_closed},
     issue::Issue,
     model::{LoginKey, PullRequest},
     sort::{
@@ -71,9 +72,9 @@ pub struct IssueIx(pub usize);
 
 /// One row of the feed.
 ///
-/// A feed is built for one tab at a time, so a stream holds `PrRow`s or
-/// `IssueRow`s, never both; the notice rows mean "this repository's list for
-/// the active tab".
+/// A feed is built for one tab at a time, so a stream holds `PrRow`s,
+/// `IssueRow`s or `ClosedRow`s, never two kinds; the notice rows mean "this
+/// repository's list for the active tab".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FeedRow {
     RepoHeader {
@@ -96,6 +97,13 @@ pub enum FeedRow {
     IssueRow {
         repo: RepoIx,
         issue: IssueIx,
+    },
+    /// A merged or closed pull request on the Closed tab. Consecutive closed
+    /// rows form one container whatever repository each belongs to: the tab
+    /// is one list in the order things ended, not one card per repository.
+    ClosedRow {
+        repo: RepoIx,
+        closed: ClosedIx,
     },
     /// Loaded successfully, nothing to show (no open PRs, or none match).
     RepoEmpty {
@@ -122,6 +130,7 @@ impl FeedRow {
             | Self::StackHeader { repo, .. }
             | Self::PrRow { repo, .. }
             | Self::IssueRow { repo, .. }
+            | Self::ClosedRow { repo, .. }
             | Self::RepoEmpty { repo }
             | Self::RepoError { repo }
             | Self::RepoLoading { repo }
@@ -135,7 +144,14 @@ impl FeedRow {
 
     /// Whether keyboard navigation can land here: an item, not chrome.
     pub fn is_item(&self) -> bool {
-        matches!(self, Self::PrRow { .. } | Self::IssueRow { .. })
+        matches!(
+            self,
+            Self::PrRow { .. } | Self::IssueRow { .. } | Self::ClosedRow { .. }
+        )
+    }
+
+    fn is_closed(&self) -> bool {
+        matches!(self, Self::ClosedRow { .. })
     }
 }
 
@@ -217,7 +233,7 @@ impl FeedFilter {
 
     /// Whether the author selection lets an item through. An empty selection
     /// lets everything through; otherwise one selected login must match.
-    fn accepts_author(
+    pub(crate) fn accepts_author(
         &self,
         authored_by: impl Fn(&LoginKey) -> bool,
         involves: impl Fn(&LoginKey) -> bool,
@@ -271,6 +287,20 @@ pub struct Feed {
 }
 
 impl Feed {
+    pub(crate) fn from_parts(
+        rows: Vec<FeedRow>,
+        hidden_repos: usize,
+        stacks: Vec<FeedStack>,
+        tab: FeedTab,
+    ) -> Self {
+        Self {
+            rows,
+            hidden_repos,
+            stacks,
+            tab,
+        }
+    }
+
     pub fn tab(&self) -> FeedTab {
         self.tab
     }
@@ -306,7 +336,8 @@ impl Feed {
     }
 
     /// Border/rounding role of the row at `ix`, derived from whether its
-    /// neighbours belong to the same repo's contiguous run.
+    /// neighbours belong to the same repo's contiguous run — or, for closed
+    /// rows, to the same run of closed rows, which spans repositories.
     pub fn chrome(&self, ix: usize) -> Chrome {
         let Some(row) = self.rows.get(ix) else {
             return Chrome::None;
@@ -316,8 +347,16 @@ impl Feed {
         }
 
         let repo = row.repo();
+        let closed = row.is_closed();
         let continues = |neighbour: Option<&FeedRow>| {
-            neighbour.is_some_and(|r| !r.is_spacer() && r.repo() == repo)
+            neighbour.is_some_and(|r| {
+                !r.is_spacer()
+                    && if closed || r.is_closed() {
+                        closed && r.is_closed()
+                    } else {
+                        r.repo() == repo
+                    }
+            })
         };
 
         let is_top = !continues(ix.checked_sub(1).and_then(|prev| self.rows.get(prev)));
@@ -375,6 +414,13 @@ pub fn flatten_tab_in(
     tab: FeedTab,
     order: FeedOrder,
 ) -> Feed {
+    // One list in the order things ended, whatever order the caller asks
+    // for: that order is what the tab is for. See `closed::feed`.
+    let list = match tab {
+        FeedTab::Closed => return flatten_closed(repos, filter),
+        FeedTab::PullRequests => OpenList::PullRequests,
+        FeedTab::Issues => OpenList::Issues,
+    };
     let mut rows = Vec::new();
     let mut hidden_repos = 0;
     let mut stacks = Vec::new();
@@ -387,8 +433,8 @@ pub fn flatten_tab_in(
     for repo_ix in repo_order {
         let repo = &repos[repo_ix.0];
 
-        let (visible, load, holds_any) = match tab {
-            FeedTab::PullRequests => {
+        let (visible, load, holds_any) = match list {
+            OpenList::PullRequests => {
                 let mut visible: Vec<PrIx> = repo
                     .prs
                     .iter()
@@ -401,7 +447,7 @@ pub fn flatten_tab_in(
                 }
                 (Items::Prs(visible), &repo.load, !repo.prs.is_empty())
             }
-            FeedTab::Issues => {
+            OpenList::Issues => {
                 let mut visible: Vec<IssueIx> = repo
                     .issues
                     .iter()
@@ -485,6 +531,13 @@ pub fn repo_pull_rows(
     });
     push_units(&mut rows, &mut stacks, RepoIx(0), repo, &visible, order);
     (rows, stacks)
+}
+
+/// The tabs laid out one container per repository: every tab but Closed.
+#[derive(Clone, Copy)]
+enum OpenList {
+    PullRequests,
+    Issues,
 }
 
 /// The items one repository contributes to a tab, filtered and in item
