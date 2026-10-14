@@ -14,7 +14,7 @@ use rostrum_core::{PrNumber, PullRequest, RepoId};
 #[derive(Clone, Debug, PartialEq)]
 pub enum Lookup {
     Loading,
-    Found(PullRequest),
+    Found(Box<PullRequest>),
     /// Already phrased for the pane.
     Failed(String),
 }
@@ -52,7 +52,7 @@ impl LinkedPulls {
     /// The pull request, once found.
     pub fn found(&self, repo: &RepoId, number: PrNumber) -> Option<&PullRequest> {
         match self.get(repo, number)? {
-            Lookup::Found(pull) => Some(pull),
+            Lookup::Found(pull) => Some(pull.as_ref()),
             Lookup::Loading | Lookup::Failed(_) => None,
         }
     }
@@ -121,7 +121,7 @@ mod tests {
         assert!(!linked.begin(&repo(), PrNumber(7)), "already in flight");
         assert_eq!(linked.found(&repo(), PrNumber(7)), None);
 
-        linked.finish(&repo(), PrNumber(7), Lookup::Found(pull(7)));
+        linked.finish(&repo(), PrNumber(7), Lookup::Found(Box::new(pull(7))));
         assert_eq!(
             linked.found(&repo(), PrNumber(7)).map(|pull| pull.number),
             Some(PrNumber(7))

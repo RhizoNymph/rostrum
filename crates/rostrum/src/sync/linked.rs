@@ -53,7 +53,7 @@ impl Store {
             .await;
             this.update(cx, |this, cx| {
                 let lookup = match outcome {
-                    Ok(Ok(pull)) => Lookup::Found(pull),
+                    Ok(Ok(pull)) => Lookup::Found(Box::new(pull)),
                     Ok(Err(error)) => {
                         tracing::warn!(%repo, number = number.0, %error, "linked pull request lookup failed");
                         Lookup::Failed(failure_message(&repo, number, &error.to_string()))
