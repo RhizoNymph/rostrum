@@ -105,7 +105,7 @@ Kotlin names are camelCase; every call that touches state or I/O is
 | detail | `pullDetail(repo, n)`, `cachedPullDetail(repo, n)`, `loadEarlierPull(repo, n) → PullDetail`, `pullHeader(repo, n)`, `repositoryLabels(repo)`, `addLabel`, `removeLabel`, `addComment`, `replyToThread(repo, n, threadId, body)`, `merge(repo, n, method, title?, message?, expectedHeadSha)`, `closePullRequest`, `reopenPullRequest`, `setDraft(repo, n, draft)`, `updateBranch(repo, n, method, expectedHeadOid)` |
 | files | `filesOverview(repo, n) → FilesOverview`, `fileDiff(repo, n, fileIndex) → FileDiff` |
 | review | `pendingReview`, `addDraft(repo, n, anchor, rangeStart?, body)`, `editDraft(…, draftId, body)`, `removeDraft(…, draftId)`, `discardDrafts` — all return `PendingReview`; `submitReview(repo, n, event, body, includeDrafts)` |
-| remote | `parsePairingLink(uri)` (not suspend), `pairWithLink(uri, deviceName)`, `probeDesktop(host, port)`, `pairManual(host, port, fingerprint, code, deviceName)`, `setRemote(endpoint, deviceToken)`, `clearRemote()`, `remoteStatus()`, `machineInfo()`, `localStatus(repo, n)`, `runLocalJob(repo, n, op, autostash)`, `abortLocal(repo, n)`, `startSyncAll(op, autostash)`, `syncAllStatus()`, `handoffs()`, `refreshGithubTokenFromDesktop()`, `unpair()`, `desktopConfig() → DesktopConfigPreview`, `copyDesktopConfig() → Settings`, `pushConfigToDesktop(base) → ConfigPushResult` |
+| remote | `parsePairingLink(uri)` (not suspend), `pairWithLink(uri, deviceName)`, `probeDesktop(host, port)`, `pairManual(host, port, fingerprint, code, deviceName)`, `setRemote(endpoint, deviceToken)`, `clearRemote()`, `remoteStatus()`, `machineInfo()`, `localStatus(repo, n)`, `runLocalJob(repo, n, op, autostash)`, `abortLocal(repo, n)`, `startSyncAll(op, autostash)`, `syncAllStatus()`, `planBranchPush(repo, n) → PushPlanItem`, `pushBranch(repo, n, confirm?) → PushItemResult`, `planPushAll() → [PushPlanItem]`, `pushAll(confirms) → [PushItemResult]`, `handoffs()`, `refreshGithubTokenFromDesktop()`, `unpair()`, `desktopConfig() → DesktopConfigPreview`, `copyDesktopConfig() → Settings`, `pushConfigToDesktop(base) → ConfigPushResult` |
 | ci | `ciGrid(CiGridFilter) → CiGrid` (no network), `refreshCi(filter)`, `refreshCiRepo(repo, filter)` → `CiGrid`, `jobLog(repo, jobId, full) → CiJobLog`, `checkOutput(repo, checkRunId) → CiCheckOutput`, `rerunTargets(repo, pr, CiCheckKey) → CiRerunChoice`, `rerun(repo, CiRerun)` |
 | notifications | `checkNotifications() → List<NotificationEvent>`, `markNotificationsSeen()` |
 | logging | top-level `installLogSink(LogSink, LogLevel)` |
@@ -223,7 +223,18 @@ Key records and enums, by screen:
   `LocalStatus = NotConfigured | NotCheckedOut | CheckedOut(LocalBranch)`,
   `LocalOp` (4), `SyncAllOp` (3 — merging the remote into every worktree is
   deliberately not offered), `JobResult { outcome, detail, chip? }`,
-  `SyncRun { entries, summary, progressText }`, `HandoffSession`.
+  `SyncRun { entries, summary, progressText }`, `HandoffSession`;
+  branch pushes: `PushPlanItem { repo, number, headRef, plan }` with
+  `PushPlanKind = NotConfigured | FastForward(upstream, local, ahead) |
+  Rewrite(upstream, local, expected, ahead, behind) | Skip(reason, quiet) |
+  Failed(reason)`, `PushRewriteConfirmation { repo, number, expected }`,
+  `PushItemResult { outcome, detail, chip? }` with `BranchPushOutcome =
+  NotConfigured | Pushed(upstream, rewrote) | Skipped(reason, quiet) |
+  NotConfirmed(expected) | ConfirmationStale(confirmed, current) |
+  Rejected(reason, staleLease) | Failed(reason)`. A rewrite is pushed only
+  with a confirmation carrying the plan's `expected` oid; the Kotlin UI for
+  it is not built yet (see `docs/features/remote_protocol.md`, "Pushing
+  branches from a phone").
 - **Notifications**: `NotificationEvent { kind: NewPullRequest |
   ReviewRequested, repo, number, title, author?, url }`.
 
@@ -667,6 +678,7 @@ the data directory for every secret that passed through.
 | `src/remote/types.rs` | Desktop records | `PairingResult`, `LocalStatus`, `JobResult`, `SyncRun`, … |
 | `src/remote/convert.rs` | Protocol → records | — |
 | `src/remote/refs.rs` | `PrRef` building for jobs and sync-all | `pr_ref`, `sync_refs` |
+| `src/remote/branch_push.rs` | Push / Push all through the desktop: plans, lease confirmations, results | `PushPlanItem`, `PushPlanKind`, `PushRewriteConfirmation`, `PushItemResult`, `BranchPushOutcome`, `push_targets` |
 | `src/remote/config.rs` | Copying the desktop's config: preview diff, apply, exports | `DesktopConfigPreview`, `preview`, `apply` |
 | `src/notifications.rs` | Notification check and event policy | `NotificationEvent`, `NotificationKind`, `events` |
 | `src/profiles/mod.rs` | The registry object: cores per profile, pairing into profiles, removal | `ProfileRegistry`, `ProfileInfo`, `ProfileKind`, `ProfilePairing` |

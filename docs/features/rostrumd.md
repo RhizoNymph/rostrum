@@ -170,6 +170,18 @@ minute has passed.
 - `local/abort`: finds the worktree with `local_state`, then
   `abort_in_progress`. No clone or not checked out → 404; nothing in
   progress, or something rostrum does not abort (bisect, `git am`) → 400.
+- `local/push/plan`: validates every head branch name (400 on one git would
+  refuse), then per pull request — holding its clone's lease — `plan_push(…,
+  Refresh::Fetch)` → `PushPlanView`. No clone → `NotConfigured`; a busy
+  clone or an unreadable one → that entry `Failed`.
+- `local/push`: validates every head branch name and every confirmation's
+  oid up front (400; two different oids for one pull request is also 400),
+  then per pull request, holding its clone's lease, `run_push(target,
+  confirmation)` where the confirmation is the request's for that pull
+  request bound to its own head branch → `PushOutcomeView`. Per-entry
+  verdicts: a busy clone, a missing or stale confirmation, or a refused push
+  is that entry's answer and the rest still run. Synchronous; the answer
+  lists every entry in request order.
 - `sync-all` `POST`: resolves every `PrRef` up front into a `SyncPlan`
   (no clone → `NotConfigured`; a bad branch name → that entry `Failed`, the
   rest still run), starts the run, and answers with it at once. `GET`: the
@@ -506,6 +518,7 @@ saw — printing none of them.
 | `crates/rostrumd/src/api/pairing.rs` | `hello`, `pair` | — |
 | `crates/rostrumd/src/api/machine.rs` | `machine`, `config`, `github-token`, `handoffs`, `DELETE device` | — |
 | `crates/rostrumd/src/api/local.rs` | `local/status`, `local/job`, `local/abort` | — |
+| `crates/rostrumd/src/api/push.rs` | `local/push/plan`, `local/push` | — |
 | `crates/rostrumd/src/api/sync.rs` | `sync-all` | — |
 | `crates/rostrumd/src/web/mod.rs` | The page router, hardening headers | `router`, `CONTENT_SECURITY_POLICY`, `CodeOffer` |
 | `crates/rostrumd/src/web/gate.rs` | Who may administer | `admit`, `Admin`, `Access`, `Refusal` |
@@ -554,8 +567,11 @@ saw — printing none of them.
   shutdown waits for it.
 - **A stable certificate.** Generated only when `cert.pem` does not exist;
   a certificate without its key is an error, not a regeneration.
-- **Never pushes.** Every git operation is `rostrum-local`'s, which never
-  writes to a remote.
+- **Pushes only through the push routes.** Every git operation is
+  `rostrum-local`'s; the only ones that write to a remote are
+  `local/push` (`run_push`: a fast-forward, or a rewrite the request
+  confirmed with the exact remote oid, leased on it) and the stack jobs'
+  leased pushes.
 - **rostrum's config is written only by a phone's push**, through one
   writer, replacing only the shareable keys, atomically; it is read fresh on
   every request.

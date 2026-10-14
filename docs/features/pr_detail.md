@@ -110,6 +110,7 @@ diff view.
 | Convert to draft / Ready for review | Fires immediately; one button, labelled by the state it moves to |
 | Update: Merge / Update: Rebase | Shown only when behind the base; sends `expectedHeadOid` as a race guard |
 | Pull (rebase) / Merge remote / Merge base / Rebase onto base | On the local worktree, when a clone is configured; nothing is pushed |
+| Push | Pushes the worktree's branch to its upstream when that is the pull request's head: a fast-forward on click; a diverged branch ("Push (rewrite)…") only after a confirmation naming the branch and the remote oid it replaces, with `--force-with-lease`. Disabled, with the reason as tooltip, when up to date, behind, without an upstream, dirty or mid-operation. See `docs/features/local_git.md` |
 | Abort | When a rebase or merge is in progress in the worktree |
 | Add / remove label | Toggles a label via the issues API |
 
