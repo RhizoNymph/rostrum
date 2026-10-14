@@ -7,8 +7,8 @@ use rostrum_core::{
     RepoId, StackPlace,
     ci::{
         Annotation, AnnotationLevel, CheckEntry, CheckKey, CheckOutput, CheckSource, CheckStatus,
-        CiGrid as CoreGrid, GridLine, GridRow, LineKind, NotRerunnable, ParsedLog, RerunTarget,
-        Rollup, RollupState, Timing,
+        CiGrid as CoreGrid, ColumnGroup, GridLine, GridRepo, GridRow, LineKind, NotRerunnable,
+        ParsedLog, RerunTarget, Rollup, RollupState, Timing,
     },
 };
 
@@ -129,6 +129,7 @@ fn place(place: StackPlace) -> CiStackPlace {
 
 fn row(row: &GridRow, now: DateTime<Utc>) -> CiRow {
     CiRow {
+        repo: row.repo.to_string(),
         number: row.number.0,
         title: row.title.clone(),
         head_sha: row.head_sha.clone(),
@@ -144,56 +145,54 @@ fn row(row: &GridRow, now: DateTime<Utc>) -> CiRow {
     }
 }
 
+fn group(group: &ColumnGroup) -> CiColumnGroup {
+    CiColumnGroup {
+        workflow: group.workflow.clone(),
+        start: count(group.columns.start),
+        end: count(group.columns.end),
+    }
+}
+
+fn repo(repo: &GridRepo) -> CiRepo {
+    CiRepo {
+        repo: repo.repo.to_string(),
+        load: load_of(&repo.load),
+        rows: count(repo.rows),
+        hidden: count(repo.hidden),
+    }
+}
+
 /// The grid as of `now`.
 pub(crate) fn grid(core: &CoreGrid, any_running: bool, now: DateTime<Utc>) -> CiGrid {
-    let sections: Vec<CiSection> = core
-        .sections()
+    let rows: Vec<CiRow> = core.rows().iter().map(|r| row(r, now)).collect();
+    let ticks = rows
         .iter()
-        .map(|section| CiSection {
-            repo: section.repo.to_string(),
-            columns: section
-                .columns
-                .iter()
-                .map(|key| CiColumn {
-                    key: key.into(),
-                    label: key.to_string(),
-                })
-                .collect(),
-            rows: section.rows.iter().map(|r| row(r, now)).collect(),
-            load: load_of(&section.load),
-            hidden: count(section.hidden),
-        })
-        .collect();
-    let ticks = sections
-        .iter()
-        .flat_map(|section| &section.rows)
         .flat_map(|row| &row.cells)
         .flatten()
         .any(|cell| cell.ticks);
-    let lines = core
-        .lines()
-        .iter()
-        .map(|line| match *line {
-            GridLine::Header { section } => CiLine::Header {
-                section: count(section),
-            },
-            GridLine::Stack { section, members } => CiLine::Stack {
-                section: count(section),
-                members: count(members),
-            },
-            GridLine::Row { section, row } => CiLine::Row {
-                section: count(section),
-                row: count(row),
-            },
-            GridLine::Notice { section } => CiLine::Notice {
-                section: count(section),
-            },
-            GridLine::Spacer => CiLine::Spacer,
-        })
-        .collect();
     CiGrid {
-        sections,
-        lines,
+        columns: core
+            .columns()
+            .iter()
+            .map(|key| CiColumn {
+                key: key.into(),
+                label: key.to_string(),
+            })
+            .collect(),
+        groups: core.column_groups().iter().map(group).collect(),
+        rows,
+        repos: core.repos().iter().map(repo).collect(),
+        lines: core
+            .lines()
+            .iter()
+            .map(|line| match *line {
+                GridLine::Stack { members } => CiLine::Stack {
+                    members: count(members),
+                },
+                GridLine::Row { row } => CiLine::Row { row: count(row) },
+            })
+            .collect(),
+        hidden: count(core.hidden()),
         ticks,
         any_running,
     }

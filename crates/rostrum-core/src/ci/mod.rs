@@ -11,8 +11,8 @@ pub mod rerun;
 pub mod time;
 
 pub use grid::{
-    CellMove, CellRef, CiChecks, CiGrid, GridFilter, GridLine, GridRow, GridSection, RepoChecks,
-    build_grid,
+    CellMove, CellRef, CiChecks, CiGrid, ColumnGroup, GridFilter, GridLine, GridPos, GridRepo,
+    GridRow, RepoChecks, build_grid,
 };
 pub use log::{
     DEFAULT_LOG_LINES, LineKind, LineLimit, LogGroup, LogLine, LogStep, ParsedLog, parse_log,

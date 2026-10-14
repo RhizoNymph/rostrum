@@ -27,8 +27,10 @@ Overview:
       tree — trunks against the default branch, pull requests against their
       base, stacks nested.
     ci_grid: >
-      A whole-window PRs × checks grid reached from the feed: each open pull
-      request's head-commit checks (Actions jobs, other apps' check runs,
+      A whole-window PRs × checks matrix reached from the feed: one row per
+      open, non-draft pull request across every watched repository and one
+      column per check key across all of them, holding each pull request's
+      head-commit checks (Actions jobs, other apps' check runs,
       legacy statuses) with live elapsed / since-finished times, a log viewer
       with collapsible sections and the failing step highlighted, and
       confirmed re-runs that flip cells to queued at once. Matrix, timing, log
@@ -310,7 +312,7 @@ Features Index:
     depends_on: [repo_feed, issues, feed_sort, pr_detail, github_sync, ui_foundation]
     doc: docs/features/repo_view.md
   ci_grid:
-    description: PRs × checks grid with live timings, job logs, and re-runs.
+    description: One global PRs × checks matrix across every watched repository, with live timings, job logs, and re-runs.
     entry_points: [crates/rostrum/src/ci/mod.rs, crates/rostrum/src/sync/ci.rs, crates/rostrum-core/src/ci/mod.rs, crates/rostrum-github/src/ci/mod.rs]
     depends_on: [repo_feed, feed_sort, github_sync, ui_foundation]
     doc: docs/features/ci_grid.md

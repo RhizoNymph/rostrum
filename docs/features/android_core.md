@@ -40,8 +40,9 @@ each.
   check (`IssueEditor`) and an explicit overwrite; "load earlier" on issue
   and pull request conversations, the merged pages cached with their
   cursors.
-- The CI grid (`docs/features/ci_grid.md`): every open pull request's
-  checks in the feed's order, timing labels against now with a tick hint,
+- The CI grid (`docs/features/ci_grid.md`): one matrix of every open,
+  non-draft pull request's checks across the watched repositories, in the
+  feed's order, with one column set; timing labels against now with a tick hint,
   job logs parsed, another app's check output, and re-runs with their
   optimistic flip and typed refusals.
 - Sharing settings with the paired desktop both ways: copying its shareable
@@ -204,10 +205,13 @@ Key records and enums, by screen:
   default, so earlier constructors compile. `ConfigPushResult` =
   `Applied(desktop) | Changed(desktop)`. `Settings` gains `issuesPerRepo`
   (default 25).
-- **CI**: `CiGrid { sections: [CiSection { repo, columns: [CiColumn { key:
-  CiCheckKey { workflow?, name }, label }], rows: [CiRow { number, title,
-  headSha, rollup: CiRollup, cells: [CiCell?], stack: CiStackPlace?, fetched,
-  truncated }], load, hidden }], lines: [CiLine], ticks, anyRunning }`;
+- **CI**: `CiGrid { columns: [CiColumn { key: CiCheckKey { workflow?, name
+  }, label }], groups: [CiColumnGroup { workflow?, start, end }], rows:
+  [CiRow { repo, number, title, headSha, rollup: CiRollup, cells: [CiCell?],
+  stack: CiStackPlace?, fetched, truncated }], repos: [CiRepo { repo, load,
+  rows, hidden }], lines: [CiLine], hidden, ticks, anyRunning }`; `CiLine` =
+  `Stack(members) | Row(row)` (no header, notice or spacer lines: one
+  header row sits above the list);
   `CiCell { status: CiStatus, statusLabel, role, timingLabel?, durationLabel?,
   ticks, producer, detailsUrl?, source: CiSource }`, `CiSource` =
   `Actions(jobId, runId, runAttempt) | App(checkRunId, app) | Status`;
@@ -509,11 +513,11 @@ own and are not copied; the search box is never touched.
 ### CI grid
 
 - Checks are fetched only on `refreshCi`/`refreshCiRepo` (one `ci_checks`
-  request per repository, four at a time; a failure stays in its section, a
-  401 fails the call), never with the feed or the notification check, and
+  request per repository, four at a time; a failure stays in that
+  repository's `CiGrid::repos` entry, a 401 fails the call), never with the feed or the notification check, and
   held in `CoreState::ci` (`rostrum_core::ci::CiChecks`).
-- `ciGrid` runs `build_grid` over the feed's repositories, filter and stack
-  grouping (collapse ignored) and converts it with `Timing::of(entry, now)`.
+- `ciGrid` runs `build_grid` over the feed's repositories, search, authors,
+  sort and stack grouping (drafts always out, collapse ignored) and converts it with `Timing::of(entry, now)`.
   `ticks` says some cell's label changes every second (Kotlin rebuilds once
   a second while visible); `anyRunning` says re-fetching every 15 s is
   worthwhile.

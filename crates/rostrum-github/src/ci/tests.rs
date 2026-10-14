@@ -245,6 +245,7 @@ fn repo_state(name: &str, prs: &[PrChecks]) -> RepoState {
 fn captured_checks_build_a_grid() {
     let cpython = decode(CPYTHON);
     let k8s = decode(KUBERNETES);
+    let k8s_rows = k8s.len();
     let repos = vec![
         repo_state("kubernetes/kubernetes", &k8s),
         repo_state("python/cpython", &cpython),
@@ -262,19 +263,23 @@ fn captured_checks_build_a_grid() {
     );
 
     let grid = build_grid(&repos, &FeedFilter::default(), &ci, GridFilter::default());
-    assert_eq!(grid.sections().len(), 2);
-    for section in grid.sections() {
-        assert!(!section.columns.is_empty());
-        let unique: BTreeSet<_> = section.columns.iter().collect();
-        assert_eq!(unique.len(), section.columns.len(), "a column twice");
-        assert!(
-            section
-                .rows
-                .iter()
-                .all(|row| row.cells.len() == section.columns.len())
-        );
-        assert!(section.rows.iter().all(|row| row.head_sha.len() == 7));
-    }
+    // One matrix: every pull request of both repositories, one column set.
+    assert_eq!(grid.rows().len(), k8s_rows + cpython.len());
+    assert!(!grid.columns().is_empty());
+    let unique: BTreeSet<_> = grid.columns().iter().collect();
+    assert_eq!(unique.len(), grid.columns().len(), "a column twice");
+    assert!(
+        grid.rows()
+            .iter()
+            .all(|row| row.cells.len() == grid.columns().len())
+    );
+    assert!(grid.rows().iter().all(|row| row.head_sha.len() == 7));
+    let grouped: usize = grid
+        .column_groups()
+        .iter()
+        .map(|group| group.columns.len())
+        .sum();
+    assert_eq!(grouped, grid.columns().len());
 
     let attention = build_grid(
         &repos,
@@ -284,12 +289,13 @@ fn captured_checks_build_a_grid() {
             needs_attention: true,
         },
     );
-    let cpython_rows = attention
-        .sections()
+    assert_eq!(attention.columns(), grid.columns(), "columns never shift");
+    let cpython_rows: Vec<PrNumber> = attention
+        .rows()
         .iter()
-        .find(|s| s.repo.to_string() == "python/cpython")
-        .map(|s| s.rows.iter().map(|r| r.number).collect::<Vec<_>>())
-        .expect("cpython has a failing PR");
+        .filter(|row| row.repo.to_string() == "python/cpython")
+        .map(|row| row.number)
+        .collect();
     assert_eq!(cpython_rows, vec![PrNumber(157932)]);
 }
 

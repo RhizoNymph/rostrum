@@ -1,5 +1,6 @@
-//! The CI grid on the phone: every open pull request's checks in the feed's
-//! order, job logs, another app's check output, and re-runs.
+//! The CI grid on the phone: one matrix of every open, non-draft pull
+//! request's checks across the watched repositories in the feed's order, job
+//! logs, another app's check output, and re-runs.
 //!
 //! The rules are `rostrum_core::ci`'s, shared with the desktop's CI view
 //! (`docs/features/ci_grid.md`): the matrix (`build_grid`), timing against an
@@ -179,7 +180,7 @@ impl RostrumCore {
 
     /// Fetch every watched repository's checks (one request each), then the
     /// grid. A repository that fails keeps what it had and says so in its
-    /// section.
+    /// `CiGrid::repos` entry.
     pub async fn refresh_ci(&self, filter: CiGridFilter) -> Result<CiGrid, RostrumError> {
         self.fetch_ci(None).await?;
         self.actor.call(move |state| grid_of(state, filter)).await
