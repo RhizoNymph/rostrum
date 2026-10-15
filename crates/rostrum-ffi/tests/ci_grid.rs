@@ -1,5 +1,5 @@
 //! The CI grid on the phone, end to end against the GitHub stand-in: the
-//! matrix in the feed's order with timing labels and the tick hint, job logs,
+//! one matrix across repositories in the feed's order with timing labels and the tick hint, job logs,
 //! another app's check output, re-run eligibility, and re-runs with their
 //! optimistic flip and typed refusals.
 
@@ -127,14 +127,17 @@ fn key(workflow: Option<&str>, name: &str) -> CiCheckKey {
     }
 }
 
-/// The cell in row `number` under `column`.
+/// The cell in octo/repo's row `number` under `column`.
 fn cell<'a>(grid: &'a CiGrid, number: u32, column: &CiCheckKey) -> Option<&'a CiCell> {
-    let section = &grid.sections[0];
-    let ix = section
+    let ix = grid
         .columns
         .iter()
         .position(|candidate| &candidate.key == column)?;
-    section.rows.iter().find(|row| row.number == number)?.cells[ix].as_ref()
+    grid.rows
+        .iter()
+        .find(|row| row.repo == "octo/repo" && row.number == number)?
+        .cells[ix]
+        .as_ref()
 }
 
 fn none() -> CiGridFilter {
@@ -151,32 +154,39 @@ async fn the_grid_follows_the_feed_with_timing_and_a_tick_hint() {
 
     // Nothing fetched yet: rows from the feed, no cells.
     let empty = core.ci_grid(none()).await.expect("grid");
-    assert_eq!(empty.sections[0].rows.len(), 3);
-    assert!(empty.sections[0].rows.iter().all(|row| !row.fetched));
+    assert_eq!(empty.rows.len(), 3);
+    assert!(empty.rows.iter().all(|row| !row.fetched));
+    assert!(empty.columns.is_empty());
     assert!(!empty.ticks);
 
     let grid = core.refresh_ci(none()).await.expect("refresh");
-    let section = &grid.sections[0];
-    assert_eq!(section.repo, "octo/repo");
+    assert_eq!(grid.repos.len(), 1);
+    assert_eq!(grid.repos[0].repo, "octo/repo");
+    assert_eq!(grid.repos[0].rows, 3);
     assert_eq!(
-        section
-            .columns
+        grid.columns
             .iter()
             .map(|column| column.label.as_str())
             .collect::<Vec<_>>(),
         vec!["Coverage", "deploy/preview", "CI / build", "CI / test"]
     );
     assert_eq!(
-        section
-            .rows
+        grid.groups
             .iter()
-            .map(|row| row.number)
+            .map(|group| (group.workflow.as_deref(), group.start, group.end))
             .collect::<Vec<_>>(),
-        vec![1, 2, 3]
+        vec![(None, 0, 2), (Some("CI"), 2, 4)]
     );
-    assert!(matches!(grid.lines[0], CiLine::Header { section: 0 }));
+    assert_eq!(
+        grid.rows
+            .iter()
+            .map(|row| (row.repo.as_str(), row.number))
+            .collect::<Vec<_>>(),
+        vec![("octo/repo", 1), ("octo/repo", 2), ("octo/repo", 3)]
+    );
+    assert!(matches!(grid.lines[0], CiLine::Row { row: 0 }));
 
-    let row = &section.rows[0];
+    let row = &grid.rows[0];
     assert!(row.fetched);
     assert_eq!(row.head_sha, "sha1");
     assert_eq!(row.rollup.state, CiRollupState::Failing);
@@ -236,23 +246,49 @@ async fn the_grid_follows_the_feed_with_timing_and_a_tick_hint() {
         .await
         .expect("filtered");
     assert_eq!(
-        attention.sections[0]
+        attention
             .rows
             .iter()
             .map(|row| row.number)
             .collect::<Vec<_>>(),
         vec![1, 2]
     );
-    assert_eq!(attention.sections[0].hidden, 1);
-    assert_eq!(attention.sections[0].columns.len(), 4);
+    assert_eq!(attention.hidden, 1);
+    assert_eq!(attention.repos[0].hidden, 1);
+    assert_eq!(attention.columns.len(), 4);
 
     // Refreshing one repository works the same way.
     let one = core
         .refresh_ci_repo("octo/repo".into(), none())
         .await
         .expect("one");
-    assert_eq!(one.sections[0].rows.len(), 3);
+    assert_eq!(one.rows.len(), 3);
     assert_eq!(fake.graphql_calls("contexts(first").len(), 2);
+}
+
+/// Drafts never reach the grid, whatever the feed shows; their checks add no
+/// columns.
+#[tokio::test]
+async fn drafts_are_left_out_of_the_grid() {
+    let mut world = world();
+    world.repos[0].1[0].is_draft = true;
+    let fake = FakeGitHub::start(world).await;
+    let scratch = Scratch::new("ci-drafts");
+    let core = core_against(&fake, &scratch).await;
+
+    let grid = core.refresh_ci(none()).await.expect("refresh");
+    assert_eq!(
+        grid.rows.iter().map(|row| row.number).collect::<Vec<_>>(),
+        vec![2, 3]
+    );
+    assert_eq!(
+        grid.columns
+            .iter()
+            .map(|column| column.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["CI / build"]
+    );
+    assert_eq!(grid.hidden, 0);
 }
 
 #[tokio::test]

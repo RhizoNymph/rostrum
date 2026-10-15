@@ -1,12 +1,16 @@
-//! The CI view: a PRs × checks grid over the whole window, with one check's
-//! log or output in a right-hand pane.
+//! The CI view: one PRs × checks matrix over every watched repository,
+//! across the whole window, with one check's log or output in a right-hand
+//! pane.
 //!
 //! Everything this view decides is decided in `rostrum_core::ci`: the grid
 //! ([`build_grid`]), cell movement ([`CiGrid::step`]), timing labels, which
 //! re-runs a check offers ([`rerun_targets`]) and the optimistic flip to
-//! queued. This module holds the entity, its keys, and the re-run request.
+//! queued. This module holds the entity, its keys, the horizontal scroll and
+//! the re-run request.
 
+mod hscroll;
 mod log_view;
+mod matrix;
 mod render;
 
 use std::{rc::Rc, time::Duration};
@@ -23,6 +27,7 @@ use rostrum_github::ci::RerunError;
 
 use crate::sync::Store;
 
+use hscroll::HScroll;
 use log_view::{LogView, LogViewEvent};
 
 actions!(
@@ -75,14 +80,21 @@ struct PendingRerun {
 }
 
 /// Width of the row-header column and of each check column, in pixels.
-pub(crate) const ROW_HEADER_WIDTH: f32 = 340.;
+pub(crate) const ROW_HEADER_WIDTH: f32 = 360.;
 pub(crate) const CELL_WIDTH: f32 = 132.;
+/// Width of the log pane, and of the rule before it.
+pub(crate) const LOG_PANE_WIDTH: f32 = 641.;
 
 pub struct CiView {
     store: Entity<Store>,
     grid: Rc<CiGrid>,
     list: ListState,
     filter: GridFilter,
+    /// How far the check columns (and their header) are scrolled left.
+    hscroll: HScroll,
+    /// Width the check columns were last drawn in, for revealing a selected
+    /// column from a key press.
+    columns_viewport: f32,
     selected: Option<CellRef>,
     confirm: Option<PendingRerun>,
     /// The last re-run's outcome or refusal.
@@ -115,6 +127,8 @@ impl CiView {
             grid,
             list,
             filter,
+            hscroll: HScroll::default(),
+            columns_viewport: 0.,
             selected: None,
             confirm: None,
             notice: None,
@@ -160,9 +174,21 @@ impl CiView {
         });
     }
 
+    /// Total width of the check columns.
+    pub(crate) fn columns_width(&self) -> f32 {
+        CELL_WIDTH * self.grid.columns().len() as f32
+    }
+
     fn select(&mut self, cell: CellRef, cx: &mut Context<Self>) {
         if let Some(line) = self.grid.line_of(&cell) {
             self.list.scroll_to_reveal_item(line);
+        }
+        if let Some(pos) = self.grid.position(&cell) {
+            self.hscroll.reveal(
+                CELL_WIDTH * pos.column as f32,
+                CELL_WIDTH,
+                self.columns_viewport,
+            );
         }
         self.selected = Some(cell);
         self.confirm = None;

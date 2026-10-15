@@ -5,12 +5,16 @@ has been running or how long since it finished, its log, and re-running it.
 
 ## Scope
 
-- A PRs × checks matrix over the whole window, reached from the feed.
+- One PRs × checks matrix over the whole window, reached from the feed:
+  rows are every open, non-draft pull request across all watched
+  repositories, columns the union of their check keys.
 - Each cell: a status tile (queued, in progress, success, failure, cancelled,
   skipped, neutral, timed out, action required, or "not run"), the live
   elapsed time while running or the time since it finished, and the duration
   on hover.
-- Row headers: the pull request (number, title, short head sha) and a rollup.
+- Row headers: the pull request's repository and number (`owner/name #123`),
+  title, short head sha, and a rollup.
+- One header row for the whole grid: workflow names over their jobs.
 - A failing-or-running filter.
 - Fetching the checks with the feed's poll, and every 15 s while the grid is
   open and something is running.
@@ -37,28 +41,77 @@ has been running or how long since it finished, its log, and re-running it.
   workflow-command kind (error, warning, notice, debug, command, group)
   instead.
 - Cancelling runs, approving pending deployments, downloading artifacts.
-- Android. The rules are pure, in the shared crates, for it to reuse; see
-  [For Android](#for-android).
+- Drafts. They never appear, whatever the feed's draft toggle says.
+- A per-repository layout, or a toggle between it and the matrix. The
+  matrix replaced it; the user declined a toggle.
+- Android's drawing. The rules are pure, in the shared crates, for it to
+  reuse; see [For Android](#for-android).
 
-## Layout decision: per-repository columns
+## Layout decision: one global matrix
 
-Each repository is a section with its own header row of columns, the union
-of the check names on its pull requests. Global columns would have been the
-union across all repositories, and watched repositories rarely share check
-names, so most cells of every row would be "not run" for columns belonging
-to other repositories. Per-section columns keep every drawn column meaningful.
-The whole grid scrolls horizontally as one piece, sized to the widest section,
-so row headers and column headers stay aligned with their cells.
+Earlier the grid was one section per repository, each with its own columns.
+It is now one matrix: every row is a pull request from any watched
+repository, and the columns are the union of check keys across all of them.
+Watched repositories rarely share check names, so many cells are "not run"
+— a check one repository runs reads as "not run" on every other
+repository's rows. That is accepted: one header, one column order and one
+selection that moves straight down across repositories read more easily
+than a stack of differently shaped tables. There is no toggle back.
 
 Columns are keyed by `CheckKey { workflow, name }` (an Actions job's workflow
 plus job name; no workflow for apps and statuses), because two workflows
-routinely both have a `build` job. They are ordered by workflow then name,
-which puts a workflow's jobs side by side.
+routinely both have a `build` job. They are ordered by workflow then name —
+apps' checks and statuses (no workflow) first, then each workflow's jobs side
+by side — and grouped into `ColumnGroup`s, runs of adjacent columns sharing a
+workflow, so the header names each workflow once above its jobs.
 
-Rows follow the feed: its repository and item sort, its filter (search,
-authors, drafts), and its stack grouping, with a "Stack · N PRs" line heading
-each stack and a ┏ ┃ ┗ mark on members. Collapsing a repository in the feed
-does not hide it in the grid: the grid is where its checks are read.
+### Which pull requests are rows
+
+- **Drafts are always out**, regardless of the feed's "hide drafts" toggle:
+  a draft's checks are not what the grid is for, and leaving them in would
+  widen the matrix with columns only drafts run. A draft's checks add no
+  columns.
+- **The feed's search and author selection still apply** (including "waiting
+  on" when it is on). They are what the user has narrowed the feed to, and
+  the grid is reached from the feed as its checks spelled out.
+- **Collapse is ignored**: collapsing a repository in the feed does not hide
+  it in the grid, which is where its checks are read.
+- The grid's own **failing-or-running** filter (`GridFilter`) narrows
+  further.
+
+### Order
+
+Rows follow the feed: its repository sort, then its item sort within each
+repository, with stacks grouped as the feed groups them (a "Stack · N PRs"
+line heading each stack, a ┏ ┃ ┗ mark on members). Grouping by repository
+keeps a repository's rows together, which is what makes stack marks still
+read correctly — a stack never crosses repositories — and keeps the feed's
+order familiar. A repository's first row is ruled off from the previous
+repository's last with a heavier top border.
+
+### Header and scrolling
+
+One header row sits above the list, outside it: a corner with "N pull
+requests · M checks · K hidden", then a workflow band (each `ColumnGroup`'s
+name spanning its columns) over a job-name band. The list scrolls
+vertically on its own and the header stays put.
+
+Horizontal scrolling is the view's own (`HScroll`, in
+`crates/rostrum/src/ci/hscroll.rs`), not an `overflow_x_scroll` container:
+the row-header column is fixed at the left of every row, and the check
+columns to its right — in every row and in the header — are drawn shifted
+left by the same offset and clipped. So the row headers stay visible and
+each column header stays over its cells while scrolling either way. A
+horizontal wheel or trackpad delta (or shift with a vertical wheel) moves
+the offset, clamped to the columns' width; selecting a cell from the keyboard
+scrolls the least that shows its column. Because the view owns the offset,
+each row draws only the columns in view plus one either side
+(`HScroll::visible`), so a matrix with a hundred columns costs no more per
+frame than one that fits.
+
+The columns' viewport is the window's width less the row-header column, the
+log pane when open, and a small gutter: the CI view spans the window, so this
+is known at render time without measuring.
 
 ## Data
 
@@ -102,20 +155,32 @@ queued or running; hiding the view drops the timer.
 ## The grid
 
 `build_grid(repos, feed_filter, checks, GridFilter) -> CiGrid`
-(`crates/rostrum-core/src/ci/grid.rs`):
+(`crates/rostrum-core/src/ci/grid/build.rs`):
 
-1. Flatten the pull request feed with collapse cleared, which gives the
-   feed's order and stack slots.
-2. Per repository section: the columns are the union of `PrChecks::latest()`
-   keys over its pull requests, computed before the grid filter so filtering
-   never shifts columns.
-3. Each row: one cell per column (`None` is "not run"), the rollup over the
-   latest entries, the short sha, the stack place, whether checks were
-   fetched at all, and whether they were truncated.
+1. Flatten the pull request feed with collapse cleared and `hide_drafts`
+   forced on (`rows_filter`: the feed's search, authors and sort, drafts
+   out), which gives the feed's order, its stack slots, and the
+   repositories it shows.
+2. The columns are the union of `PrChecks::latest()` keys over every one of
+   those pull requests, computed before the grid filter so filtering never
+   shifts columns; `group_columns` splits them into `ColumnGroup`s.
+3. Each row: its repository, one cell per column (`None` is "not run"), the
+   rollup over the latest entries, the short sha, the stack place, whether
+   checks were fetched at all, and whether they were truncated.
 4. `GridFilter { needs_attention }` keeps rows whose rollup is failing or
-   running, and drops sections it empties.
-5. The result is flattened into `GridLine`s — `Header`, `Stack`, `Row`,
-   `Notice`, `Spacer` — for one virtualized `list`.
+   running, counting the rest in `CiGrid::hidden` and per repository.
+5. Each repository the feed shows becomes a `GridRepo { repo, load, rows,
+   hidden }`: its checks' load state (`Idle` until first fetched) and row
+   counts. With no sections, this is where a failed fetch is reported — the
+   view lists failed repositories in a strip above the grid.
+6. The rows are flattened into `GridLine`s — `Stack { members }` and `Row {
+   row }` — for one virtualized `list`. The header is not a line.
+
+`CiGrid` keeps its fields private and is built only by `build_grid`, so every
+row's cells are exactly as long as `columns()` and the groups always partition
+the columns. Accessors: `columns`, `column_groups`, `rows`, `row`, `repos`,
+`lines`, `hidden`, `entry`, `position` (a `GridPos { row, column }`),
+`line_of`, `cell_at`, `step`.
 
 `Rollup` counts failing (failure, timed out, action required), running
 (queued, in progress), passing, and other; `RollupState` ranks failing over
@@ -123,10 +188,13 @@ running over passing.
 
 Selection is a `CellRef { repo, number, column }`, an identity, so a refresh
 that reorders rows cannot move it. `CiGrid::step(from, CellMove)` moves
-between cells: left and right within the row, up and down across rows and
-sections keeping the column by name where the next section has it and
-clamping otherwise, never wrapping, and entering at the first cell when
-nothing is selected.
+between cells: left and right within the row, up and down across rows — and
+across repositories — in the same column, never wrapping, and entering at
+the first cell when nothing (or a cell no longer in the grid) is selected.
+
+The view (`CiView::rebuild`) rebuilds on every store change and splices the
+list only when the lines changed, so a poll that only changed cell contents
+keeps the scroll position.
 
 ## Time
 
@@ -219,6 +287,13 @@ the new attempt; on failure, at once, which puts the old result back.
 - **Opening:** the **CI** button in the feed's filter bar, or `shift-c` in
   the feed (plain `c` collapses a repository). The grid takes the whole
   window below the title bar; `escape`, `shift-c` or "← Feed" returns.
+- **Layout:** toolbar; the re-run confirmation or last outcome; one line per
+  repository whose checks failed to load; the header row; the rows. With no
+  rows, a message instead: "Loading checks…", "Nothing failing or running",
+  or "No open pull requests outside drafts".
+- **Scrolling:** the wheel scrolls rows; a horizontal wheel, a trackpad, or
+  shift with the wheel scrolls the check columns, with the row headers and
+  header row staying aligned.
 - **Keys** (key context `CiGrid`): `h`/`j`/`k`/`l` or the arrows move between
   cells, `enter` opens the log (or confirms a pending re-run), `r` re-runs,
   `f` toggles failing-or-running only, `escape` closes the confirmation, then
@@ -229,8 +304,16 @@ the new attempt; on failure, at once, which puts the old result back.
 ## Invariants and constraints
 
 - **One cell per column per pull request**, the latest attempt
-  (`PrChecks::latest`); columns are unique within a section.
+  (`PrChecks::latest`); columns are unique across the grid, and every row has
+  exactly one cell per column (`CiGrid` is only built by `build_grid`).
+- **Column groups partition the columns** in order, each non-empty.
 - **Columns never shift with the grid filter**; they are the union before it.
+  They do follow the feed's search and authors, which decide the rows.
+- **Drafts are never rows**, whatever the feed's draft toggle.
+- **A row names its repository**: `(repo, number)` identifies it; the same
+  number in two repositories is two rows.
+- **Header and row headers stay aligned**: the header row and every row
+  draw their check columns with the same horizontal offset.
 - **Selection is by identity**, never by line index.
 - **Time is a function of `now`.** Nothing in `rostrum-core::ci` reads the
   clock.
@@ -251,9 +334,10 @@ The pure API the phone reuses, all in `rostrum_core::ci` unless noted:
   (`location`), `AnnotationLevel`.
 - Grid: `CiChecks` (`begin`, `loaded`, `failed`, `forget`, `repo`, `pr`,
   `pr_mut`, `any_running`), `RepoChecks`, `build_grid`, `GridFilter`,
-  `CiGrid` (`sections`, `lines`, `section`, `entry`, `position`, `line_of`,
-  `step`, `max_columns`), `GridSection`, `GridRow`, `GridLine`, `CellRef`,
-  `CellMove`.
+  `CiGrid` (`columns`, `column_groups`, `rows`, `row`, `repos`, `lines`,
+  `hidden`, `entry`, `position`, `line_of`, `cell_at`, `step`),
+  `ColumnGroup`, `GridRow` (with `repo`), `GridRepo`, `GridLine`, `GridPos`,
+  `CellRef`, `CellMove`.
 - Time: `Timing` (`of`, `label`, `duration_label`, `ticks`),
   `format_duration`, `format_ago`.
 - Logs: `parse_log`, `LineLimit`, `DEFAULT_LOG_LINES`, `ParsedLog`
@@ -267,12 +351,32 @@ The pure API the phone reuses, all in `rostrum_core::ci` unless noted:
   `ci::classify_rerun`, `ci::job_log_path`, `ci::CI_CHECKS`,
   `ci::CONTEXTS_PER_COMMIT`.
 
+What the Android UI (open PR #32, `feat/android-ci-ui`) has to change for the
+matrix — the FFI records changed shape in this branch:
+
+- `CiGrid.sections` is gone. Columns are `CiGrid.columns` (one set),
+  `CiGrid.groups` (`CiColumnGroup { workflow?, start, end }`) for a
+  workflow band, and rows are `CiGrid.rows`, each with its `repo`.
+- `CiLine` is only `Stack(members)` and `Row(row)` (an index into `rows`);
+  `Header`, `Notice` and `Spacer` lines are gone. Draw one header above the
+  list, and the empty state from `rows` being empty.
+- Per-repository load state and counts are `CiGrid.repos` (`CiRepo { repo,
+  load, rows, hidden }`); show failed repositories from there. The total
+  filtered-out count is `CiGrid.hidden`.
+- Look a cell up by `(row.repo, row.number)` and the column's index in
+  `CiGrid.columns`; re-run targets are still asked for by repository, number
+  and `CiCheckKey`.
+- Drafts no longer arrive, so a draft toggle has nothing to do on the grid.
+
 ## Files
 
 | File | Role | Key exports |
 |---|---|---|
 | `crates/rostrum-core/src/ci/model.rs` | Statuses, keys, sources, entries, latest-attempt, rollups, check output | `CheckStatus`, `CheckKey`, `CheckSource`, `CheckEntry`, `PrChecks`, `Rollup`, `RollupState`, `CheckOutput`, `Annotation` |
-| `crates/rostrum-core/src/ci/grid.rs` | Stored checks, the matrix, lines, filter, cell movement | `CiChecks`, `build_grid`, `CiGrid`, `GridLine`, `CellRef`, `CellMove`, `GridFilter` |
+| `crates/rostrum-core/src/ci/grid/mod.rs` | The matrix's types, lookup and cell movement | `CiGrid`, `GridRow`, `ColumnGroup`, `GridRepo`, `GridLine`, `GridPos`, `CellRef`, `CellMove`, `GridFilter` |
+| `crates/rostrum-core/src/ci/grid/build.rs` | Building the matrix: rows filter, columns, groups, lines | `build_grid` |
+| `crates/rostrum-core/src/ci/grid/store.rs` | Stored checks per repository | `CiChecks`, `RepoChecks` |
+| `crates/rostrum-core/src/ci/grid/tests.rs` | Matrix tests | — |
 | `crates/rostrum-core/src/ci/time.rs` | Elapsed and since-finished labels against `now` | `Timing`, `format_duration`, `format_ago` |
 | `crates/rostrum-core/src/ci/log.rs` | Job log parsing | `parse_log`, `ParsedLog`, `LineLimit` |
 | `crates/rostrum-core/src/ci/rerun.rs` | Re-run eligibility and the optimistic flip | `rerun_targets`, `RerunTarget`, `NotRerunnable`, `mark_requeued` |
@@ -283,7 +387,10 @@ The pure API the phone reuses, all in `rostrum_core::ci` unless noted:
 | `crates/rostrum-github/fixtures/ci/` | Captured rollups, a check run, annotations, a log excerpt | — |
 | `crates/rostrum/src/sync/ci.rs` | Store: fetch, faster poll, requeue | `Store::{refresh_ci, set_ci_visible, requeue}`, `CI_WATCH_INTERVAL` |
 | `crates/rostrum/src/ci/mod.rs` | The CI view entity, keys, selection, re-run flow | `CiView`, `CiEvent`, `bind_keys` |
-| `crates/rostrum/src/ci/render.rs` | Toolbar, banner, header, rows, cells | — |
+| `crates/rostrum/src/ci/render.rs` | Toolbar, banner, failed repositories, empty state, wheel handling, layout | — |
+| `crates/rostrum/src/ci/matrix.rs` | The header row, stack lines, row headers, cells, drawn at the horizontal offset | — |
+| `crates/rostrum/src/ci/hscroll.rs` | The horizontal offset: clamp, wheel, reveal, columns in view | `HScroll` |
+| `crates/rostrum-ffi/src/ci/` | The grid as Android records | `CiGrid`, `CiRow`, `CiColumnGroup`, `CiRepo`, `CiLine` |
 | `crates/rostrum/src/ci/log_view.rs` | The log / output pane | `LogView` |
 
 ## Testing
@@ -291,10 +398,16 @@ The pure API the phone reuses, all in `rostrum_core::ci` unless noted:
 - **Decoding** every context of three captured repositories: Actions jobs
   with run and workflow, running jobs, third-party app checks, legacy
   statuses; repeated check names reduced to one cell.
-- **Matrix**: column union and order, "not run" gaps, lines, the attention
-  filter, feed order without collapse, unfetched rows, notices, cell
-  movement across sections, resolving cells, any-running, load states; and
-  the whole pipeline on captured data.
+- **Matrix**: one column union across repositories and its order, workflow
+  groups, "not run" gaps, rows across repositories in feed order, drafts
+  excluded (also from columns, also inside a stack), the feed's search and
+  authors applied, the attention filter without column shifts, collapse
+  ignored, unfetched rows, per-repository load summaries, stack lines,
+  cell movement across repositories, resolving cells and lines,
+  any-running, load states; the whole pipeline on captured data; and the
+  FFI grid end to end, drafts included.
+- **Horizontal scroll**: clamping, wheel deltas, a shrunk grid, revealing a
+  column, and the columns in view.
 - **Time** with a fixed clock: duration and ago formats, running, finished,
   queued, legacy and unknown timings.
 - **Logs**: timestamps, BOM, markers and ANSI removed; classification; groups;

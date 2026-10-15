@@ -2,7 +2,7 @@
 
 use crate::{feed::RepoLoad, markdown::MdBlock, types::ColorRole};
 
-/// The grid's own narrowing, on top of the feed's filter.
+/// The grid's own narrowing, on top of the feed's search and authors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
 pub struct CiGridFilter {
     /// Only pull requests with something failing or still running.
@@ -108,12 +108,14 @@ pub enum CiStackPlace {
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct CiRow {
+    /// `owner/name`: rows of every repository share one grid.
+    pub repo: String,
     pub number: u32,
     pub title: String,
     /// The head commit, seven characters.
     pub head_sha: String,
     pub rollup: CiRollup,
-    /// One per section column; `None` is "not run" on this pull request.
+    /// One per grid column; `None` is "not run" on this pull request.
     pub cells: Vec<Option<CiCell>>,
     pub stack: Option<CiStackPlace>,
     /// Whether this pull request's checks have been fetched at all.
@@ -122,45 +124,51 @@ pub struct CiRow {
     pub truncated: bool,
 }
 
-/// One repository's block of the grid, with its own columns.
+/// Adjacent columns of one workflow: `start..end` into `CiGrid::columns`,
+/// for a header naming the workflow once above its jobs. The groups
+/// partition the columns in order.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct CiSection {
+pub struct CiColumnGroup {
+    /// `None` for apps' checks and legacy statuses.
+    pub workflow: Option<String>,
+    pub start: u32,
+    pub end: u32,
+}
+
+/// A repository the grid covers: its checks' fetch state and row counts.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct CiRepo {
     pub repo: String,
-    pub columns: Vec<CiColumn>,
-    pub rows: Vec<CiRow>,
     pub load: RepoLoad,
+    /// Rows the grid shows for this repository.
+    pub rows: u32,
     /// Rows the grid filter removed.
     pub hidden: u32,
 }
 
-/// A line of the grid flattened for one list, as the desktop draws it.
+/// A line of the grid flattened for one list, as the desktop draws it. The
+/// column header is not a line: one header sits above the whole list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum CiLine {
-    /// The repository's name and column headers.
-    Header {
-        section: u32,
-    },
     /// Heads a stack's rows: "Stack · 3 PRs".
-    Stack {
-        section: u32,
-        members: u32,
-    },
-    Row {
-        section: u32,
-        row: u32,
-    },
-    /// The section has no rows: loading, failed, or nothing open.
-    Notice {
-        section: u32,
-    },
-    Spacer,
+    Stack { members: u32 },
+    /// Index into `CiGrid::rows`.
+    Row { row: u32 },
 }
 
-/// The PRs × checks matrix, in the feed's order.
+/// The PRs × checks matrix: every open, non-draft pull request across the
+/// watched repositories as rows, one column set for all of them.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct CiGrid {
-    pub sections: Vec<CiSection>,
+    /// Every column, ordered workflow then name.
+    pub columns: Vec<CiColumn>,
+    pub groups: Vec<CiColumnGroup>,
+    pub rows: Vec<CiRow>,
+    /// Each repository the feed shows, in the feed's order.
+    pub repos: Vec<CiRepo>,
     pub lines: Vec<CiLine>,
+    /// Rows the grid filter removed, across every repository.
+    pub hidden: u32,
     /// Some cell's labels change every second: rebuild the grid (`ci_grid`,
     /// no network) once a second while it is on screen.
     pub ticks: bool,
