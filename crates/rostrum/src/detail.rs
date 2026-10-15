@@ -8,6 +8,7 @@ mod checks;
 pub(crate) mod conversation;
 mod files;
 mod overview;
+mod push;
 
 use std::{collections::HashSet, rc::Rc, sync::Arc};
 
@@ -38,8 +39,8 @@ use rostrum_ui::{
 use rostrum_handoff::{PrMeta, session_name};
 
 use rostrum_local::{
-    HandoffState, LocalJob, LocalOp, LocalResult, LocalState, abort_in_progress, local_state,
-    run_local_job,
+    ConfirmedRewrite, HandoffState, LocalJob, LocalOp, LocalResult, LocalState, PushPlan, Refresh,
+    abort_in_progress, local_state, plan_push, run_local_job,
 };
 
 use crate::sync::Store;
@@ -135,6 +136,12 @@ pub struct PrDetail {
     /// therefore the ordinary resting state, not a sign that anything went
     /// wrong.
     pub(crate) local: Loadable<LocalState>,
+    /// What pushing this branch would do, planned beside `local` from the
+    /// same refs. Decides the Push button before it is drawn.
+    pub(crate) push_plan: Loadable<PushPlan>,
+    /// A rewrite the user pressed Push on and has not yet confirmed: the
+    /// branch and the remote oid the confirmation names.
+    pub(crate) push_confirm: Option<ConfirmedRewrite>,
     /// Whether the label picker panel is showing.
     label_picker_open: bool,
     composer: Entity<TextInput>,
@@ -190,6 +197,8 @@ impl PrDetail {
             files: Loadable::Idle,
             repo_labels: Loadable::Idle,
             local: Loadable::Idle,
+            push_plan: Loadable::Idle,
+            push_confirm: None,
             label_picker_open: false,
             composer,
             pending: Vec::new(),
@@ -538,9 +547,11 @@ impl PrDetail {
         let Some(path) = self.store.read(cx).local_path(&self.repo) else {
             return;
         };
-        let Some(head_ref) = self.pull(cx).map(|pull| pull.head_ref.clone()) else {
+        let Some(pull) = self.pull(cx) else {
             return;
         };
+        let head_ref = pull.head_ref.clone();
+        let head_repo = pull.head_repository_in(&self.repo);
         let store = self.store.read(cx);
         let autostash = if store.autostash() {
             Autostash::Enabled
@@ -553,21 +564,58 @@ impl PrDetail {
             .then(|| session_name(&self.repo, self.number));
 
         self.local = Loadable::Loading;
+        self.push_plan = Loadable::Loading;
+        // A confirmation names the oid it was shown; a re-read may change
+        // it, so the panel must be asked again rather than kept.
+        self.push_confirm = None;
         cx.notify();
 
         self.tasks.push(cx.spawn(async move |this, cx| {
             let result = Tokio::spawn(&*cx, async move {
                 let branch = BranchName::new(head_ref)?;
-                local_state(&path, branch, autostash, handoff_session).await
+                let state = local_state(&path, branch.clone(), autostash, handoff_session).await?;
+                // `local_state` has just fetched `origin/<head>`; the plan
+                // reads the same refs rather than fetching again. A failure
+                // to plan leaves the Push button explaining why, not the
+                // whole row.
+                let plan = match &state {
+                    LocalState::NotCheckedOut => None,
+                    LocalState::CheckedOut(_) => Some(
+                        plan_push(
+                            &rostrum_local::PushTarget {
+                                clone: path,
+                                branch,
+                                head_repo,
+                            },
+                            Refresh::OnDisk,
+                        )
+                        .await
+                        .map_err(|err| err.to_string()),
+                    ),
+                };
+                Ok::<_, rostrum_git::GitError>((state, plan))
             })
             .await;
 
             this.update(cx, |this, cx| {
-                this.local = match result {
-                    Ok(Ok(local)) => Loadable::Loaded(local),
-                    Ok(Err(err)) => Loadable::Failed(err.to_string()),
-                    Err(err) => Loadable::Failed(err.to_string()),
-                };
+                match result {
+                    Ok(Ok((local, plan))) => {
+                        this.local = Loadable::Loaded(local);
+                        this.push_plan = match plan {
+                            None => Loadable::Idle,
+                            Some(Ok(plan)) => Loadable::Loaded(plan),
+                            Some(Err(err)) => Loadable::Failed(err),
+                        };
+                    }
+                    Ok(Err(err)) => {
+                        this.local = Loadable::Failed(err.to_string());
+                        this.push_plan = Loadable::Idle;
+                    }
+                    Err(err) => {
+                        this.local = Loadable::Failed(err.to_string());
+                        this.push_plan = Loadable::Idle;
+                    }
+                }
                 cx.notify();
             })
             .ok();
@@ -1191,9 +1239,10 @@ impl PrDetail {
     /// The local clone's row: where the checkout stands relative to the branch
     /// on GitHub and its base, and the ways to move it.
     ///
-    /// Rendered only when a clone is configured and loaded. Everything here acts
-    /// on the clone alone — nothing is pushed — so after a local merge or rebase
-    /// the "ahead" count is what tells the user there is something to push.
+    /// Rendered only when a clone is configured and loaded. Everything but
+    /// Push acts on the clone alone; after a local merge or rebase the
+    /// "ahead" count is what tells the user there is something to push, and
+    /// Push (see `detail/push.rs`) is the one button that writes to a remote.
     fn render_local(
         &self,
         state: &LocalState,
@@ -1367,8 +1416,12 @@ impl PrDetail {
                             .on_click(Self::on_click(cx, |this, cx| {
                                 this.run_local_op(LocalOp::RebaseBase, cx)
                             })),
-                    ),
+                    )
+                    .child(self.render_push_button(busy, cx)),
             )
+            .when_some(self.render_push_confirm(busy, theme, cx), |el, confirm| {
+                el.child(confirm)
+            })
             .child(
                 Checkbox::new("local-autostash", "Stash local changes", autostash).on_toggle(
                     Self::on_click(cx, move |this, cx| {

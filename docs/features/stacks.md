@@ -283,16 +283,20 @@ what keep a simultaneous run from both safe.)
 
 ## The push exception
 
-Rostrum's standing rule is that it never writes to a remote (OVERVIEW,
-foundational decisions). Arrange is the one, deliberate exception, because a
-rebase onto another branch is invisible to the pull request until it is
-pushed. It is kept as narrow as possible:
+Rostrum's standing rule is that it writes to a remote only when asked
+(OVERVIEW, foundational decisions). Arrange is one of the two deliberate
+push paths — the other is the user's Push / Push all
+(`docs/features/local_git.md`) — because a rebase onto another branch is
+invisible to the pull request until it is pushed. It is kept as narrow as
+possible:
 
-- One function pushes: `rostrum_git::Repo::push_with_lease`. Its argv is
-  `push --porcelain --force-with-lease=refs/heads/<b>:<expected-oid> --
-  origin <new-oid>:refs/heads/<b>`, built by the pure `push_args`. There is
-  no bare force, no lease without an expected oid, no `--no-verify`, one ref
-  per call.
+- One function pushes: `rostrum_git::Repo::push_with_lease`, the leased form
+  of `Repo::push_branch`. Its argv is `-c push.followTags=false -c
+  push.recurseSubmodules=no -c credential.interactive=false push --porcelain
+  --force-with-lease=refs/heads/<b>:<expected-oid> -- origin
+  <new-oid>:refs/heads/<b>`, built by the pure `push_args` behind
+  `PUSH_CONFIG`. There is no bare force, no lease without an expected oid, no
+  `--no-verify`, one ref per call.
 - One caller: `run_stack_job`, only after every member rebased cleanly, only
   for branches it rewrote, with the oid it fetched at the start as the lease.
 - `gh stack` is never allowed to push: `submit`, `push`, `sync` and `rebase`

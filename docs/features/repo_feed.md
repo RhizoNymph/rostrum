@@ -239,8 +239,17 @@ tooltip. The progress line reads `Pull all: 3/12…` while running and
 `Pull all: 9 updated, 2 handed off, 1 conflicts` afterwards, zero buckets
 omitted.
 
-Nothing is pushed. After a local merge or rebase the detail pane's "ahead"
-count is the cue.
+None of those three pushes. After a local merge or rebase the detail pane's
+"ahead" count is the cue, and **Push all** beside them is the act: it fetches
+and plans every checked-out pull request branch, pushes the ones that are
+only ahead, and — when any has diverged — first shows one confirmation
+listing every branch that would be rewritten and the remote oid each would
+replace (push everything with leases / fast-forwards only / cancel). Its
+verdicts replace a local sync's on the rows (`pushed`, `rewritten`,
+`skipped`, `not confirmed`, `stale`, `rejected`, `failed`), its progress line
+reads `Push all: 3/12…` then `Push all: 2 pushed, 1 rewritten, 3 skipped`,
+and one batch of either kind runs at a time. See
+`docs/features/local_git.md`.
 
 ## Header popovers
 

@@ -478,7 +478,16 @@ composables, a pure mapping file with its own tests, and previews.
   entries listed, updated ones behind an expandable row), options menu
   (refresh, get token, unpair with a "Forget on this phone" fallback). Files:
   `DesktopModels`, `HandoffSection`, `SyncAllSection`, `LastRunSection`,
-  `DesktopScreen`.
+  `DesktopScreen`. **Not built yet:** Push and Push all. The core exposes
+  them (`planBranchPush`/`pushBranch`, `planPushAll`/`pushAll`); the phase
+  that adds them needs a Push button on the Branch tab (disabled with the
+  plan's reason for a skip; one tap for a fast-forward; a confirmation naming
+  branch, upstream, the replaced oid and dropped commits for a rewrite) and a
+  Push all entry in the sync-all section that plans, lists every rewrite in
+  one sheet ("push all, rewriting these" / "fast-forwards only" / cancel),
+  sends only the confirmations the user accepted, and shows each
+  `PushItemResult` chip; `ConfirmationStale` means plan again. See
+  `docs/features/remote_protocol.md`, "Pushing branches from a phone".
 - `SignInViewModel(profiles, profile)`: pairing first; the token form (a
   github.com token; Enterprise isn't supported) behind an expandable row. On
   first run (`profile` null) the token makes a new profile and switches to

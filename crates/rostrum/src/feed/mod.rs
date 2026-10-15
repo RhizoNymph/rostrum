@@ -31,6 +31,7 @@ use crate::{
 
 mod arrange;
 mod extend;
+mod push_all;
 mod sort_menu;
 mod stacks;
 
@@ -713,6 +714,10 @@ impl FeedView {
                 format!("{}: {}/{}…", sync.kind.label(), sync.done, sync.total)
             }
         });
+        // A local sync and a Push all clear each other, so at most one has
+        // anything to say.
+        let sync_status = sync_status.or_else(|| self.push_all_status(cx));
+        let push_all_confirm = self.render_push_all_confirm(cx);
 
         v_flex()
             .flex_none()
@@ -795,6 +800,7 @@ impl FeedView {
                         .child(sync_button("sync-pull", SyncKind::Pull, cx))
                         .child(sync_button("sync-merge-base", SyncKind::MergeBase, cx))
                         .child(sync_button("sync-rebase-base", SyncKind::RebaseBase, cx))
+                        .child(self.push_all_button(syncing, cx))
                         // Stacks are pull requests only; on the Issues tab
                         // there is nothing to arrange.
                         .when(tab == FeedTab::PullRequests, |el| {
@@ -833,6 +839,7 @@ impl FeedView {
                         }),
                 )
             })
+            .when_some(push_all_confirm, |el, panel| el.child(panel))
             .when(active, |el| {
                 el.child(
                     h_flex()
@@ -1024,6 +1031,7 @@ mod tests {
             checks: None,
             base_divergence: None,
             is_cross_repository: false,
+            head_repository: None,
             pushed_at: None,
         }
     }

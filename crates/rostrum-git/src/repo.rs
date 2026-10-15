@@ -27,6 +27,7 @@ use crate::{
 };
 
 mod describe;
+mod publish;
 mod rewrite;
 
 pub use rewrite::RefExpectation;

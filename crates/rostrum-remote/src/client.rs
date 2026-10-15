@@ -37,6 +37,7 @@ use crate::{
     fingerprint::CertFingerprint,
     host::Host,
     pairing::{Endpoint, GitHubHandover, Hello, PairRequest, PairResponse},
+    push::{PushPlanRequest, PushPlanResponse, PushRequest, PushResponse},
     routes,
     secret::DeviceToken,
     stack::{
@@ -186,6 +187,21 @@ impl RemoteClient {
 
     pub async fn abort(&self, request: &AbortRequest) -> Result<(), ClientError> {
         self.call(Method::POST, routes::LOCAL_ABORT, Some(request), JOB)
+            .await
+    }
+
+    /// What pushing each pull request's branch would do (the dry run).
+    pub async fn plan_push(
+        &self,
+        request: &PushPlanRequest,
+    ) -> Result<PushPlanResponse, ClientError> {
+        self.call(Method::POST, routes::LOCAL_PUSH_PLAN, Some(request), JOB)
+            .await
+    }
+
+    /// Push each pull request's branch, rewriting only the confirmed ones.
+    pub async fn push(&self, request: &PushRequest) -> Result<PushResponse, ClientError> {
+        self.call(Method::POST, routes::LOCAL_PUSH, Some(request), JOB)
             .await
     }
 
