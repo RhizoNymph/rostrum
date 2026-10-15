@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -24,7 +25,11 @@ import io.github.rhizonymph.rostrum.data.BackendError
 import io.github.rhizonymph.rostrum.data.describe
 import io.github.rhizonymph.rostrum.data.model.PrRef
 import io.github.rhizonymph.rostrum.ui.common.UiState
+import io.github.rhizonymph.rostrum.ui.components.ChevronRow
 import io.github.rhizonymph.rostrum.ui.components.ConfirmDialog
+import io.github.rhizonymph.rostrum.ui.components.RostrumCard
+import io.github.rhizonymph.rostrum.ui.components.SectionHeader
+import io.github.rhizonymph.rostrum.ui.desktopconfig.PushConfigText
 import io.github.rhizonymph.rostrum.ui.components.EmptyView
 import io.github.rhizonymph.rostrum.ui.components.ErrorView
 import io.github.rhizonymph.rostrum.ui.components.HeaderPill
@@ -53,6 +58,7 @@ fun DesktopScreen(
     modifier: Modifier = Modifier,
     profileLabel: String? = null,
     onOpenProfiles: () -> Unit = {},
+    onSendSettings: () -> Unit = {},
 ) {
     val colors = RostrumTheme.colors
     var confirmUnpair by rememberSaveable { mutableStateOf(false) }
@@ -90,7 +96,7 @@ fun DesktopScreen(
                 title = "Couldn't reach the desktop",
                 onRetry = actions::refresh,
             )
-            is DesktopPage.Loaded -> LoadedDesktop(page.content, now, actions, onOpenPullRequest)
+            is DesktopPage.Loaded -> LoadedDesktop(page.content, now, actions, onOpenPullRequest, onSendSettings)
         }
     }
     if (confirmUnpair) {
@@ -147,6 +153,7 @@ private fun LoadedDesktop(
     now: Instant,
     actions: DesktopActions,
     onOpenPullRequest: (PrRef, PrTab) -> Unit,
+    onSendSettings: () -> Unit,
 ) {
     Column(
         Modifier
@@ -173,6 +180,24 @@ private fun LoadedDesktop(
         )
         content.lastRun?.let { run ->
             LastRunSection(lastRunView(run), now, onOpenPullRequest = { pr -> onOpenPullRequest(pr, PrTab.Branch) })
+        }
+        ShareSettingsSection(content.machine.name, onSendSettings)
+    }
+}
+
+/** "Send settings to <machine>": this profile's settings replace the desktop's, after a preview. */
+@Composable
+private fun ShareSettingsSection(machine: String, onSendSettings: () -> Unit) {
+    val colors = RostrumTheme.colors
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionHeader("Settings")
+        RostrumCard(Modifier.fillMaxWidth()) {
+            ChevronRow(onClick = onSendSettings) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Send settings to $machine", style = RostrumText.rowTitle, color = colors.text)
+                    Text(PushConfigText.rowCaption(machine), style = RostrumText.caption, color = colors.textMuted)
+                }
+            }
         }
     }
 }

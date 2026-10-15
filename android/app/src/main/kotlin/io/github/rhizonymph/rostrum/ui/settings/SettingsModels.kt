@@ -49,6 +49,10 @@ data class SettingsContent(
     val refreshIntervalSecs: Long,
     val notifyNewPullRequests: Boolean,
     val notifyReviewRequests: Boolean,
+    /** Open pull requests fetched per repository. */
+    val prsPerRepo: Int = 30,
+    /** Open issues fetched per repository. */
+    val issuesPerRepo: Int = 25,
 )
 
 /** The "Add a repository" field. [error] is only ever an input problem. */
@@ -64,6 +68,13 @@ data class SettingsUiState(
     /** Repositories whose removal is in flight. */
     val removing: Set<String> = emptySet(),
 )
+
+/** The per-repository fetch limits offered, with the current value slotted in when it is not one of them. */
+object FetchLimitChoices {
+    private val standard = listOf(10, 25, 50, 100)
+
+    fun forValue(current: Int): List<Int> = (standard + current).distinct().sorted()
+}
 
 /** The foreground refresh choices offered, in seconds. */
 val RefreshIntervalChoices: List<Long> = listOf(30, 60, 300, 900)

@@ -248,8 +248,17 @@ tooltip. The progress line reads `Pull all: 3/12…` while running and
 `Pull all: 9 updated, 2 handed off, 1 conflicts` afterwards, zero buckets
 omitted.
 
-Nothing is pushed. After a local merge or rebase the detail pane's "ahead"
-count is the cue.
+None of those three pushes. After a local merge or rebase the detail pane's
+"ahead" count is the cue, and **Push all** beside them is the act: it fetches
+and plans every checked-out pull request branch, pushes the ones that are
+only ahead, and — when any has diverged — first shows one confirmation
+listing every branch that would be rewritten and the remote oid each would
+replace (push everything with leases / fast-forwards only / cancel). Its
+verdicts replace a local sync's on the rows (`pushed`, `rewritten`,
+`skipped`, `not confirmed`, `stale`, `rejected`, `failed`), its progress line
+reads `Push all: 3/12…` then `Push all: 2 pushed, 1 rewritten, 3 skipped`,
+and one batch of either kind runs at a time. See
+`docs/features/local_git.md`.
 
 ## Header popovers
 
@@ -270,8 +279,9 @@ The filter bar writes into `AppState.filter`, which `flatten` already consults �
 filter state has exactly one home, and the existing store-changed path rebuilds
 rows live as the query is typed.
 
-The bar holds, top to bottom: the search box with the `drafts`, `authors`,
-`repos` and `Sort` buttons; the `hide empty repos` checkbox; the sync-all row when any repo has a
+The bar holds, top to bottom: the search box, on a row of its own so the
+buttons never squeeze it; the `drafts`, `authors`, `repos`, `Sort` and `CI`
+buttons, wrapping when the sidebar is narrow; the `hide empty repos` checkbox; the sync-all row when any repo has a
 clone; and the author row — a chip per person with open work, the viewer first
 and everyone else by recency, with the `include involved in` checkbox beneath
 it. The author row and its ordering, capping and persistence rules belong to

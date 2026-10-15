@@ -28,8 +28,10 @@ Overview:
       tree — trunks against the default branch, pull requests against their
       base, stacks nested.
     ci_grid: >
-      A whole-window PRs × checks grid reached from the feed: each open pull
-      request's head-commit checks (Actions jobs, other apps' check runs,
+      A whole-window PRs × checks matrix reached from the feed: one row per
+      open, non-draft pull request across every watched repository and one
+      column per check key across all of them, holding each pull request's
+      head-commit checks (Actions jobs, other apps' check runs,
       legacy statuses) with live elapsed / since-finished times, a log viewer
       with collapsible sections and the failing step highlighted, and
       confirmed re-runs that flip cells to queued at once. Matrix, timing, log
@@ -62,8 +64,11 @@ Overview:
       The local half of a pull request: which worktree a branch is checked out
       in, how far it has drifted from GitHub and from its base, and pull/merge/
       rebase on it — one at a time from the detail pane, or across every open
-      pull request from the feed. Drives the `git` command line; never writes
-      to a remote, except the one leased push behind arranging a stack.
+      pull request from the feed — and pushing it (Push / Push all) to its
+      head repository: a fast-forward as is, a diverged branch only behind a
+      confirmation and with a lease. Drives the `git` command line; writes to
+      a remote only through those two buttons and the leased push behind
+      arranging a stack.
     feed_sort: >
       Ordering the feed: repository containers by pushed, updated, created,
       owner, name or stars, and the items in each by pushed, updated,
@@ -87,7 +92,8 @@ Overview:
     remote_protocol: >
       The contract between a paired phone and `rostrumd`: pairing codes and
       links, device tokens, certificate pinning, and the authenticated API for
-      local state, local jobs, sync-all and handoff sessions.
+      local state, local jobs, sync-all, branch pushes (plan, then push with
+      per-rewrite lease confirmations) and handoff sessions.
     android_core: >
       The phone app's Rust half. Wraps the gpui-free crates behind one UniFFI
       object, so Kotlin renders snapshots and rows the core has already
@@ -106,7 +112,8 @@ Overview:
       The Android client. Jetpack Compose screens for the feed, a pull
       request (conversation, files, checks, branch), the single-file diff with
       inline comments and pending reviews, merging, settings, the paired
-      desktop (including copying its settings onto the phone), sign-in and
+      desktop (including copying its settings onto the phone and sending the
+      phone's back), sign-in and
       pairing. ViewModels depend on one Kotlin interface,
       `RostrumBackend`, shaped after `RostrumCore`; secrets are sealed with an
       Android Keystore key; WorkManager runs the notification check.
@@ -116,6 +123,11 @@ Overview:
       their actions run on the paired desktop as polled jobs, "load earlier"
       on conversations, and a repository's own screen with its branch tree and
       trunks — ordered and assembled by the core, drawn by the app.
+    android_ci_config: >
+      The phone's CI grid (every open pull request's checks, scrolling both
+      ways, with job logs, check output and confirmed re-runs) and sending
+      this profile's settings to the paired desktop, guarded by the desktop's
+      revision — the core builds, times and parses; the app draws and polls.
     android_profiles: >
       Several paired desktops on one phone, each a profile with its own
       repositories, filters, cache, drafts and GitHub account (a desktop's
@@ -272,7 +284,10 @@ Overview:
     re-reads rostrum's `config.json` for the clone, the conflict handler and
     autostash, takes that clone's lease from the job coordinator (409 when it
     is busy), and runs the same `rostrum_local` function the desktop's button
-    runs, in a task that outlives the request. Nothing is ever pushed. A
+    runs, in a task that outlives the request. Nothing is pushed except
+    through the push routes, which plan first and rewrite a diverged branch
+    only when the request confirms that pull request with the exact remote
+    oid the lease will name (`docs/features/remote_protocol.md`). A
     paired phone can also copy the desktop's watched repositories and feed
     preferences (`GET /api/v1/config`) — never its clones, conflict handler,
     refresh interval or notifications — and send its own back on demand
@@ -322,7 +337,7 @@ Features Index:
     depends_on: [repo_feed, issues, feed_sort, pr_detail, github_sync, ui_foundation]
     doc: docs/features/repo_view.md
   ci_grid:
-    description: PRs × checks grid with live timings, job logs, and re-runs.
+    description: One global PRs × checks matrix across every watched repository, with live timings, job logs, and re-runs.
     entry_points: [crates/rostrum/src/ci/mod.rs, crates/rostrum/src/sync/ci.rs, crates/rostrum-core/src/ci/mod.rs, crates/rostrum-github/src/ci/mod.rs]
     depends_on: [repo_feed, feed_sort, github_sync, ui_foundation]
     doc: docs/features/ci_grid.md
@@ -357,8 +372,8 @@ Features Index:
     depends_on: []
     doc: docs/features/github_sync.md
   local_git:
-    description: Worktree-aware clone status, divergence, pull/merge/rebase, sync-all.
-    entry_points: [crates/rostrum-git/src/lib.rs, crates/rostrum-local/src/lib.rs, crates/rostrum/src/sync/mod.rs]
+    description: Worktree-aware clone status, divergence, pull/merge/rebase, sync-all, Push and Push all (fast-forward, or leased rewrite behind a confirmation).
+    entry_points: [crates/rostrum-git/src/lib.rs, crates/rostrum-local/src/lib.rs, crates/rostrum-local/src/push/mod.rs, crates/rostrum/src/sync/mod.rs, crates/rostrum/src/sync/push.rs, crates/rostrum/src/detail/push.rs, crates/rostrum/src/feed/push_all.rs]
     depends_on: [pr_detail, repo_feed]
     doc: docs/features/local_git.md
   feed_sort:
@@ -401,7 +416,7 @@ Features Index:
       tree and trunks, the CI grid with logs and re-runs, diff rows, pending
       review, desktop pairing and jobs, sharing settings with the desktop
       both ways, and background notifications, all render-ready for Compose.
-    entry_points: [crates/rostrum-ffi/src/lib.rs, crates/rostrum-ffi/src/profiles/mod.rs, crates/rostrum-ffi/src/engine/mod.rs, crates/rostrum-ffi/src/issues/mod.rs, crates/rostrum-ffi/src/repo_view/mod.rs, crates/rostrum-ffi/src/stack_actions/mod.rs, crates/rostrum-ffi/src/ci/mod.rs, crates/rostrum-ffi/src/remote/push.rs]
+    entry_points: [crates/rostrum-ffi/src/lib.rs, crates/rostrum-ffi/src/profiles/mod.rs, crates/rostrum-ffi/src/engine/mod.rs, crates/rostrum-ffi/src/issues/mod.rs, crates/rostrum-ffi/src/repo_view/mod.rs, crates/rostrum-ffi/src/stack_actions/mod.rs, crates/rostrum-ffi/src/ci/mod.rs, crates/rostrum-ffi/src/remote/push.rs, crates/rostrum-ffi/src/remote/branch_push.rs]
     depends_on: [repo_feed, pr_detail, diff_review, diff_overview, author_filter, github_sync, remote_protocol, feed_sort, issues, stacks, repo_view, ci_grid]
     doc: docs/features/android_core.md
   android_build:
@@ -419,6 +434,11 @@ Features Index:
     entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/feed/FeedSortSheet.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/issue/IssueRoute.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/newissue/NewIssueRoute.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/repo/RepoRoute.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/items/ItemRows.kt]
     depends_on: [android_app, android_core, feed_sort, issues, stacks, repo_view]
     doc: docs/features/android_issues_repo.md
+  android_ci_config:
+    description: CI grid screen (two-way scrolling matrix, log viewer, check output, confirmed re-runs, tick and poll), sending settings to the paired desktop with a revision check, and the issues-per-repository setting, on Android.
+    entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/ci/CiGridScreen.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/ci/CiGridViewModel.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/desktopconfig/PushSettingsViewModel.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/CiApi.kt]
+    depends_on: [android_app, android_core, ci_grid, remote_protocol]
+    doc: docs/features/android_ci_config.md
   android_profiles:
     description: One profile per paired desktop or pasted token; ProfileManager over the core's profile registry, per-profile secrets, switching, pairing into profiles, notifications across profiles.
     entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/profiles/ProfileManager.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/ffi/FfiProfileRegistry.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/app/RostrumApp.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/profiles/ProfileSwitcherSheet.kt]
@@ -475,7 +495,7 @@ Non-UI logic lives in crates that do not depend on `gpui`, so the bug-prone part
 | Diff parsing | hand-rolled | `diffy` requires `---`/`+++` headers GitHub's per-file patches lack, and exposes neither `\ No newline` nor the raw `@@` line |
 | Highlighting | `syntect` (pure-Rust regex) | One dependency covering many languages, versus matching the tree-sitter ABI across a grammar crate per language. Tree-sitter remains the better long-term choice |
 | Local git | Drive the `git` CLI, not libgit2 | Inherits the user's credential helpers, ssh agent, hooks, and `rerere` for free; libgit2's rebase is a partial substitute and its credential negotiation would have to be reimplemented. `auth.rs` already shells out to `gh` |
-| Local writes | Never push — with one exception: rebasing pull requests into a stack (Arrange, or Add to stack when the additions do not already chain) | A local merge or rebase leaves the clone ahead, and that count is the cue to push. Arranging is the exception because rebasing a branch onto another is invisible to its pull request until pushed. It goes through one function (`Repo::push_with_lease`, always `--force-with-lease=<ref>:<expected-oid>`, never a bare force), runs only after every member rebased cleanly, never on a stack's existing members, only behind an explicit confirmation naming the branches, and `gh stack` is never allowed to push on rostrum's behalf. See `docs/features/stacks.md` |
+| Local writes | Push only when asked, through two paths: the user's Push / Push all, and rebasing pull requests into a stack (Arrange, or Add to stack when the additions do not already chain) | A local merge or rebase leaves the clone ahead, and that count is the cue to push; Push publishes it to the branch's own upstream, and only when that upstream is the pull request's head branch in its head repository (forks included, never a guessed remote). An ahead-only branch is an ordinary fast-forward push; a diverged one is pushed only with `--force-with-lease=refs/heads/<b>:<last-fetched oid>`, behind a confirmation naming each branch and the oid it replaces (one confirmation for a whole Push all), re-checked against the oid on disk at push time. Arranging pushes because rebasing a branch onto another is invisible to its pull request until pushed; it runs only after every member rebased cleanly, never on a stack's existing members, only behind an explicit confirmation naming the branches, and `gh stack` is never allowed to push on rostrum's behalf. Every push goes through `Repo::push_branch` (one ref, an exact oid, `credential.interactive=false`, `--porcelain`, no bare force, no `+` refspec, no `--no-verify`, tags and submodules pinned off). See `docs/features/local_git.md` and `docs/features/stacks.md` |
 | Stacks | GitHub's Stacks API is the source of truth; `gh stack` performs every stack write | The API needs no clone, so every watched repository groups; gh-stack owns link/merge/unstack semantics, and its local file is read, never written |
 | `gh` environment | Inherited (like tmux), minus `GIT_DIR`-family variables, with `GH_REPO` pinned | `gh` authenticates with the user's own setup; the removed variables would change which repository a nested `git` reads, and a pinned `GH_REPO` stops a fork remote redirecting a merge |
 | Feed distance | One batched `Ref.compare` per repository after each refresh | A GraphQL field cannot read a sibling's value, so the count cannot join the feed query; aliasing one `compare` per PR keeps it to one request, cost 1 |

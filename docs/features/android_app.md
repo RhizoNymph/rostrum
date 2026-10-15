@@ -326,6 +326,16 @@ one first (details in `android_profiles.md`). Per profile:
   copy the sheet closes, shows "Copied …", and Settings reloads its list.
   Settings also reloads whenever it resumes, e.g. back from pairing.
 
+### Sending settings to the desktop and the CI grid
+
+Sending this profile's settings to the paired desktop (Desktop tab and
+Settings › Desktop), the issues-per-repository setting, and the CI grid
+(`Destination.Checks`, from the feed header and the repository screen) are
+described in `docs/features/android_ci_config.md`. The copy sheet above now
+also names issues per repository, sorts and trunks; `desktopConfig`,
+`copyDesktopConfig` and `pushConfigToDesktop` live in `DesktopConfigApi`,
+which `RostrumBackend` extends.
+
 ### Secrets at rest
 
 `EncryptedFileSecretStore` keeps one file per profile and `SecretKey` under
@@ -468,7 +478,16 @@ composables, a pure mapping file with its own tests, and previews.
   entries listed, updated ones behind an expandable row), options menu
   (refresh, get token, unpair with a "Forget on this phone" fallback). Files:
   `DesktopModels`, `HandoffSection`, `SyncAllSection`, `LastRunSection`,
-  `DesktopScreen`.
+  `DesktopScreen`. **Not built yet:** Push and Push all. The core exposes
+  them (`planBranchPush`/`pushBranch`, `planPushAll`/`pushAll`); the phase
+  that adds them needs a Push button on the Branch tab (disabled with the
+  plan's reason for a skip; one tap for a fast-forward; a confirmation naming
+  branch, upstream, the replaced oid and dropped commits for a rewrite) and a
+  Push all entry in the sync-all section that plans, lists every rewrite in
+  one sheet ("push all, rewriting these" / "fast-forwards only" / cancel),
+  sends only the confirmations the user accepted, and shows each
+  `PushItemResult` chip; `ConfirmationStale` means plan again. See
+  `docs/features/remote_protocol.md`, "Pushing branches from a phone".
 - `SignInViewModel(profiles, profile)`: pairing first; the token form (a
   github.com token; Enterprise isn't supported) behind an expandable row. On
   first run (`profile` null) the token makes a new profile and switches to

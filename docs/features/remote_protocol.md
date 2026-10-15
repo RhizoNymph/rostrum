@@ -9,8 +9,8 @@ pairing, the authenticated API, and the phone's pinned HTTPS client. One crate,
 - Pairing codes, the `rostrum://pair` link that carries one, and the exchange
   of a code for a device token (and, optionally, the desktop's GitHub token).
 - Wire types for every authenticated request: machine info, the copyable part
-  of the desktop's config, local status, local jobs, abort, sync-all, handoff
-  sessions, errors.
+  of the desktop's config, local status, local jobs, abort, sync-all, branch
+  pushes (plan and push, with lease confirmations), handoff sessions, errors.
 - The route table.
 - The phone's HTTPS client (feature `client`): certificate pinning, host
   fallback, probing an unknown host, error mapping.
@@ -87,6 +87,8 @@ always `Unauthorized` (the device was revoked), whatever the body says.
 | `/api/v1/local/status` | POST | token | `LocalStatusRequest` → `LocalStatus` |
 | `/api/v1/local/job` | POST | token | `JobRequest` → `JobOutcome` |
 | `/api/v1/local/abort` | POST | token | `AbortRequest` → `null` |
+| `/api/v1/local/push/plan` | POST | token | `PushPlanRequest` → `PushPlanResponse` |
+| `/api/v1/local/push` | POST | token | `PushRequest` → `PushResponse` |
 | `/api/v1/sync-all` | POST | token | `SyncAllRequest` → `SyncRun` |
 | `/api/v1/sync-all` | GET | token | → `SyncRun \| null` |
 | `/api/v1/handoffs` | GET | token | → `[HandoffSession]` |
@@ -114,6 +116,7 @@ the response status.
 | `crates/rostrum-remote/src/pairing.rs` | `Endpoint`, `PairingOffer` and its link, `Hello`, `PairRequest`, `PairResponse`, `GitHubHandover` |
 | `crates/rostrum-remote/src/api.rs` | Authenticated request/response types, `DesktopConfig`, `RepoTrunks`, `SyncRun::summary`, `ApiError` |
 | `crates/rostrum-remote/src/config.rs` | Sharing settings both ways: `ConfigRevision`, `RevisedConfig`, `ConfigPush`, `ConfigConflict`, `ConfigPushOutcome`, the client-side `diff` (`ConfigChange`, `ConfigField`) |
+| `crates/rostrum-remote/src/push.rs` | Branch pushes: `PushTargetRef`, `PushPlanRequest`/`PushPlanResponse` (`confirm_rewrite`), `PushPlanView`, `LeaseConfirmation`, `PushRequest`/`PushResponse`, `PushOutcomeView` |
 | `crates/rostrum-remote/src/stack.rs` | Stack requests, the dry run (`StackRewritePlan`, `confirms_exactly`), stack jobs (`StackJobId`, `StackJobStatus`, `StackJobState`, `StackJobResult`) |
 | `crates/rostrum-remote/src/client.rs` | `RemoteClient`, `probe`, `PinnedVerifier`, `ClientError` |
 | `crates/rostrum-remote/tests/client.rs` | The client against a real TLS listener: pinning, fallback, probe, errors |
@@ -211,6 +214,59 @@ desktop gets 404 for them. The one change older code can see is the new
 `ApiErrorCode::RewriteNotConfirmed`, which only the stack routes return; an
 older client would decode it as an internal error.
 
+## Pushing branches from a phone
+
+The desktop's Push / Push all (`docs/features/local_git.md`), over two
+routes. Both take a list of `PushTargetRef { key, head_ref, head_repo }`;
+`head_repo` is the repository the head branch lives in (`key.repo` for a
+same-repository pull request, GitHub's `headRepository.nameWithOwner` for a
+fork, `None` when GitHub did not name it — never pushed).
+
+**Plan first** (`POST /api/v1/local/push/plan`). Each entry's `plan` is
+`not_configured`, `fast_forward { upstream, local, ahead }`, `rewrite {
+upstream, local, expected, ahead, behind }`, `skip { reason, quiet }` (not
+checked out and up to date are `quiet`; behind, no upstream, an upstream
+that is not the head repository, a dirty or mid-operation worktree are
+not), or `failed { reason }`. The desktop fetches each upstream first.
+`PushPlanResponse::confirm_rewrite()` is the list of rewrites — each pull
+request with the `expected` remote oid — that the phone must show the user,
+all at once, before pushing.
+
+**Then push** (`POST /api/v1/local/push`) with `confirm_rewrite`: the
+`LeaseConfirmation { key, expected }`s the user agreed to (defaulted to
+empty). The desktop plans each branch again from its refs on disk (no
+fetch), pushes a fast-forward as is, and rewrites a diverged branch only
+when the request confirms that pull request with exactly the oid the lease
+would name. Each entry's `outcome`: `not_configured`, `pushed { upstream,
+rewrote }`, `skipped { reason, quiet }`, `not_confirmed { expected }`,
+`confirmation_stale { confirmed, current }` (plan again), `rejected {
+reason, stale_lease }` (the remote refused and is unchanged; `stale_lease`
+when someone pushed since the last fetch), `failed { reason }`. A
+confirmation whose `expected` is not an oid, two different oids for one pull
+request, or a head branch git would refuse is 400 and nothing runs.
+
+Per-entry verdicts rather than a 409 for the batch (unlike the stack
+routes): whether a branch needs confirming is only known when the desktop
+reads it, and one branch's answer must not stop the rest. The call is
+synchronous (the client's job budget, 15 minutes).
+
+**What the phone will need (Kotlin, a later phase).** The FFI already exposes
+it on `RostrumCore` (`crates/rostrum-ffi/src/remote/branch_push.rs`):
+`plan_branch_push(repo, number)` and `push_branch(repo, number, confirm)` for
+the pull request screen's Push button; `plan_push_all()` and
+`push_all(confirms)` for a Push all beside the sync-all actions. The UI must:
+disable Push (showing `reason`) for a `Skip`/`Failed` plan; push a
+`FastForward` on tap; for a `Rewrite`, show a confirmation naming the
+branch, the upstream, `expected` and `behind` (commits that will be dropped
+from the remote) and pass a `PushRewriteConfirmation { repo, number,
+expected }` only after the user agrees; for Push all, show one sheet listing
+every `Rewrite` in the plan with "push all, rewriting these" / "fast-forwards
+only" (send no confirmations) / cancel; render `PushItemResult.chip`; and on
+`ConfirmationStale` plan again rather than retrying.
+
+**Compatibility.** Additive: `API_VERSION` stays 1. An older phone never
+calls these routes; a newer phone gets 404 from an older desktop.
+
 ## Invariants
 
 - An `Endpoint` always has at least one host and a non-zero port; it cannot be
@@ -223,5 +279,8 @@ older client would decode it as an internal error.
   only if they are still at that revision.
 - A stack operation that rewrites branches runs only when the request
   confirms exactly the branches the desktop computed.
+- A branch push rewrites a remote branch only when the request confirms that
+  pull request with the exact remote oid the desktop's lease names; nothing
+  else can authorize a rewrite.
 - The client uses the `ring` provider explicitly, so no process-wide default
   provider needs installing and nothing in the phone's build needs cmake.

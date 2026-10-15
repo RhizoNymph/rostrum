@@ -13,7 +13,6 @@ use rostrum_core::{
     Chrome, FeedRow, FeedTab, Issue, IssueIx, MergeStatus, PrIx, PullRequest, RepoIx, RepoState,
     ReviewDecision, Selection, StackSlot,
 };
-use rostrum_local::LocalResult;
 use rostrum_ui::{
     ActiveTheme, Theme,
     components::{Chip, DiffStat, Dot, Initial, h_flex, hex_color, v_flex},
@@ -23,6 +22,7 @@ use super::{
     FeedEvent, FeedView, ROW_RADIUS,
     stacks::{STACK_INDENT, stack_glyph},
 };
+use crate::sync::{SyncVerdict, VerdictTone};
 
 impl FeedView {
     pub(super) fn render_row(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
@@ -373,7 +373,7 @@ impl FeedView {
 /// `ix` makes the row's tooltip ids unique within its list.
 pub(crate) fn pr_row_content(
     pull: &PullRequest,
-    sync: Option<&LocalResult>,
+    sync: Option<SyncVerdict<'_>>,
     ix: usize,
     theme: &Theme,
 ) -> Div {
@@ -408,7 +408,7 @@ pub(crate) fn pr_row_content(
     let sync_chip = sync.and_then(|result| {
         result
             .chip()
-            .map(|text| (text, result.detail(), sync_chip_color(result)))
+            .map(|text| (text, result.detail(), sync_chip_color(&result)))
     });
 
     v_flex()
@@ -635,14 +635,11 @@ type ThemeColor = fn(&Theme) -> gpui::Hsla;
 
 /// Severity colour for a sync verdict chip: red for what stopped, accent for
 /// what was handed on, amber for what git would not start.
-fn sync_chip_color(result: &LocalResult) -> ThemeColor {
-    match result {
-        LocalResult::Conflicted(_) | LocalResult::Failed(_) => |t| t.danger,
-        LocalResult::HandedOff { .. } => |t| t.accent,
-        LocalResult::Refused(_)
-        | LocalResult::NotCheckedOut
-        | LocalResult::UpToDate
-        | LocalResult::Completed => |t| t.warning,
+fn sync_chip_color(result: &SyncVerdict<'_>) -> ThemeColor {
+    match result.tone() {
+        VerdictTone::Danger => |t| t.danger,
+        VerdictTone::Accent => |t| t.accent,
+        VerdictTone::Warning => |t| t.warning,
     }
 }
 

@@ -32,6 +32,7 @@ use crate::{
 mod arrange;
 mod closed;
 mod extend;
+mod push_all;
 mod sort_menu;
 mod stacks;
 
@@ -719,6 +720,10 @@ impl FeedView {
                 format!("{}: {}/{}…", sync.kind.label(), sync.done, sync.total)
             }
         });
+        // A local sync and a Push all clear each other, so at most one has
+        // anything to say.
+        let sync_status = sync_status.or_else(|| self.push_all_status(cx));
+        let push_all_confirm = self.render_push_all_confirm(cx);
 
         v_flex()
             .flex_none()
@@ -726,10 +731,13 @@ impl FeedView {
             .pb_2()
             .gap_1p5()
             .key_context(FILTER_CONTEXT)
+            // The search field gets a row of its own: sharing one with the
+            // buttons squeezed it to a sliver in a narrow sidebar.
+            .child(div().w_full().child(self.filter.clone()))
             .child(
                 h_flex()
                     .gap_2()
-                    .child(div().flex_1().min_w_0().child(self.filter.clone()))
+                    .flex_wrap()
                     // Drafts are a pull request notion; on the Issues tab the
                     // toggle would do nothing, so it is not offered there.
                     .when(tab == FeedTab::PullRequests, |el| {
@@ -804,6 +812,7 @@ impl FeedView {
                         .child(sync_button("sync-pull", SyncKind::Pull, cx))
                         .child(sync_button("sync-merge-base", SyncKind::MergeBase, cx))
                         .child(sync_button("sync-rebase-base", SyncKind::RebaseBase, cx))
+                        .child(self.push_all_button(syncing, cx))
                         // Stacks are pull requests only; on the Issues tab
                         // there is nothing to arrange.
                         .when(tab == FeedTab::PullRequests, |el| {
@@ -842,6 +851,7 @@ impl FeedView {
                         }),
                 )
             })
+            .when_some(push_all_confirm, |el, panel| el.child(panel))
             .when(active, |el| {
                 el.child(
                     h_flex()
@@ -1043,6 +1053,7 @@ mod tests {
             checks: None,
             base_divergence: None,
             is_cross_repository: false,
+            head_repository: None,
             pushed_at: None,
         }
     }

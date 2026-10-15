@@ -1,339 +1,26 @@
-//! Drawing the CI view: the toolbar, the grid's lines, and the log pane.
+//! Drawing the CI view: the toolbar, the re-run banner, repositories whose
+//! checks failed to load, the matrix (see [`super::matrix`]) and the log
+//! pane.
 //!
-//! The grid is one virtualized `list` over [`GridLine`]s, sized to the widest
-//! section so that it scrolls horizontally as a whole when columns overflow:
-//! every row header and column header moves with its cells.
+//! The matrix is one header row above one virtualized `list` of
+//! [`rostrum_core::ci::GridLine`]s. Vertical scrolling is the list's; the
+//! horizontal scroll is the view's own offset, applied to the header and to
+//! every row alike, so the row-header column stays put and column headers
+//! stay over their cells.
 
-use chrono::Utc;
-use gpui::{AnyElement, Context, Hsla, Window, div, list, prelude::*, px, rems};
-use rostrum_core::{
-    StackPlace,
-    ci::{CellRef, CheckEntry, CheckStatus, GridLine, GridRow, GridSection, RollupState, Timing},
-};
+use gpui::{AnyElement, Context, ScrollWheelEvent, Window, div, list, prelude::*, px, rems};
+use rostrum_core::LoadState;
 use rostrum_ui::{
-    ActiveTheme, Theme,
-    components::{Button, ButtonStyle, Checkbox, Dot, TextTooltip, h_flex, v_flex},
+    ActiveTheme,
+    components::{Button, ButtonStyle, Checkbox, h_flex, v_flex},
 };
 
-use super::{CELL_WIDTH, CI_CONTEXT, CiEvent, CiView, ROW_HEADER_WIDTH};
+use super::{CI_CONTEXT, CiEvent, CiView, LOG_PANE_WIDTH, ROW_HEADER_WIDTH};
 
-/// A status's tile colour.
-fn status_color(status: CheckStatus, theme: &Theme) -> Hsla {
-    match status {
-        CheckStatus::Success => theme.success,
-        CheckStatus::Failure | CheckStatus::TimedOut => theme.danger,
-        CheckStatus::ActionRequired => theme.warning,
-        CheckStatus::InProgress | CheckStatus::Queued => theme.accent,
-        CheckStatus::Cancelled | CheckStatus::Skipped | CheckStatus::Neutral => theme.text_subtle,
-    }
-}
-
-fn rollup_color(state: RollupState, theme: &Theme) -> Hsla {
-    match state {
-        RollupState::Failing => theme.danger,
-        RollupState::Running => theme.accent,
-        RollupState::Passing => theme.success,
-        RollupState::Settled | RollupState::Empty => theme.text_subtle,
-    }
-}
-
-/// A one-glyph mark for a status, so a tile reads without colour too.
-fn glyph(status: CheckStatus) -> &'static str {
-    match status {
-        CheckStatus::Success => "✓",
-        CheckStatus::Failure => "✗",
-        CheckStatus::TimedOut => "⏱",
-        CheckStatus::ActionRequired => "!",
-        CheckStatus::InProgress => "●",
-        CheckStatus::Queued => "○",
-        CheckStatus::Cancelled => "⊘",
-        CheckStatus::Skipped => "↷",
-        CheckStatus::Neutral => "–",
-    }
-}
+/// Room left for the list's own edge, so the last column is reachable.
+const GUTTER: f32 = 16.;
 
 impl CiView {
-    fn render_line(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme().clone();
-        let grid = self.grid.clone();
-        let Some(line) = grid.lines().get(ix) else {
-            return div().into_any_element();
-        };
-        match line {
-            GridLine::Header { section } => self.render_header(&grid.sections()[*section], &theme),
-            GridLine::Stack { members, .. } => h_flex()
-                .h(px(22.))
-                .pl_3()
-                .text_size(rems(0.72))
-                .text_color(theme.text_subtle)
-                .child(format!("Stack · {members} PRs"))
-                .into_any_element(),
-            GridLine::Row { section, row } => {
-                let section = &grid.sections()[*section];
-                self.render_row(section, &section.rows[*row], &theme, cx)
-            }
-            GridLine::Notice { section } => {
-                let section = &grid.sections()[*section];
-                let text = match &section.load {
-                    rostrum_core::LoadState::Failed { message, .. } => message.clone(),
-                    rostrum_core::LoadState::Idle | rostrum_core::LoadState::Loading => {
-                        "Loading checks…".into()
-                    }
-                    rostrum_core::LoadState::Loaded { .. } => "No open pull requests".into(),
-                };
-                div()
-                    .px_3()
-                    .py_2()
-                    .text_size(rems(0.76))
-                    .text_color(theme.text_subtle)
-                    .child(text)
-                    .into_any_element()
-            }
-            GridLine::Spacer => div().h(px(12.)).into_any_element(),
-        }
-    }
-
-    fn render_header(&self, section: &GridSection, theme: &Theme) -> AnyElement {
-        let failed = section.load.error_message().map(str::to_string);
-        h_flex()
-            .h(px(52.))
-            .items_end()
-            .border_b_1()
-            .border_color(theme.border)
-            .bg(theme.surface_raised)
-            .child(
-                v_flex()
-                    .w(px(ROW_HEADER_WIDTH))
-                    .flex_none()
-                    .px_3()
-                    .pb_1()
-                    .child(
-                        div()
-                            .text_size(rems(0.85))
-                            .text_color(theme.text)
-                            .child(section.repo.to_string()),
-                    )
-                    .child(
-                        div()
-                            .text_size(rems(0.68))
-                            .text_color(if failed.is_some() {
-                                theme.danger
-                            } else {
-                                theme.text_subtle
-                            })
-                            .child(match (&failed, section.hidden) {
-                                (Some(message), _) => message.clone(),
-                                (None, 0) => format!("{} checks", section.columns.len()),
-                                (None, hidden) => {
-                                    format!(
-                                        "{} checks · {hidden} rows hidden",
-                                        section.columns.len()
-                                    )
-                                }
-                            }),
-                    ),
-            )
-            .children(section.columns.iter().map(|column| {
-                // The job name on the last line, the workflow above it: the
-                // job is what differs column to column.
-                v_flex()
-                    .w(px(CELL_WIDTH))
-                    .flex_none()
-                    .px_1()
-                    .pb_1()
-                    .overflow_hidden()
-                    .when_some(column.workflow.clone(), |el, workflow| {
-                        el.child(
-                            div()
-                                .truncate()
-                                .text_size(rems(0.62))
-                                .text_color(theme.text_subtle)
-                                .child(workflow),
-                        )
-                    })
-                    .child(
-                        div()
-                            .truncate()
-                            .text_size(rems(0.7))
-                            .text_color(theme.text_muted)
-                            .child(column.name.clone()),
-                    )
-            }))
-            .into_any_element()
-    }
-
-    fn render_row(
-        &self,
-        section: &GridSection,
-        row: &GridRow,
-        theme: &Theme,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let now = Utc::now();
-        let selected = self.selected.as_ref();
-        let stack_mark = row.stack.map(|place| match place {
-            StackPlace::Bottom => "┗",
-            StackPlace::Middle => "┃",
-            StackPlace::Top => "┏",
-            StackPlace::Only => "•",
-        });
-        h_flex()
-            .h(px(40.))
-            .border_b_1()
-            .border_color(theme.border)
-            .child(
-                h_flex()
-                    .w(px(ROW_HEADER_WIDTH))
-                    .flex_none()
-                    .px_3()
-                    .gap_2()
-                    .child(Dot::new(rollup_color(row.rollup.state(), theme)))
-                    .when_some(stack_mark, |el, mark| {
-                        el.child(div().text_color(theme.text_subtle).child(mark))
-                    })
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .child(
-                                h_flex()
-                                    .gap_1p5()
-                                    .text_size(rems(0.76))
-                                    .child(
-                                        div()
-                                            .text_color(theme.text_subtle)
-                                            .child(row.number.to_string()),
-                                    )
-                                    .child(
-                                        div()
-                                            .truncate()
-                                            .text_color(theme.text)
-                                            .child(row.title.clone()),
-                                    ),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_1p5()
-                                    .text_size(rems(0.66))
-                                    .text_color(theme.text_subtle)
-                                    .child(
-                                        div()
-                                            .font_family(theme.mono_font.clone())
-                                            .child(row.head_sha.clone()),
-                                    )
-                                    .child(if row.fetched {
-                                        row.rollup.describe()
-                                    } else {
-                                        "checks not loaded".into()
-                                    })
-                                    .when(row.truncated, |el| el.child("· more not shown")),
-                            ),
-                    ),
-            )
-            .children(
-                row.cells
-                    .iter()
-                    .zip(&section.columns)
-                    .map(|(cell, column)| {
-                        let at = CellRef {
-                            repo: section.repo.clone(),
-                            number: row.number,
-                            column: column.clone(),
-                        };
-                        let is_selected = selected == Some(&at);
-                        self.render_cell(cell.as_ref(), at, is_selected, now, theme, cx)
-                    }),
-            )
-            .into_any_element()
-    }
-
-    fn render_cell(
-        &self,
-        entry: Option<&CheckEntry>,
-        at: CellRef,
-        selected: bool,
-        now: chrono::DateTime<Utc>,
-        theme: &Theme,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let id =
-            gpui::ElementId::Name(format!("ci-{}-{}-{}", at.repo, at.number.0, at.column).into());
-        let base = div()
-            .id(id)
-            .w(px(CELL_WIDTH))
-            .h_full()
-            .flex_none()
-            .p_0p5()
-            .cursor_pointer()
-            .on_click(
-                cx.listener(move |this, event: &gpui::ClickEvent, _window, cx| {
-                    this.select(at.clone(), cx);
-                    if event.click_count() >= 2 {
-                        this.open_log(cx);
-                    }
-                }),
-            );
-
-        let tile = div()
-            .size_full()
-            .px_1p5()
-            .rounded(px(4.))
-            .border_1()
-            .border_color(if selected { theme.accent } else { theme.border });
-
-        let Some(entry) = entry else {
-            return base
-                .child(
-                    tile.flex()
-                        .items_center()
-                        .text_size(rems(0.66))
-                        .text_color(theme.text_subtle)
-                        .child("not run"),
-                )
-                .into_any_element();
-        };
-
-        let timing = Timing::of(entry, now);
-        let color = status_color(entry.status, theme);
-        let tooltip = [
-            Some(format!("{} — {}", entry.key, entry.status.label())),
-            timing.duration_label(),
-        ]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join("\n");
-
-        base.tooltip(move |_window, cx| {
-            cx.new(|_| TextTooltip {
-                text: tooltip.clone().into(),
-            })
-            .into()
-        })
-        .child(
-            tile.bg(Hsla { a: 0.14, ..color })
-                .when(selected, |el| el.border_2())
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .text_size(rems(0.7))
-                        .text_color(color)
-                        .child(glyph(entry.status))
-                        .child(div().truncate().child(entry.status.label())),
-                )
-                .when_some(timing.label(), |el, label| {
-                    el.child(
-                        div()
-                            .truncate()
-                            .text_size(rems(0.64))
-                            .text_color(theme.text_muted)
-                            .child(label),
-                    )
-                }),
-        )
-        .into_any_element()
-    }
-
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let attention = self.filter.needs_attention;
@@ -430,12 +117,111 @@ impl CiView {
     }
 }
 
-impl Render for CiView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl CiView {
+    /// Repositories whose checks failed to load, one line each: with no
+    /// per-repository section, this is where the failure shows.
+    fn render_failures(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let theme = cx.theme().clone();
-        let width = ROW_HEADER_WIDTH + CELL_WIDTH * self.grid.max_columns() as f32 + 24.;
-        let banner = self.render_banner(cx);
+        let failed: Vec<(String, String)> = self
+            .grid
+            .repos()
+            .iter()
+            .filter_map(|repo| {
+                repo.load
+                    .error_message()
+                    .map(|message| (repo.repo.to_string(), message.to_string()))
+            })
+            .collect();
+        if failed.is_empty() {
+            return None;
+        }
+        Some(
+            v_flex()
+                .flex_none()
+                .px_3()
+                .py_1()
+                .gap_0p5()
+                .border_b_1()
+                .border_color(theme.border)
+                .text_size(rems(0.74))
+                .text_color(theme.danger)
+                .children(
+                    failed
+                        .into_iter()
+                        .map(|(repo, message)| div().child(format!("{repo}: {message}"))),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// What the grid area says when it has no rows.
+    fn empty_message(&self) -> &'static str {
+        let loading = self
+            .grid
+            .repos()
+            .iter()
+            .any(|repo| matches!(repo.load, LoadState::Idle | LoadState::Loading));
+        if self.filter.needs_attention && self.grid.hidden() > 0 {
+            "Nothing failing or running"
+        } else if loading {
+            "Loading checks…"
+        } else {
+            "No open pull requests outside drafts"
+        }
+    }
+
+    /// Horizontal wheel or trackpad movement scrolls the check columns;
+    /// shift turns a vertical wheel horizontal.
+    fn on_wheel(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
+        let delta = event.delta.pixel_delta(px(20.));
+        let dx = if delta.x != px(0.) {
+            f32::from(delta.x)
+        } else if event.modifiers.shift {
+            f32::from(delta.y)
+        } else {
+            return;
+        };
+        self.hscroll
+            .scroll_by(dx, self.columns_width(), self.columns_viewport);
+        cx.notify();
+    }
+}
+
+impl Render for CiView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
         let log = self.log.as_ref().map(|(view, _)| view.clone());
+        // The view spans the window; the check columns get what the row
+        // headers and the log pane leave.
+        let log_width = if log.is_some() { LOG_PANE_WIDTH } else { 0. };
+        self.columns_viewport =
+            (f32::from(window.viewport_size().width) - ROW_HEADER_WIDTH - log_width - GUTTER)
+                .max(0.);
+        self.hscroll
+            .clamp(self.columns_width(), self.columns_viewport);
+
+        let banner = self.render_banner(cx);
+        let failures = self.render_failures(cx);
+        let header = self.render_header(&theme);
+        let body = if self.grid.rows().is_empty() {
+            div()
+                .flex_1()
+                .min_h_0()
+                .p_4()
+                .text_size(rems(0.8))
+                .text_color(theme.text_subtle)
+                .child(self.empty_message())
+                .into_any_element()
+        } else {
+            list(
+                self.list.clone(),
+                cx.processor(|this, ix: usize, _window, cx| this.render_line(ix, cx)),
+            )
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .into_any_element()
+        };
 
         v_flex()
             .size_full()
@@ -452,32 +238,32 @@ impl Render for CiView {
             .on_action(cx.listener(Self::on_leave))
             .child(self.render_toolbar(cx))
             .children(banner)
+            .children(failures)
             .child(
                 h_flex()
                     .flex_1()
                     .min_h_0()
                     .child(
-                        div()
-                            .id("ci-grid-scroll")
+                        v_flex()
+                            .id("ci-grid")
                             .flex_1()
                             .h_full()
                             .min_w_0()
-                            .overflow_x_scroll()
-                            .child(
-                                div().w(px(width)).h_full().child(
-                                    list(
-                                        self.list.clone(),
-                                        cx.processor(|this, ix: usize, _window, cx| {
-                                            this.render_line(ix, cx)
-                                        }),
-                                    )
-                                    .size_full(),
-                                ),
-                            ),
+                            .overflow_hidden()
+                            .on_scroll_wheel(
+                                cx.listener(|this, event, _window, cx| this.on_wheel(event, cx)),
+                            )
+                            .child(header)
+                            .child(body),
                     )
                     .when_some(log, |el, log| {
-                        el.child(div().w(px(1.)).h_full().bg(theme.border))
-                            .child(div().w(px(640.)).h_full().flex_none().child(log))
+                        el.child(div().w(px(1.)).h_full().bg(theme.border)).child(
+                            div()
+                                .w(px(LOG_PANE_WIDTH - 1.))
+                                .h_full()
+                                .flex_none()
+                                .child(log),
+                        )
                     }),
             )
     }

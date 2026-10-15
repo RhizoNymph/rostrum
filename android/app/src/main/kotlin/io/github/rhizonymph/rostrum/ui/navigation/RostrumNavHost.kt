@@ -8,6 +8,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.toRoute
 import io.github.rhizonymph.rostrum.data.model.PrRef
+import io.github.rhizonymph.rostrum.ui.ci.CiRoute
 import io.github.rhizonymph.rostrum.ui.desktop.DesktopRoute
 import io.github.rhizonymph.rostrum.ui.feed.FeedRoute
 import io.github.rhizonymph.rostrum.ui.issue.IssueRoute
@@ -69,6 +70,15 @@ fun RostrumNavHost(
                 onOpenRepo = { repo -> navController.navigate(Destination.Repo(repo)) },
                 onNewIssue = { navController.navigate(Destination.NewIssue()) },
                 onPairDesktop = { navController.navigate(Destination.Pair()) },
+                onOpenChecks = { navController.navigate(Destination.Checks()) },
+            )
+        }
+        composable<Destination.Checks> { entry ->
+            val route = entry.toRoute<Destination.Checks>()
+            CiRoute(
+                repo = route.repo,
+                onBack = { navController.popBackStack() },
+                onOpenPullRequest = { pr -> navController.openPullRequest(pr, PrTab.Checks) },
             )
         }
         composable<Destination.Desktop> {
@@ -133,6 +143,7 @@ fun RostrumNavHost(
                 onOpenIssue = { issue -> navController.navigate(Destination.Issue(issue.repo, issue.number)) },
                 onNewIssue = { repo -> navController.navigate(Destination.NewIssue(repo)) },
                 onPairDesktop = { navController.navigate(Destination.Pair()) },
+                onOpenChecks = { repo -> navController.navigate(Destination.Checks(repo)) },
             )
         }
         composable<Destination.FileDiff> { entry ->

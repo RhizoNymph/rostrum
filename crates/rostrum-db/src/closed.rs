@@ -128,6 +128,7 @@ mod tests {
         PullRequest {
             number: PrNumber(number),
             node_id: NodeId(format!("PR_{number}")),
+            head_repository: None,
             title: format!("PR {number}"),
             url: format!("https://github.com/rhizonymph/rostrum/pull/{number}"),
             is_draft: number.is_multiple_of(2),

@@ -1,5 +1,6 @@
 package io.github.rhizonymph.rostrum.ui.desktopconfig
 
+import io.github.rhizonymph.rostrum.data.model.ConfigField
 import io.github.rhizonymph.rostrum.data.model.DesktopConfigPreview
 import io.github.rhizonymph.rostrum.data.model.Settings
 
@@ -13,7 +14,7 @@ object DesktopConfigText {
     fun sheetTitle(machine: String) = "Copy settings from $machine"
 
     fun replaceBody(machine: String) =
-        "This replaces this profile's repositories, pull requests per repository, feed filters and stash default with $machine's."
+        "This replaces this profile's repositories, pull requests and issues per repository, feed filters, sorts, trunks and stash default with $machine's."
 
     fun unchanged(machine: String) = "This profile already has $machine's settings."
 
@@ -29,8 +30,11 @@ object DesktopConfigText {
             preview.includeInvolved -> preview.authors.joinToString(", ") + " and involved"
             else -> preview.authors.joinToString(", ")
         }
+        val perRepository = preview.issuesPerRepo
+            ?.let { "${preview.prsPerRepo} pull requests and $it issues per repository" }
+            ?: "${preview.prsPerRepo} per repository"
         return listOf(
-            "${preview.prsPerRepo} per repository",
+            perRepository,
             if (preview.hideDrafts) "drafts hidden" else "drafts shown",
             if (preview.hideEmptyRepos) "empty repositories hidden" else "empty repositories shown",
             authors,
@@ -66,7 +70,14 @@ object DesktopConfigText {
             if (phone.prsPerRepo != preview.prsPerRepo) {
                 add("pull requests per repository (${phone.prsPerRepo} → ${preview.prsPerRepo})")
             }
+            val issues = preview.issuesPerRepo
+            if (issues != null && phone.issuesPerRepo != issues) {
+                add("issues per repository (${phone.issuesPerRepo} → $issues)")
+            }
             if (feedDiffers) add("feed filters")
+            val copied = preview.copyChanges.mapTo(mutableSetOf()) { it.field }
+            if (ConfigField.RepoSort in copied || ConfigField.ItemSort in copied) add("sorts")
+            if (ConfigField.Trunks in copied) add("trunks")
             if (phone.autostash != preview.autostash) add("the stash default")
         }
         if (parts.isNotEmpty()) add("Changes " + naturalJoin(parts))

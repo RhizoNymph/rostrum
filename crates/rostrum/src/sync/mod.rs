@@ -34,9 +34,13 @@ use rostrum_handoff::PrMeta;
 use rostrum_config::{Config, ConflictHandler, Warning};
 use rostrum_local::{LocalJob, LocalOp, LocalResult, run_local_job};
 
+mod push;
 mod stacks;
+mod verdict;
 
+pub use push::PushAll;
 pub use stacks::StackOpResult;
+pub use verdict::{SyncVerdict, VerdictTone};
 
 #[derive(Clone, Debug)]
 pub enum AuthStatus {
@@ -204,6 +208,10 @@ pub struct Store {
     /// The sync's driver. Dropping it cancels the sync between jobs — never
     /// mid-git, because each job runs to completion on the Tokio side.
     sync_task: Option<Task<()>>,
+    /// The latest Push all, planning, confirming, running or finished; see
+    /// [`push`]. Shares the toolbar with `sync`: one batch at a time, and
+    /// the rows show whichever ran last.
+    push_all: push::PushAllSync,
     /// Who the token belongs to, learned from the first refresh that answers.
     /// `None` before then, and the author filter simply has nobody pinned to
     /// the front of its roster until it fills in.
@@ -254,6 +262,7 @@ impl Store {
             divergence_probes: HashMap::new(),
             sync: None,
             sync_task: None,
+            push_all: push::PushAllSync::default(),
             viewer: None,
             db: None,
             stacks: stacks::StackSync::default(),
@@ -573,15 +582,23 @@ impl Store {
         self.sync.as_ref()
     }
 
+    /// Whether a batch — a local sync or a Push all — is under way. The
+    /// toolbar runs one at a time.
     pub fn is_syncing(&self) -> bool {
-        self.sync_task.is_some() && self.sync.as_ref().is_some_and(|sync| !sync.is_finished())
+        (self.sync_task.is_some() && self.sync.as_ref().is_some_and(|sync| !sync.is_finished()))
+            || self.push_all.is_active()
     }
 
-    /// The latest sync's verdict for one pull request, if it took part.
-    pub fn sync_result(&self, repo: &RepoId, number: PrNumber) -> Option<&LocalResult> {
+    /// The latest batch's verdict for one pull request, if it took part.
+    pub fn sync_result(&self, repo: &RepoId, number: PrNumber) -> Option<SyncVerdict<'_>> {
+        let key = (repo.clone(), number);
+        if let Some(result) = self.push_all.result(&key) {
+            return Some(SyncVerdict::Push(result));
+        }
         self.sync
             .as_ref()
-            .and_then(|sync| sync.results.get(&(repo.clone(), number)))
+            .and_then(|sync| sync.results.get(&key))
+            .map(SyncVerdict::Local)
     }
 
     /// Run one local operation over every pull request of every repository
@@ -596,6 +613,8 @@ impl Store {
         if self.is_syncing() {
             return;
         }
+        // The rows show one batch's verdicts at a time.
+        self.push_all.clear();
 
         let autostash = if self.autostash() {
             Autostash::Enabled

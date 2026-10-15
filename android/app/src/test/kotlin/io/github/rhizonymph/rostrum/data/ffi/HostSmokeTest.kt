@@ -2,6 +2,10 @@ package io.github.rhizonymph.rostrum.data.ffi
 
 import io.github.rhizonymph.rostrum.data.BackendError
 import io.github.rhizonymph.rostrum.data.Outcome
+import io.github.rhizonymph.rostrum.data.model.CiCheckKey
+import io.github.rhizonymph.rostrum.data.model.CiGridFilter
+import io.github.rhizonymph.rostrum.data.model.CiLine
+import io.github.rhizonymph.rostrum.data.model.CiRerun
 import io.github.rhizonymph.rostrum.data.model.GitHubStatus
 import io.github.rhizonymph.rostrum.data.model.StackPlanRequest
 import io.github.rhizonymph.rostrum.data.model.StackPlanCheck
@@ -258,5 +262,30 @@ class HostSmokeTest {
         assertInstanceOf(BackendError::class.java, backend.loadEarlierIssue(issue).error())
         assertInstanceOf(BackendError::class.java, backend.loadEarlierPull(PrRef(repo, 1)).error())
     }
-}
 
+    @Test
+    @Order(13)
+    fun `config push and the CI grid need a desktop or a token, and check their input`(): Unit = runBlocking {
+        assertEquals(100, backend.setIssuesPerRepo(500).orFail().issuesPerRepo)
+        assertEquals(1, backend.setIssuesPerRepo(0).orFail().issuesPerRepo)
+        assertEquals(25, backend.setIssuesPerRepo(25).orFail().issuesPerRepo)
+        assertEquals(25, backend.settings().orFail().issuesPerRepo)
+
+        assertInstanceOf(BackendError.InvalidInput::class.java, backend.pushConfigToDesktop("  ").error())
+        assertEquals(BackendError.NotPaired, backend.pushConfigToDesktop("r1").error())
+
+        val repos = backend.settings().orFail().repos
+        val grid = backend.ciGrid(CiGridFilter()).orFail()
+        assertEquals(repos.toSet(), grid.sections.map { it.repo }.toSet())
+        assertTrue(grid.sections.all { it.rows.isEmpty() })
+        assertEquals(grid.sections.size, grid.lines.count { it is CiLine.Header })
+        assertFalse(grid.ticks)
+        assertFalse(grid.anyRunning)
+        assertEquals(BackendError.NotSignedIn, backend.refreshCi(CiGridFilter(needsAttention = true)).error())
+        assertInstanceOf(BackendError.InvalidInput::class.java, backend.refreshCiRepo("not a repo", CiGridFilter()).error())
+        assertEquals(BackendError.NotSignedIn, backend.jobLog(repos.first(), 1, full = false).error())
+        assertEquals(BackendError.NotSignedIn, backend.checkOutput(repos.first(), 1).error())
+        assertEquals(BackendError.NotSignedIn, backend.rerun(repos.first(), CiRerun.Job(1)).error())
+        assertInstanceOf(BackendError.InvalidInput::class.java, backend.rerunTargets(repos.first(), 1, CiCheckKey("CI", "build")).error())
+    }
+}

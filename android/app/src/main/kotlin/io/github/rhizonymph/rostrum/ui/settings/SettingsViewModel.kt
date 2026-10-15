@@ -31,6 +31,8 @@ interface SettingsActions {
     fun addRepo()
     fun removeRepo(repo: String)
     fun setRefreshInterval(seconds: Long)
+    fun setPrsPerRepo(count: Int)
+    fun setIssuesPerRepo(count: Int)
     fun setNotifyNewPullRequests(enabled: Boolean)
     fun setNotifyReviewRequests(enabled: Boolean)
     fun signOut()
@@ -43,6 +45,8 @@ object NoSettingsActions : SettingsActions {
     override fun addRepo() = Unit
     override fun removeRepo(repo: String) = Unit
     override fun setRefreshInterval(seconds: Long) = Unit
+    override fun setPrsPerRepo(count: Int) = Unit
+    override fun setIssuesPerRepo(count: Int) = Unit
     override fun setNotifyNewPullRequests(enabled: Boolean) = Unit
     override fun setNotifyReviewRequests(enabled: Boolean) = Unit
     override fun signOut() = Unit
@@ -133,6 +137,8 @@ class SettingsViewModel(
                         refreshIntervalSecs = settings.refreshIntervalSecs,
                         notifyNewPullRequests = settings.notifyNewPullRequests,
                         notifyReviewRequests = settings.notifyReviewRequests,
+                        prsPerRepo = settings.prsPerRepo,
+                        issuesPerRepo = settings.issuesPerRepo,
                     ),
                 ),
             )
@@ -192,6 +198,14 @@ class SettingsViewModel(
         }
     }
 
+    override fun setPrsPerRepo(count: Int) {
+        viewModelScope.launch { applySettings(backend.setPrsPerRepo(count), notify = false) }
+    }
+
+    override fun setIssuesPerRepo(count: Int) {
+        viewModelScope.launch { applySettings(backend.setIssuesPerRepo(count), notify = false) }
+    }
+
     override fun setNotifyNewPullRequests(enabled: Boolean) {
         val content = loaded() ?: return
         viewModelScope.launch {
@@ -222,6 +236,8 @@ class SettingsViewModel(
                                 refreshIntervalSecs = settings.refreshIntervalSecs,
                                 notifyNewPullRequests = settings.notifyNewPullRequests,
                                 notifyReviewRequests = settings.notifyReviewRequests,
+                                prsPerRepo = settings.prsPerRepo,
+                                issuesPerRepo = settings.issuesPerRepo,
                             ),
                         ),
                     )
