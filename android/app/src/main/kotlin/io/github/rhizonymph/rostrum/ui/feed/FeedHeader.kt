@@ -76,6 +76,7 @@ fun FeedHeader(
             contentDescription = if (searchOpen) "Close search" else "Search",
             onClick = if (searchOpen) actions.closeSearch else actions.openSearch,
         )
+        RostrumIconButton(icon = RostrumIcons.Checks, contentDescription = "Checks", onClick = actions.openChecks)
         RostrumIconButton(icon = RostrumIcons.Sort, contentDescription = "Sort", onClick = actions.openSort)
         Box {
             RostrumIconButton(

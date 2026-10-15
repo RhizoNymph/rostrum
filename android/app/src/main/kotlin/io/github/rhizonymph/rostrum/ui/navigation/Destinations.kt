@@ -47,6 +47,10 @@ sealed interface Destination {
     @Serializable
     data class Repo(val repo: String) : Destination
 
+    /** The CI grid: every repository's checks, or [repo]'s alone. */
+    @Serializable
+    data class Checks(val repo: String? = null) : Destination
+
     /** One file's diff; previous/next move within the screen. */
     @Serializable
     data class FileDiff(val repo: String, val number: Int, val fileIndex: Int) : Destination {

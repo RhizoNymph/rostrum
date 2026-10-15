@@ -5,7 +5,6 @@ import io.github.rhizonymph.rostrum.data.model.BranchTree
 import io.github.rhizonymph.rostrum.data.model.BranchUpdateMethod
 import io.github.rhizonymph.rostrum.data.model.CloseIssueAs
 import io.github.rhizonymph.rostrum.data.model.CommentAnchor
-import io.github.rhizonymph.rostrum.data.model.DesktopConfigPreview
 import io.github.rhizonymph.rostrum.data.model.DesktopGitHubToken
 import io.github.rhizonymph.rostrum.data.model.DesktopProbe
 import io.github.rhizonymph.rostrum.data.model.FeedPreferences
@@ -54,7 +53,7 @@ import kotlinx.coroutines.flow.Flow
  * Secrets are never persisted here: the app keeps them in its secret store and
  * hands them in with [setGitHubToken] and [setRemote] at start-up.
  */
-interface RostrumBackend : IssuesApi, StackActionsApi {
+interface RostrumBackend : IssuesApi, StackActionsApi, CiApi, DesktopConfigApi {
     // --- session -------------------------------------------------------------
 
     /**
@@ -89,6 +88,9 @@ interface RostrumBackend : IssuesApi, StackActionsApi {
     suspend fun setRefreshInterval(seconds: Long): Outcome<Settings>
 
     suspend fun setPrsPerRepo(count: Int): Outcome<Settings>
+
+    /** Open issues fetched per repository; clamped to 1..=100. */
+    suspend fun setIssuesPerRepo(count: Int): Outcome<Settings>
 
     suspend fun setNotifications(newPullRequests: Boolean, reviewRequests: Boolean): Outcome<Settings>
 
@@ -299,16 +301,6 @@ interface RostrumBackend : IssuesApi, StackActionsApi {
 
     /** Unpair on the desktop, then forget it here. */
     suspend fun unpair(): Outcome<Unit>
-
-    /** The desktop's settings compared with this phone's. [BackendError.NotPaired] when unpaired. */
-    suspend fun desktopConfig(): Outcome<DesktopConfigPreview>
-
-    /**
-     * Replace this phone's repositories, pull requests per repository, feed
-     * preferences and stash default with the desktop's (fetched afresh, never
-     * a stale preview) and persist them. Refresh the feed afterwards.
-     */
-    suspend fun copyDesktopConfig(): Outcome<Settings>
 
     // --- notifications -------------------------------------------------------
 

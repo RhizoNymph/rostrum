@@ -8,6 +8,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.rhizonymph.rostrum.data.model.PrRef
 import io.github.rhizonymph.rostrum.ui.common.CollectMessages
 import io.github.rhizonymph.rostrum.ui.common.profileViewModel
+import io.github.rhizonymph.rostrum.ui.desktopconfig.PushSettingsSheet
+import io.github.rhizonymph.rostrum.ui.desktopconfig.PushSettingsViewModel
 import io.github.rhizonymph.rostrum.ui.navigation.PrTab
 
 /** The Desktop tab's entry point, wired into the navigation graph. */
@@ -23,6 +25,9 @@ fun DesktopRoute(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val now = remember(state) { viewModel.clock.instant() }
     CollectMessages(viewModel.messages.flow)
+    val pushSheet = profileViewModel { _, profile -> PushSettingsViewModel(profile.backend) }
+    val pushState by pushSheet.state.collectAsStateWithLifecycle()
+    CollectMessages(pushSheet.messages.flow)
     DesktopScreen(
         state = state,
         now = now,
@@ -32,5 +37,8 @@ fun DesktopRoute(
         modifier = modifier,
         profileLabel = profileLabel,
         onOpenProfiles = onOpenProfiles,
+        onSendSettings = pushSheet::open,
     )
+    val machine = ((state.page as? DesktopPage.Loaded)?.content?.machine?.name)
+    PushSettingsSheet(pushState, pushSheet, machine)
 }

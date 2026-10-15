@@ -43,6 +43,8 @@ import io.github.rhizonymph.rostrum.ui.components.NewIssueFab
 import io.github.rhizonymph.rostrum.ui.components.SegmentPosition
 import io.github.rhizonymph.rostrum.ui.components.SegmentedToggle
 import io.github.rhizonymph.rostrum.ui.components.StatusChip
+import io.github.rhizonymph.rostrum.ui.components.RostrumIconButton
+import io.github.rhizonymph.rostrum.ui.components.RostrumIcons
 import io.github.rhizonymph.rostrum.ui.components.TextPillButton
 import io.github.rhizonymph.rostrum.ui.components.TitleStack
 import io.github.rhizonymph.rostrum.ui.components.cardSegment
@@ -78,6 +80,7 @@ fun RepoScreen(
     modifier: Modifier = Modifier,
     rows: RowCallbacks = RowCallbacks(onOpenPullRequest, onOpenIssue),
     arrange: ArrangeControls? = null,
+    onOpenChecks: () -> Unit = {},
 ) {
     val colors = RostrumTheme.colors
     val overview = (state.overview as? UiState.Loaded)?.data
@@ -86,6 +89,9 @@ fun RepoScreen(
             onBack = onBack,
             backDescription = "Back to the feed",
             actions = {
+                if (arrange?.picked == null) {
+                    RostrumIconButton(RostrumIcons.Checks, "Checks of $repo", onOpenChecks)
+                }
                 if (arrange != null && state.tab == RepoTab.Pulls && arrange.picked == null) {
                     TextPillButton("Arrange", arrange.start)
                 }
