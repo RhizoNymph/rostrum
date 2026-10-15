@@ -7,6 +7,7 @@ pub mod arrivals;
 pub mod authors;
 pub mod branches;
 pub mod ci;
+pub mod closed;
 pub mod feed;
 pub mod issue;
 pub mod link;
@@ -27,6 +28,10 @@ pub(crate) mod test_support;
 
 pub use arrivals::{Arrival, ArrivalKind, Baseline};
 pub use authors::{AuthorEntry, VisibleAuthors, issue_roster, roster};
+pub use closed::{
+    ClosedIx, ClosedPull, EndingError, PullEnding, closed_count, closed_needs_fetch, closed_order,
+    closed_roster, find_closed,
+};
 pub use feed::{
     Chrome, Feed, FeedFilter, FeedRow, FeedStack, IssueIx, PrIx, RepoIx, StackPlace, StackSlot,
 };

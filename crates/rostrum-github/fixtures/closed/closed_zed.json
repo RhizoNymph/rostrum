@@ -1,0 +1,449 @@
+{
+  "data": {
+    "rateLimit": {
+      "cost": 1,
+      "remaining": 4997,
+      "resetAt": "2026-10-14T21:35:51Z"
+    },
+    "repository": {
+      "pullRequests": {
+        "nodes": [
+          {
+            "id": "PR_kwDOFExXwM8AAAABId7nrw",
+            "number": 65607,
+            "title": "agent_servers: Move the legacy ACP adapter into v1",
+            "url": "https://github.com/zed-industries/zed/pull/65607",
+            "state": "MERGED",
+            "isDraft": false,
+            "createdAt": "2026-10-14T19:18:30Z",
+            "updatedAt": "2026-10-14T19:58:14Z",
+            "closedAt": "2026-10-14T19:58:12Z",
+            "mergedAt": "2026-10-14T19:58:12Z",
+            "author": {
+              "login": "benbrandt",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/2111074?u=f0960634cc42c1a05e26515818dabb995bc56b10&v=4"
+            },
+            "headRefName": "benbrandt/acp-v1-module",
+            "headRefOid": "259f2af662161d873d2f69caf5b08a5281ba5910",
+            "baseRefName": "main",
+            "isCrossRepository": false,
+            "additions": 9709,
+            "deletions": 9675,
+            "changedFiles": 3,
+            "reviewDecision": null,
+            "assignees": {
+              "nodes": []
+            },
+            "labels": {
+              "nodes": [
+                {
+                  "name": "cla-signed",
+                  "color": "ededed"
+                },
+                {
+                  "name": "staff",
+                  "color": "031c62"
+                }
+              ]
+            },
+            "comments": {
+              "totalCount": 0
+            }
+          },
+          {
+            "id": "PR_kwDOFExXwM8AAAABHmsUfA",
+            "number": 65420,
+            "title": "agent: Use receipts and reported state for native turns",
+            "url": "https://github.com/zed-industries/zed/pull/65420",
+            "state": "MERGED",
+            "isDraft": false,
+            "createdAt": "2026-10-09T20:04:43Z",
+            "updatedAt": "2026-10-14T19:32:07Z",
+            "closedAt": "2026-10-14T19:32:05Z",
+            "mergedAt": "2026-10-14T19:32:05Z",
+            "author": {
+              "login": "benbrandt",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/2111074?u=f0960634cc42c1a05e26515818dabb995bc56b10&v=4"
+            },
+            "headRefName": "benbrandt/acp-shared-turn-completion",
+            "headRefOid": "030f3836ad50b928cd8e9d918b1b26854d64812a",
+            "baseRefName": "main",
+            "isCrossRepository": false,
+            "additions": 2581,
+            "deletions": 569,
+            "changedFiles": 6,
+            "reviewDecision": null,
+            "assignees": {
+              "nodes": []
+            },
+            "labels": {
+              "nodes": [
+                {
+                  "name": "cla-signed",
+                  "color": "ededed"
+                },
+                {
+                  "name": "staff",
+                  "color": "031c62"
+                }
+              ]
+            },
+            "comments": {
+              "totalCount": 0
+            }
+          },
+          {
+            "id": "PR_kwDOFExXwM8AAAABIdkJBg",
+            "number": 65606,
+            "title": "agent_servers: Move the legacy ACP adapter into v1",
+            "url": "https://github.com/zed-industries/zed/pull/65606",
+            "state": "CLOSED",
+            "isDraft": true,
+            "createdAt": "2026-10-14T18:49:05Z",
+            "updatedAt": "2026-10-14T19:20:46Z",
+            "closedAt": "2026-10-14T18:58:04Z",
+            "mergedAt": null,
+            "author": {
+              "login": "benbrandt",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/2111074?u=f0960634cc42c1a05e26515818dabb995bc56b10&v=4"
+            },
+            "headRefName": "benbrandt/acp-v1-module",
+            "headRefOid": "6c9437148967ec114b826ceaa5e7ed2aef655a6d",
+            "baseRefName": "benbrandt/acp-v2-connection-auth-foundation",
+            "isCrossRepository": false,
+            "additions": 10111,
+            "deletions": 9845,
+            "changedFiles": 5,
+            "reviewDecision": null,
+            "assignees": {
+              "nodes": []
+            },
+            "labels": {
+              "nodes": [
+                {
+                  "name": "cla-signed",
+                  "color": "ededed"
+                },
+                {
+                  "name": "staff",
+                  "color": "031c62"
+                }
+              ]
+            },
+            "comments": {
+              "totalCount": 1
+            }
+          },
+          {
+            "id": "PR_kwDOFExXwM8AAAABIdG1Qg",
+            "number": 65601,
+            "title": "agent_servers: Share ACP connection lifecycle across v1 and v2",
+            "url": "https://github.com/zed-industries/zed/pull/65601",
+            "state": "MERGED",
+            "isDraft": false,
+            "createdAt": "2026-10-14T18:12:00Z",
+            "updatedAt": "2026-10-14T18:58:04Z",
+            "closedAt": "2026-10-14T18:58:01Z",
+            "mergedAt": "2026-10-14T18:58:01Z",
+            "author": {
+              "login": "benbrandt",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/2111074?u=f0960634cc42c1a05e26515818dabb995bc56b10&v=4"
+            },
+            "headRefName": "benbrandt/acp-shared-client-runtime",
+            "headRefOid": "2a522533d423ad26f85581dd8cbecd8219355970",
+            "baseRefName": "benbrandt/acp-v2-connection-auth-foundation",
+            "isCrossRepository": false,
+            "additions": 482,
+            "deletions": 250,
+            "changedFiles": 4,
+            "reviewDecision": null,
+            "assignees": {
+              "nodes": []
+            },
+            "labels": {
+              "nodes": [
+                {
+                  "name": "cla-signed",
+                  "color": "ededed"
+                },
+                {
+                  "name": "staff",
+                  "color": "031c62"
+                }
+              ]
+            },
+            "comments": {
+              "totalCount": 0
+            }
+          },
+          {
+            "id": "PR_kwDOFExXwM8AAAABIYC-Tw",
+            "number": 65582,
+            "title": "agent_servers: Add inactive v2 connection and auth foundation",
+            "url": "https://github.com/zed-industries/zed/pull/65582",
+            "state": "MERGED",
+            "isDraft": false,
+            "createdAt": "2026-10-14T11:17:59Z",
+            "updatedAt": "2026-10-14T18:58:03Z",
+            "closedAt": "2026-10-14T18:58:01Z",
+            "mergedAt": "2026-10-14T18:58:01Z",
+            "author": {
+              "login": "benbrandt",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/2111074?u=f0960634cc42c1a05e26515818dabb995bc56b10&v=4"
+            },
+            "headRefName": "benbrandt/acp-v2-connection-auth-foundation",
+            "headRefOid": "96cfbeebe22c95fecbbd9975869d4272a87c3ff5",
+            "baseRefName": "main",
+            "isCrossRepository": false,
+            "additions": 1296,
+            "deletions": 93,
+            "changedFiles": 4,
+            "reviewDecision": null,
+            "assignees": {
+              "nodes": []
+            },
+            "labels": {
+              "nodes": [
+                {
+                  "name": "cla-signed",
+                  "color": "ededed"
+                },
+                {
+                  "name": "staff",
+                  "color": "031c62"
+                }
+              ]
+            },
+            "comments": {
+              "totalCount": 0
+            }
+          },
+          {
+            "id": "PR_kwDOFExXwM8AAAABHu-PPA",
+            "number": 65455,
+            "title": "Implement IME composition underline in filename editing buffer in project_panel",
+            "url": "https://github.com/zed-industries/zed/pull/65455",
+            "state": "CLOSED",
+            "isDraft": false,
+            "createdAt": "2026-10-10T19:49:01Z",
+            "updatedAt": "2026-10-14T18:43:26Z",
+            "closedAt": "2026-10-12T11:42:41Z",
+            "mergedAt": null,
+            "author": {
+              "login": "Sha1rholder",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/96712109?u=4b8e27b17c63a8f247307bbfb53f4ae3a7723c47&v=4"
+            },
+            "headRefName": "fix/project_panel-filename-editing-impl-composition-underline",
+            "headRefOid": "462036e91281c0400f1034f87e1a9d22a116d5d2",
+            "baseRefName": "main",
+            "isCrossRepository": true,
+            "additions": 78,
+            "deletions": 4,
+            "changedFiles": 2,
+            "reviewDecision": null,
+            "assignees": {
+              "nodes": []
+            },
+            "labels": {
+              "nodes": [
+                {
+                  "name": "cla-signed",
+                  "color": "ededed"
+                }
+              ]
+            },
+            "comments": {
+              "totalCount": 2
+            }
+          },
+          {
+            "id": "PR_kwDOFExXwM8AAAABIdUeNg",
+            "number": 65605,
+            "title": "Feat/dynamic ssh port forwarding",
+            "url": "https://github.com/zed-industries/zed/pull/65605",
+            "state": "CLOSED",
+            "isDraft": false,
+            "createdAt": "2026-10-14T18:28:54Z",
+            "updatedAt": "2026-10-14T18:30:03Z",
+            "closedAt": "2026-10-14T18:30:03Z",
+            "mergedAt": null,
+            "author": {
+              "login": "alessandrobrunoh",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/67830217?u=592cabaf62695ff0905b30d7c7edf9f361e7953d&v=4"
+            },
+            "headRefName": "feat/dynamic-ssh-port-forwarding",
+            "headRefOid": "d30efc71f8e6f6949a7c99967524a2765d5b4119",
+            "baseRefName": "main",
+            "isCrossRepository": true,
+            "additions": 956,
+            "deletions": 88,
+            "changedFiles": 10,
+            "reviewDecision": null,
+            "assignees": {
+              "nodes": []
+            },
+            "labels": {
+              "nodes": [
+                {
+                  "name": "cla-signed",
+                  "color": "ededed"
+                },
+                {
+                  "name": "first contribution",
+                  "color": "8de988"
+                },
+                {
+                  "name": "no self-review",
+                  "color": "ff4dba"
+                }
+              ]
+            },
+            "comments": {
+              "totalCount": 2
+            }
+          },
+          {
+            "id": "PR_kwDOFExXwM7XAGS4",
+            "number": 55292,
+            "title": "remote_server: Use CreateProcess to spawn daemon on Windows",
+            "url": "https://github.com/zed-industries/zed/pull/55292",
+            "state": "MERGED",
+            "isDraft": false,
+            "createdAt": "2026-04-30T07:27:32Z",
+            "updatedAt": "2026-10-14T18:25:02Z",
+            "closedAt": "2026-10-14T09:00:28Z",
+            "mergedAt": "2026-10-14T09:00:28Z",
+            "author": {
+              "login": "sergio-u",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/10236013?u=53f057441ceebf38c7036b65ba328fa861220878&v=4"
+            },
+            "headRefName": "fix/spawn-server-windows-no-shell",
+            "headRefOid": "6320bafd1abe7ccf39010cf87821174936754337",
+            "baseRefName": "main",
+            "isCrossRepository": true,
+            "additions": 22,
+            "deletions": 71,
+            "changedFiles": 4,
+            "reviewDecision": null,
+            "assignees": {
+              "nodes": [
+                {
+                  "login": "reflectronic",
+                  "avatarUrl": "https://avatars.githubusercontent.com/u/27514983?u=6b67a9e3ab8f9ccbcefb69ea5d3c270069a2275c&v=4"
+                }
+              ]
+            },
+            "labels": {
+              "nodes": [
+                {
+                  "name": "cla-signed",
+                  "color": "ededed"
+                },
+                {
+                  "name": "platform:remote",
+                  "color": "1a570c"
+                },
+                {
+                  "name": "first contribution",
+                  "color": "8de988"
+                }
+              ]
+            },
+            "comments": {
+              "totalCount": 7
+            }
+          },
+          {
+            "id": "PR_kwDOFExXwM8AAAABGstehg",
+            "number": 65177,
+            "title": "Fix focus cleanup stalls during conversation restoration",
+            "url": "https://github.com/zed-industries/zed/pull/65177",
+            "state": "MERGED",
+            "isDraft": false,
+            "createdAt": "2026-10-05T11:54:38Z",
+            "updatedAt": "2026-10-14T17:50:10Z",
+            "closedAt": "2026-10-14T17:50:08Z",
+            "mergedAt": "2026-10-14T17:50:08Z",
+            "author": {
+              "login": "SomeoneToIgnore",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/2690773?u=16d0cd6ef82c3aa86afcb0ff7c2d18bab84c3466&v=4"
+            },
+            "headRefName": "kb/hang-fix",
+            "headRefOid": "706946a8dcc34bb21efac36c2e04264893200582",
+            "baseRefName": "main",
+            "isCrossRepository": false,
+            "additions": 368,
+            "deletions": 47,
+            "changedFiles": 8,
+            "reviewDecision": null,
+            "assignees": {
+              "nodes": [
+                {
+                  "login": "osiewicz",
+                  "avatarUrl": "https://avatars.githubusercontent.com/u/24362066?u=8466fc8a6dc202f8e39ce125568d08599d95ae65&v=4"
+                }
+              ]
+            },
+            "labels": {
+              "nodes": [
+                {
+                  "name": "cla-signed",
+                  "color": "ededed"
+                },
+                {
+                  "name": "staff",
+                  "color": "031c62"
+                }
+              ]
+            },
+            "comments": {
+              "totalCount": 5
+            }
+          },
+          {
+            "id": "PR_kwDOFExXwM7vNnUg",
+            "number": 60582,
+            "title": "agent_ui: Allow dragging terminal tabs into Agent Panel",
+            "url": "https://github.com/zed-industries/zed/pull/60582",
+            "state": "MERGED",
+            "isDraft": false,
+            "createdAt": "2026-07-08T09:32:25Z",
+            "updatedAt": "2026-10-14T17:18:29Z",
+            "closedAt": "2026-10-05T13:01:03Z",
+            "mergedAt": "2026-10-05T13:01:03Z",
+            "author": {
+              "login": "cppcoffee",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/6635286?u=60eb57099b698f6a7cabb3e7bbf63e0f7d42b3e4&v=4"
+            },
+            "headRefName": "agent-panel-terminal-drag",
+            "headRefOid": "faef8d2f1e59a45e40f91869b22c776b1bf468fe",
+            "baseRefName": "main",
+            "isCrossRepository": true,
+            "additions": 161,
+            "deletions": 0,
+            "changedFiles": 1,
+            "reviewDecision": null,
+            "assignees": {
+              "nodes": []
+            },
+            "labels": {
+              "nodes": [
+                {
+                  "name": "cla-signed",
+                  "color": "ededed"
+                },
+                {
+                  "name": "area:ai/terminal threads",
+                  "color": "c9106c"
+                }
+              ]
+            },
+            "comments": {
+              "totalCount": 0
+            }
+          }
+        ]
+      }
+    }
+  }
+}

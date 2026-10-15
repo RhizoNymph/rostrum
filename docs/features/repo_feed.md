@@ -14,10 +14,12 @@ vertical stack of per-repo containers in one continuous scroll.
 - Filter of PRs and issues within a repo, and applying the feed's sorts
   while flattening either tab. The sort model itself is `feed_sort`; see
   `docs/features/feed_sort.md`.
-- The **Pull requests | Issues** tab bar: which list the stream is built from,
-  per-tab counts, and `[`/`]`. What lies behind the Issues tab — fetching,
-  the issue pane, creation — belongs to `issues`; see
-  `docs/features/issues.md`.
+- The **Pull requests | Issues | Closed** tab bar: which list the stream is
+  built from, per-tab counts, and `[`/`]`. What lies behind the Issues tab —
+  fetching, the issue pane, creation — belongs to `issues`; see
+  `docs/features/issues.md`. The Closed tab — its fetch, its one
+  cross-repository list in ending order, and the pane for an ended pull
+  request — belongs to `closed_prs`; see `docs/features/closed_prs.md`.
 
 ## Non-scope
 
@@ -61,6 +63,7 @@ pub enum FeedRow {
     StackHeader{ repo: RepoIx, stack: StackIx },          // above a stack's members
     PrRow      { repo: RepoIx, pr: PrIx, stack: Option<StackSlot> },
     IssueRow   { repo: RepoIx, issue: IssueIx },             // Issues tab only
+    ClosedRow  { repo: RepoIx, closed: ClosedIx },           // Closed tab only
     RepoEmpty  { repo: RepoIx },   // repo loaded, zero open PRs
     RepoError  { repo: RepoIx },   // last refresh failed
     RepoLoading{ repo: RepoIx },   // first load in flight
@@ -98,7 +101,11 @@ the ordering guarantees below.
 ## Tabs
 
 `flatten_tab(repos, filter, tab)` builds the stream for one tab; `flatten` is
-`flatten_tab(.., FeedTab::PullRequests)`. Both tabs share every rule below —
+`flatten_tab(.., FeedTab::PullRequests)`. The Closed tab is the exception to
+everything in this section: it is one list across repositories in the order
+pull requests ended, with no repository headers, sort, hide-empty or
+collapse, built by `flatten_closed` — see `docs/features/closed_prs.md`. The
+two open tabs share every rule below —
 runs, chrome, hide-empty, collapse, the loading/error/empty notices — and
 differ only in which list (`prs` or `issues`) and which load state (`load` or
 `issues_load`) they read. A stream holds `PrRow`s or `IssueRow`s, never both,
@@ -112,7 +119,9 @@ the filter. The selection is kept across a switch; navigation in the new tab
 starts from its end because the old selection has no row there. On the Issues
 tab the drafts button is hidden (it has nothing to act on), the authors
 popover lists issue authors, and every repository header offers
-`+ New issue`.
+`+ New issue`. On the Closed tab the drafts and Sort buttons and the "hide
+empty repos" checkbox are hidden, `c` is inert, and the authors popover lists
+the authors of closed pull requests.
 
 ## Control flow
 
@@ -322,6 +331,9 @@ detail pane's composers.
   time.
 - **One kind of item per stream.** A feed built for a tab holds only that
   tab's item rows.
+- **Closed rows chrome as one run.** `Feed::chrome` joins consecutive
+  `ClosedRow`s into one container whatever their repositories; every other
+  row joins only its own repository's run.
 - **Sticky headers are not available for free.** Zed's `sticky_items` decoration
   is implemented against `uniform_list` only. If sticky repo headers are wanted
   later, an equivalent must be written for `List`.
@@ -339,7 +351,9 @@ repositories, and is what everything below assumes.
 |---|---|
 | `crates/rostrum-core/src/feed.rs` | `FeedRow` (including `StackHeader` and a member's `StackSlot`), `flatten`, `flatten_in`, `flatten_tab`, `flatten_tab_in`, `repo_pull_rows`, run-boundary computation, filter |
 | `crates/rostrum-core/src/sort/` | The feed's sorts, over pull requests and issues; see `feed_sort.md` |
-| `crates/rostrum-core/src/tabs.rs` | `FeedTab`, `TabCounts`, `tab_counts` |
+| `crates/rostrum-core/src/tabs.rs` | `FeedTab` (Pull requests, Issues, Closed), `TabCounts`, `tab_counts` |
+| `crates/rostrum-core/src/closed/` | The Closed tab's model, order and row stream; see `closed_prs.md` |
+| `crates/rostrum/src/feed/closed.rs` | Closed row rendering; see `closed_prs.md` |
 | `crates/rostrum-core/src/state.rs` | `AppState`, `RepoState`, `Selection` |
 | `crates/rostrum-core/src/stack/` | Stack model, detection, grouping; see `stacks.md` |
 | `crates/rostrum/src/feed/mod.rs` | Feed view entity, tab bar, `ListState` ownership, splice logic, identity selection (`selection_for`), header popovers, `FeedEvent` |

@@ -176,6 +176,7 @@ impl Store {
                 self.refresh_issues(id, cx);
             }
         }
+        self.refresh_closed_if_shown(cx);
         if !gone.is_empty() {
             tracing::info!(removed = gone.len(), "repositories removed by a config change");
         }

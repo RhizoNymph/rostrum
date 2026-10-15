@@ -30,6 +30,7 @@ use crate::{
 };
 
 mod arrange;
+mod closed;
 mod extend;
 mod push_all;
 mod sort_menu;
@@ -432,9 +433,9 @@ impl FeedView {
     /// showing whatever was open; `j`/`k` then enter the new tab's list from
     /// its end, since the old selection has no row there.
     fn set_tab(&mut self, tab: FeedTab, cx: &mut Context<Self>) {
-        // Picking for an arrangement toggles pull request rows; the Issues
-        // tab has none, so leaving the tab ends it.
-        if tab == FeedTab::Issues && self.is_picking() {
+        // Picking for an arrangement toggles open pull request rows; no
+        // other tab has any, so leaving the tab ends it.
+        if tab != FeedTab::PullRequests && self.is_picking() {
             self.stop_picking(cx);
         }
         self.store.update(cx, |store, cx| store.set_tab(tab, cx));
@@ -483,6 +484,11 @@ impl FeedView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The Closed tab has no repository containers to collapse; `c` there
+        // would silently fold the repository on the other tabs.
+        if self.store.read(cx).state.tab == FeedTab::Closed {
+            return;
+        }
         let Some(id) = self
             .store
             .read(cx)
@@ -653,8 +659,8 @@ impl FeedView {
         .on_dismiss(cx.listener(|this, _, _window, cx| this.close_popover(cx)))
     }
 
-    /// "Pull requests | Issues" across the top of the pane, each with the
-    /// number of open items the filter lets through, and — on the Issues
+    /// "Pull requests | Issues | Closed" across the top of the pane, each
+    /// with the number of items the filter lets through, and — on the Issues
     /// tab — the way to open a new one.
     fn render_tabs(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let store = self.store.read(cx);
@@ -754,30 +760,36 @@ impl FeedView {
                     })
                     .child(self.authors_button(author_count, cx))
                     .child(self.repos_button(repo_count, cx))
-                    .child(self.sort_button(cx))
+                    // The Closed tab is always newest ending first; the sort
+                    // is for the open tabs, so it is not offered there.
+                    .when(tab != FeedTab::Closed, |el| el.child(self.sort_button(cx)))
                     .child(
                         Button::new("open-ci", "CI")
                             .tooltip("The checks of every open pull request, as a grid (shift-c)")
                             .on_click(cx.listener(|_, _, _window, cx| cx.emit(FeedEvent::OpenCi))),
                     ),
             )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Checkbox::new("hide-empty", "hide empty repos", hide_empty).on_toggle(
-                            cx.listener(|this, _, _window, cx| this.toggle_hide_empty(cx)),
-                        ),
-                    )
-                    .when(hide_empty && hidden_repos > 0, |el| {
-                        el.child(
-                            div()
-                                .text_size(rems(0.7))
-                                .text_color(theme.text_subtle)
-                                .child(format!("{hidden_repos} hidden")),
+            // The Closed tab lists no repository containers, empty or not.
+            .when(tab != FeedTab::Closed, |el| {
+                el.child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            Checkbox::new("hide-empty", "hide empty repos", hide_empty)
+                                .on_toggle(
+                                    cx.listener(|this, _, _window, cx| this.toggle_hide_empty(cx)),
+                                ),
                         )
-                    }),
-            )
+                        .when(hide_empty && hidden_repos > 0, |el| {
+                            el.child(
+                                div()
+                                    .text_size(rems(0.7))
+                                    .text_color(theme.text_subtle)
+                                    .child(format!("{hidden_repos} hidden")),
+                            )
+                        }),
+                )
+            })
             // Only for users with a clone to sync: three greyed-out buttons
             // would be a puzzle for everyone else.
             .when(has_clone, |el| {
@@ -893,6 +905,7 @@ fn visible_counts(repos: &[RepoState], filter: &FeedFilter, tab: FeedTab) -> Vis
         .map(|repo| match tab {
             FeedTab::PullRequests => repo.prs.len(),
             FeedTab::Issues => repo.issues.len(),
+            FeedTab::Closed => repo.closed.len(),
         })
         .sum();
     VisibleCounts {
@@ -970,6 +983,15 @@ fn selection_for(repos: &[RepoState], row: FeedRow) -> Option<Selection> {
             Some(Selection::Issue {
                 repo: state.id.clone(),
                 number: state.issues.get(issue.0)?.number,
+            })
+        }
+        // A closed pull request opens the same pull request pane as an open
+        // one; the pane sees it has ended and offers no merge or review.
+        FeedRow::ClosedRow { repo, closed } => {
+            let state = repos.get(repo.0)?;
+            Some(Selection::PullRequest {
+                repo: state.id.clone(),
+                number: state.closed.get(closed.0)?.number(),
             })
         }
         FeedRow::RepoHeader { .. }

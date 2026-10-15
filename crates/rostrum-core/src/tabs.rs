@@ -1,9 +1,9 @@
-//! The feed's two lists — pull requests and issues — and how many of each a
-//! filter lets through.
+//! The feed's three lists — open pull requests, open issues, and closed pull
+//! requests — and how many of each a filter lets through.
 
 use serde::{Deserialize, Serialize};
 
-use crate::{feed::FeedFilter, state::RepoState};
+use crate::{closed::closed_count, feed::FeedFilter, state::RepoState};
 
 /// Which list the feed is showing.
 ///
@@ -16,16 +16,20 @@ pub enum FeedTab {
     #[default]
     PullRequests,
     Issues,
+    /// Merged and closed-unmerged pull requests, newest ending first, in
+    /// one list across repositories. See [`crate::closed`].
+    Closed,
 }
 
 impl FeedTab {
     /// Left to right, as the tab bar draws them.
-    pub const ALL: [Self; 2] = [Self::PullRequests, Self::Issues];
+    pub const ALL: [Self; 3] = [Self::PullRequests, Self::Issues, Self::Closed];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::PullRequests => "Pull requests",
             Self::Issues => "Issues",
+            Self::Closed => "Closed",
         }
     }
 
@@ -34,6 +38,7 @@ impl FeedTab {
         match self {
             Self::PullRequests => 0,
             Self::Issues => 1,
+            Self::Closed => 2,
         }
     }
 
@@ -53,7 +58,8 @@ impl FeedTab {
     }
 }
 
-/// Open items per tab that the filter lets through, across every repository.
+/// Items per tab that the filter lets through, across every repository: open
+/// pull requests, open issues, and the closed pull requests held.
 ///
 /// Counted over state rather than over feed rows, for the same reason the
 /// filter bar's "N of M shown" is: a collapsed repository hides rows without
@@ -63,6 +69,9 @@ impl FeedTab {
 pub struct TabCounts {
     pub pull_requests: usize,
     pub issues: usize,
+    /// Closed pull requests held — at most the fetch window per repository,
+    /// so this counts what the tab lists, not every pull request ever closed.
+    pub closed: usize,
 }
 
 impl TabCounts {
@@ -70,6 +79,7 @@ impl TabCounts {
         match tab {
             FeedTab::PullRequests => self.pull_requests,
             FeedTab::Issues => self.issues,
+            FeedTab::Closed => self.closed,
         }
     }
 }
@@ -86,6 +96,7 @@ pub fn tab_counts(repos: &[RepoState], filter: &FeedFilter) -> TabCounts {
             .flat_map(|repo| &repo.issues)
             .filter(|issue| filter.accepts_issue(issue))
             .count(),
+        closed: closed_count(repos, filter),
     }
 }
 
@@ -134,7 +145,9 @@ mod tests {
     #[test]
     fn tabs_step_without_wrapping() {
         assert_eq!(FeedTab::PullRequests.next(), FeedTab::Issues);
-        assert_eq!(FeedTab::Issues.next(), FeedTab::Issues);
+        assert_eq!(FeedTab::Issues.next(), FeedTab::Closed);
+        assert_eq!(FeedTab::Closed.next(), FeedTab::Closed);
+        assert_eq!(FeedTab::Closed.previous(), FeedTab::Issues);
         assert_eq!(FeedTab::Issues.previous(), FeedTab::PullRequests);
         assert_eq!(FeedTab::PullRequests.previous(), FeedTab::PullRequests);
     }
@@ -156,6 +169,8 @@ mod tests {
         );
         let back: FeedTab = serde_json::from_str(r#""issues""#).expect("decodes");
         assert_eq!(back, FeedTab::Issues);
+        let back: FeedTab = serde_json::from_str(r#""closed""#).expect("decodes");
+        assert_eq!(back, FeedTab::Closed);
     }
 
     // --- flattening issues --------------------------------------------------
@@ -471,7 +486,8 @@ mod tests {
             tab_counts(&repos, &FeedFilter::default()),
             TabCounts {
                 pull_requests: 3,
-                issues: 4
+                issues: 4,
+                closed: 0
             }
         );
 
@@ -496,7 +512,8 @@ mod tests {
             counts,
             TabCounts {
                 pull_requests: 0,
-                issues: 1
+                issues: 1,
+                closed: 0
             }
         );
     }
@@ -510,7 +527,8 @@ mod tests {
             tab_counts(&[state], &FeedFilter::default()),
             TabCounts {
                 pull_requests: 1,
-                issues: 2
+                issues: 2,
+                closed: 0
             }
         );
     }

@@ -29,6 +29,9 @@ direction, chosen from a **Sort** popover in the feed header and remembered in
   the tab never changes the order setting, only which list it applies to.
 - Filtering. The sort never hides anything; see `author_filter` and
   `repo_feed`.
+- The Closed tab. It is always newest ending first across repositories,
+  whatever the sort says, and the Sort button is hidden there; see
+  `docs/features/closed_prs.md`.
 
 ## Data model
 

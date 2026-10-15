@@ -118,7 +118,9 @@ Key records and enums, by screen:
   { pullRequests, issues }, sort: SortSettings, repos: [RepoSection],
   hiddenEmptyRepos, totalOpen, visibleOpen, query, preferences, filterActive,
   mergeStatesSettling, viewer }` — everything but `tabCounts` is for the
-  active tab (`FeedTab` = `PULL_REQUESTS | ISSUES`). `RepoSection { repo,
+  active tab (`FeedTab` = `PULL_REQUESTS | ISSUES`; the desktop's Closed
+  tab is not offered — the core's `Closed` maps to `PULL_REQUESTS`, and
+  `docs/features/closed_prs.md` lists what the phone needs for it). `RepoSection { repo,
   load: RepoLoad, openCount, visibleCount, collapsed, body: RepoBody }` where
   `RepoBody` is `Collapsed | Loading | Failed(reason) | Empty |
   Pulls(items: [PullItem]) | Issues(issues: [IssueSummary])` — straight from

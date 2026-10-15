@@ -374,7 +374,8 @@ SQLite via `sqlx`, at `~/.local/share/rostrum/cache.db`. The crate draws a hard
 line between two kinds of data, and the distinction is load-bearing:
 
 - **Cache** (`cache_pull_request`, `cache_repo_meta`, `cache_conversation`,
-  `cache_http`, `cache_issue`, `cache_issue_detail`, `cache_stack`) — copies
+  `cache_http`, `cache_issue`, `cache_issue_detail`, `cache_stack`,
+  `cache_closed_pull`) — copies
   of things GitHub already knows. Disposable. A schema-version mismatch drops
   and recreates these tables; corrupt JSON in a row is logged, deleted, and
   treated as a miss.
@@ -487,6 +488,9 @@ Two rules that matter in practice:
 | `crates/rostrum/src/sync/issues.rs` | Issue refresh in the same poll cycle, its overlap guard and cache write |
 | `crates/rostrum-github/src/issues/` | Issue documents, REST requests, client methods — see `docs/features/issues.md` |
 | `crates/rostrum-db/src/issues.rs` | Issue lists and issue details cached per repository |
+| `crates/rostrum-github/src/closed/` | The closed pull request document (`CLOSED_PULL_REQUESTS`), its wire types, `GitHubClient::closed_pull_requests` — see `docs/features/closed_prs.md` |
+| `crates/rostrum/src/sync/closed.rs` | Closed refresh while the Closed tab is shown, its overlap guard and cache write |
+| `crates/rostrum-db/src/closed.rs` | `cache_closed_pull` |
 | `crates/rostrum-github/src/ci/` | The CI checks document, job logs, check output, re-runs — see `docs/features/ci_grid.md` |
 | `crates/rostrum/src/sync/ci.rs` | Checks refresh on the poll, the CI view's 15 s poll, optimistic requeue |
 | `crates/rostrum-core/src/probe.rs` | `MergeProbeBudget`, `needs_merge_probe` |
