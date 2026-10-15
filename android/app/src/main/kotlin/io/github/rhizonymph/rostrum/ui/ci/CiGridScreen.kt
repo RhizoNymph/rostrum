@@ -90,7 +90,7 @@ fun CiGridScreen(
             when (val content = state.content) {
                 UiState.Loading -> LoadingView(label = "Reading checks")
                 is UiState.Error -> ErrorView(content.error, Modifier.padding(12.dp), title = "Couldn't show the checks", onRetry = actions::refresh)
-                is UiState.Loaded -> if (content.data.sections.isEmpty()) {
+                is UiState.Loaded -> if (content.data.repos.isEmpty()) {
                     Box(Modifier.fillMaxSize().padding(24.dp)) {
                         Text("No repositories to show", style = RostrumText.body, color = colors.textMuted)
                     }

@@ -2,54 +2,123 @@ package io.github.rhizonymph.rostrum.ui.ci
 
 import io.github.rhizonymph.rostrum.data.model.CiCell
 import io.github.rhizonymph.rostrum.data.model.CiColumn
+import io.github.rhizonymph.rostrum.data.model.CiColumnGroup
 import io.github.rhizonymph.rostrum.data.model.CiGrid
 import io.github.rhizonymph.rostrum.data.model.CiGridFilter
 import io.github.rhizonymph.rostrum.data.model.CiJobLog
 import io.github.rhizonymph.rostrum.data.model.CiLine
 import io.github.rhizonymph.rostrum.data.model.CiRerunOption
-import io.github.rhizonymph.rostrum.data.model.CiSection
 import io.github.rhizonymph.rostrum.data.model.RepoLoad
 
-/** Narrowing the core's grid to one repository, and the words for a section without rows. */
+/** Narrowing the core's matrix to one repository, and what the screen says around it. */
 object CiGridLayout {
-    /** Only [repo]'s section, its lines re-indexed to section 0; the whole grid when [repo] is null. */
+    /**
+     * Only [repo]'s rows (re-indexed, with their stack lines) and the columns
+     * some of them ran, regrouped; the whole grid when [repo] is null.
+     */
     fun only(grid: CiGrid, repo: String?): CiGrid {
         if (repo == null) return grid
-        val index = grid.sections.indexOfFirst { it.repo.equals(repo, ignoreCase = true) }
-        if (index < 0) return grid.copy(sections = emptyList(), lines = emptyList())
-        val lines = grid.lines.mapNotNull { line ->
-            when (line) {
-                is CiLine.Header -> line.takeIf { it.section == index }?.let { CiLine.Header(0) }
-                is CiLine.Stack -> line.takeIf { it.section == index }?.let { CiLine.Stack(0, it.members) }
-                is CiLine.Row -> line.takeIf { it.section == index }?.let { CiLine.Row(0, it.row) }
-                is CiLine.Notice -> line.takeIf { it.section == index }?.let { CiLine.Notice(0) }
-                CiLine.Spacer -> null
+        val kept = grid.rows.indices.filter { grid.rows[it].repo.equals(repo, ignoreCase = true) }
+        val newIndex = kept.withIndex().associate { (new, old) -> old to new }
+        val columns = grid.columns.indices.filter { column -> kept.any { grid.rows[it].cells.getOrNull(column) != null } }
+        val lines = buildList {
+            var pendingStack: CiLine.Stack? = null
+            grid.lines.forEach { line ->
+                when (line) {
+                    is CiLine.Stack -> pendingStack = line
+                    is CiLine.Row -> {
+                        val row = newIndex[line.row]
+                        if (row != null) {
+                            pendingStack?.let { add(it) }
+                            add(CiLine.Row(row))
+                        }
+                        pendingStack = null
+                    }
+                }
             }
         }
-        return grid.copy(sections = listOf(grid.sections[index]), lines = lines)
+        val repos = grid.repos.filter { it.repo.equals(repo, ignoreCase = true) }
+        return grid.copy(
+            columns = columns.map { grid.columns[it] },
+            groups = regroup(grid.groups, columns),
+            rows = kept.map { old -> grid.rows[old].let { r -> r.copy(cells = columns.map { r.cells[it] }) } },
+            repos = repos,
+            lines = lines,
+            hidden = repos.sumOf { it.hidden },
+        )
     }
 
-    fun notice(section: CiSection, filter: CiGridFilter): String = when (val load = section.load) {
-        RepoLoad.Idle -> "Checks not fetched yet"
-        RepoLoad.Loading -> "Fetching checks…"
-        is RepoLoad.Failed -> "Couldn't fetch checks: ${load.reason}"
-        is RepoLoad.Loaded -> if (filter.needsAttention && section.hidden > 0) {
-            "Nothing needs attention · ${section.hidden} hidden"
-        } else {
-            "No open pull requests"
+    /** [groups] over only the columns at [kept] (old indices, ascending), adjacent survivors of one group merged. */
+    fun regroup(groups: List<CiColumnGroup>, kept: List<Int>): List<CiColumnGroup> {
+        val result = mutableListOf<CiColumnGroup>()
+        var previous = -1
+        kept.forEachIndexed { new, old ->
+            val group = groups.indexOfFirst { old >= it.start && old < it.end }
+            val last = result.lastOrNull()
+            if (last != null && group == previous) {
+                result[result.lastIndex] = last.copy(end = new + 1)
+            } else {
+                result += CiColumnGroup(groups.getOrNull(group)?.workflow, new, new + 1)
+            }
+            previous = group
         }
+        return result
     }
+
+    /** Indices of the lines that begin another repository's rows (a stack line begins its rows); never the first line. */
+    fun repoStarts(grid: CiGrid): Set<Int> {
+        val starts = mutableSetOf<Int>()
+        var previous: String? = null
+        var pending: Int? = null
+        grid.lines.forEachIndexed { index, line ->
+            when (line) {
+                is CiLine.Stack -> if (pending == null) pending = index
+                is CiLine.Row -> {
+                    val repo = grid.rows.getOrNull(line.row)?.repo
+                    val first = pending ?: index
+                    if (previous != null && repo != previous) starts += first
+                    previous = repo
+                    pending = null
+                }
+            }
+        }
+        return starts
+    }
+
+    /** Repositories whose checks failed to load, with GitHub's reason. */
+    fun failures(grid: CiGrid): List<CiRepoFailure> = grid.repos.mapNotNull { repo ->
+        (repo.load as? RepoLoad.Failed)?.let { CiRepoFailure(repo.repo, it.reason) }
+    }
+
+    /** What the grid says when it has no rows. */
+    fun emptyMessage(grid: CiGrid, filter: CiGridFilter): String = when {
+        filter.needsAttention && grid.hidden > 0 -> "Nothing failing or running"
+        grid.repos.any { it.load == RepoLoad.Idle || it.load == RepoLoad.Loading } -> "Loading checks…"
+        else -> "No open pull requests outside drafts"
+    }
+}
+
+/** A repository whose checks failed to load. */
+data class CiRepoFailure(val repo: String, val reason: String) {
+    val text: String get() = "$repo: $reason"
 }
 
 /** Sentences of the CI screen. */
 object CiText {
-    fun cellDescription(number: Int, column: CiColumn, cell: CiCell?): String {
-        val state = when {
-            cell == null -> "not run"
-            cell.timingLabel != null -> "${cell.statusLabel}, ${cell.timingLabel}"
-            else -> cell.statusLabel
-        }
-        return "${column.label} on #$number: $state"
+    /** `owner/name #12`. */
+    fun rowLabel(repo: String, number: Int) = "$repo #$number"
+
+    /** A cell of the matrix, naming its repository since rows of every repository share one grid. */
+    fun cellDescription(repo: String, number: Int, column: CiColumn, cell: CiCell?): String =
+        "${column.label} on ${rowLabel(repo, number)}: ${cellState(cell)}"
+
+    fun cellDescription(number: Int, column: CiColumn, cell: CiCell?): String =
+        "${column.label} on #$number: ${cellState(cell)}"
+
+    private fun cellState(cell: CiCell?): String = when {
+        cell == null -> "not run"
+        cell.timingLabel != null -> "${cell.statusLabel}, ${cell.timingLabel}"
+        else -> cell.statusLabel
     }
 
     fun rerunRequested(option: CiRerunOption, number: Int) =

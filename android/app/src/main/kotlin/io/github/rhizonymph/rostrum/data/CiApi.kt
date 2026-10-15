@@ -18,7 +18,7 @@ interface CiApi {
     /** The grid from the checks held, as of now. No network. */
     suspend fun ciGrid(filter: CiGridFilter): Outcome<CiGrid>
 
-    /** Fetch every watched repository's checks, then the grid. A failing repository says so in its section. */
+    /** Fetch every watched repository's checks, then the grid. A failing repository says so in its [CiGrid.repos] entry. */
     suspend fun refreshCi(filter: CiGridFilter): Outcome<CiGrid>
 
     /** [refreshCi] for one watched repository. */

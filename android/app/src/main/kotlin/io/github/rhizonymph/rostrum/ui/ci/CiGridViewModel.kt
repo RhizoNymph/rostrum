@@ -126,12 +126,12 @@ class CiGridViewModel(
 
     // --- a cell ------------------------------------------------------------------------
 
-    override fun openCell(section: Int, row: Int, column: Int) {
+    /** Open the cell of [row] (an index into the shown grid's rows) in column [column]. */
+    override fun openCell(row: Int, column: Int) {
         val shown = grid ?: return
-        val sec = shown.sections.getOrNull(section) ?: return
-        val pull = sec.rows.getOrNull(row) ?: return
+        val pull = shown.rows.getOrNull(row) ?: return
         val cell = pull.cells.getOrNull(column) ?: return
-        val target = CiTarget(sec.repo, pull.number, pull.title, sec.columns[column], cell)
+        val target = CiTarget(pull.repo, pull.number, pull.title, shown.columns[column], cell)
         val detail = when (val source = cell.source) {
             is CiSource.Actions -> CiDetail.Log(source.jobId)
             is CiSource.App -> CiDetail.Output()

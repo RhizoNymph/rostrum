@@ -41,8 +41,9 @@ internal object SampleCi {
     data class Seed(val status: CiStatus, val age: Duration)
 
     /**
-     * rostrum #10 fails `test`, #9 is still running `clippy` with `Coverage`
-     * queued, #11 skipped the preview, and everything else passes.
+     * rostrum #10 fails `test` and skipped the preview, #9 is still running
+     * `clippy` with `Coverage` queued and never ran the preview, and
+     * everything else passes. (Drafts such as #11 are never rows.)
      */
     fun seed(repo: String, number: Int, column: Int): Seed? {
         val minutes = (number * 7L + column * 3L) % 50 + 2
@@ -52,8 +53,8 @@ internal object SampleCi {
             number == 10 && column == 1 -> Seed(CiStatus.Failure, Duration.ofMinutes(12))
             number == 9 && column == 2 -> Seed(CiStatus.InProgress, Duration.ofSeconds(192))
             number == 9 && column == 3 -> Seed(CiStatus.Queued, Duration.ofSeconds(45))
-            number == 11 && column == 4 -> Seed(CiStatus.Skipped, Duration.ofMinutes(30))
-            number == 12 && column == 4 -> null
+            number == 10 && column == 4 -> Seed(CiStatus.Skipped, Duration.ofMinutes(30))
+            number == 9 && column == 4 -> null
             else -> done
         }
     }

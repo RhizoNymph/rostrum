@@ -1,8 +1,8 @@
 package io.github.rhizonymph.rostrum.data.model
 
 /*
- * The CI grid (`ci/types.rs`): every open pull request's checks, by
- * repository, with job logs, another app's check output, and re-runs. Ids are
+ * The CI grid (`ci/types.rs`): every open pull request's checks in one
+ * matrix, with job logs, another app's check output, and re-runs. Ids are
  * GitHub's 64-bit ids as [Long].
  */
 
@@ -82,12 +82,14 @@ data class CiRollup(
 enum class CiStackPlace { Bottom, Middle, Top, Only }
 
 data class CiRow(
+    /** `owner/name`: rows of every repository share one grid. */
+    val repo: String,
     val number: Int,
     val title: String,
     /** The head commit, seven characters. */
     val headSha: String,
     val rollup: CiRollup,
-    /** One per section column; `null` is "not run" on this pull request. */
+    /** One per grid column; `null` is "not run" on this pull request. */
     val cells: List<CiCell?>,
     val stack: CiStackPlace?,
     /** Whether this pull request's checks have been fetched at all. */
@@ -96,43 +98,62 @@ data class CiRow(
     val truncated: Boolean,
 )
 
-/** One repository's block of the grid, with its own columns. */
-data class CiSection(
+/**
+ * Adjacent columns of one workflow, `start until end` into [CiGrid.columns],
+ * for a header naming the workflow once above its jobs. The groups partition
+ * the columns in order.
+ */
+data class CiColumnGroup(
+    /** `null` for apps' checks and legacy statuses. */
+    val workflow: String?,
+    val start: Int,
+    val end: Int,
+)
+
+/** A repository the grid covers: its checks' fetch state and row counts. */
+data class CiRepo(
     val repo: String,
-    val columns: List<CiColumn>,
-    val rows: List<CiRow>,
     val load: RepoLoad,
+    /** Rows the grid shows for this repository. */
+    val rows: Int,
     /** Rows the grid filter removed. */
     val hidden: Int,
 )
 
-/** A line of the grid flattened for one list, as the desktop draws it. */
+/** A line of the grid flattened for one list. The column header is not a line: one header sits above the list. */
 sealed interface CiLine {
-    /** The repository's name and column headers. */
-    data class Header(val section: Int) : CiLine
-
     /** Heads a stack's rows: "Stack · 3 PRs". */
-    data class Stack(val section: Int, val members: Int) : CiLine
+    data class Stack(val members: Int) : CiLine
 
-    data class Row(val section: Int, val row: Int) : CiLine
-
-    /** The section has no rows: loading, failed, or nothing open. */
-    data class Notice(val section: Int) : CiLine
-
-    data object Spacer : CiLine
+    /** Index into [CiGrid.rows]. */
+    data class Row(val row: Int) : CiLine
 }
 
-/** The pull requests × checks matrix, in the feed's order. */
+/**
+ * The pull requests × checks matrix: every open, non-draft pull request of
+ * the watched repositories as rows, in the feed's order, one column set for
+ * all of them.
+ */
 data class CiGrid(
-    val sections: List<CiSection>,
+    /** Every column, ordered workflow then name. */
+    val columns: List<CiColumn>,
+    val groups: List<CiColumnGroup>,
+    val rows: List<CiRow>,
+    /** Each repository the feed shows, in the feed's order. */
+    val repos: List<CiRepo>,
     val lines: List<CiLine>,
+    /** Rows the grid filter removed, across every repository. */
+    val hidden: Int,
     /** Some cell's labels change every second: rebuild ([ciGrid], no network) once a second while shown. */
     val ticks: Boolean,
     /** Something is queued or running: re-fetch ([refreshCi]) every 15 s while shown. */
     val anyRunning: Boolean,
 ) {
     companion object {
-        val Empty = CiGrid(emptyList(), emptyList(), ticks = false, anyRunning = false)
+        val Empty = CiGrid(
+            columns = emptyList(), groups = emptyList(), rows = emptyList(), repos = emptyList(), lines = emptyList(),
+            hidden = 0, ticks = false, anyRunning = false,
+        )
     }
 }
 

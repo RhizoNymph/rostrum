@@ -22,11 +22,17 @@ confirmed re-runs. Everything is per active profile.
   choice of 10/25/50/100 (plus the current value).
 - **CI grid** (`Destination.Checks(repo?)`): from a Checks icon in the feed
   header (every repository) and in the repository screen's top bar (that
-  repository only). A frozen left column (number, title, rollup) beside
-  per-repository column headers and cells that scroll horizontally
-  together; cells are status tiles (glyph, status, timing label) tinted by
-  the core's role. "Needs attention" filter chip, pull to refresh, a
-  one-second rebuild while `ticks`, a 15-second fetch while `anyRunning`.
+  repository only). One global matrix, as on the desktop: a single header
+  above the list (a workflow band over each group's job names) shared by
+  every row; a frozen left column (`owner/name #N`, title, rollup, a stack
+  mark) beside cells that scroll horizontally together with the header; a
+  2dp rule where each repository's rows begin; "Stack · N PRs" lines; a
+  red strip naming repositories whose checks failed to load; and, with no
+  rows, "Loading checks…", "Nothing failing or running" or "No open pull
+  requests outside drafts". Cells are status tiles (glyph, status, timing
+  label) tinted by the core's role. "Needs attention" filter chip, pull to
+  refresh, a one-second rebuild while `ticks`, a 15-second fetch while
+  `anyRunning`. Drafts are never rows (the core leaves them out).
 - **A cell's sheet**: an Actions job's log (monospace lazy list,
   collapsible groups starting from the core's `collapsed`, the failing step
   tinted, search with previous/next, "First error", "Load full log" when
@@ -81,18 +87,40 @@ CiRoute(repo?) ─ CiGridViewModel(backend, repo)
   A failed fetch with a grid on screen → snackbar; without one → ErrorView
 ```
 
-`CiGridTable` draws `grid.lines` in one `LazyColumn`: `Header` (repository
-name, then "Pull request" over the frozen column and the section's column
-labels), `Stack` ("Stack · N PRs"), `Row` (frozen left part opens the pull
-request on its Checks tab; cells open the sheet), `Notice`
-(`CiGridLayout.notice`: not fetched / fetching / failed / nothing open /
-nothing needs attention), `Spacer`. One `ScrollState` per repository is
-shared by that section's header and rows, so they scroll sideways together.
+`CiGrid` is the core's matrix: `columns` (one set for every row),
+`groups` (`CiColumnGroup { workflow?, start, end }` partitioning the
+columns), `rows` (`CiRow { repo, number, …, cells }`, one cell per column),
+`repos` (`CiRepo { repo, load, rows, hidden }`), `lines` (`Stack(members)`
+or `Row(row)`, an index into `rows`), `hidden`, `ticks`, `anyRunning`.
+
+`CiGridTable` draws, top to bottom:
+
+```
+FailureStrip      CiGridLayout.failures(grid): "owner/name: reason" per RepoLoad.Failed repo
+rows empty?  →    CiGridLayout.emptyMessage(grid, filter)  (scrollable, so pull to refresh works)
+MatrixHeader      "Pull request" | horizontalScroll(scroll): group band (workflow, CellWidth × span)
+                                                              job names (column.key.name)
+LazyColumn(grid.lines)
+  Stack(members)  "Stack · N PRs"
+  Row(row)        frozen part (owner/name #N, title, rollup; opens the pull request's Checks tab)
+                  | horizontalScroll(scroll): one tile per column → openCell(row, column)
+  a line in CiGridLayout.repoStarts(grid) carries a 2dp rule above it
+  CiText.hiddenFooter(grid.hidden)
+```
+
+The header is outside the `LazyColumn`, so it stays put while rows scroll;
+one `ScrollState` is shared by the header and every row, so columns stay
+aligned while the left column stays put.
+
+`CiGridLayout.only(grid, repo)` narrows the matrix for the repository
+screen: that repository's rows (re-indexed, each kept with the stack line
+before it), only the columns one of them ran (cells cut to match), groups
+merged over the survivors (`regroup`), its `CiRepo`, and its `hidden`.
 
 ### A cell
 
 ```
-openCell(section, row, column)        (a not-run cell opens nothing)
+openCell(row, column)                 (row into grid.rows; a not-run cell opens nothing)
   CiSource.Actions(jobId) → CiDetail.Log   → jobLog(repo, jobId, full = false)
                                              view.collapsed = log.collapsed
   CiSource.App(checkRunId) → CiDetail.Output → checkOutput(repo, checkRunId)
@@ -118,7 +146,7 @@ scrolls twice.
 
 | File | Role | Key exports |
 |---|---|---|
-| `data/model/Ci.kt` | CI records | `CiGrid`, `CiSection`, `CiRow`, `CiCell`, `CiSource`, `CiLine`, `CiJobLog`, `CiCheckOutput`, `CiRerun`, `CiRerunChoice`, `CiGridFilter` |
+| `data/model/Ci.kt` | CI records | `CiGrid`, `CiColumnGroup`, `CiRepo`, `CiRow`, `CiCell`, `CiSource`, `CiLine`, `CiJobLog`, `CiCheckOutput`, `CiRerun`, `CiRerunChoice`, `CiGridFilter` |
 | `data/model/Remote.kt` | Preview gains `revision`, `issuesPerRepo`, `copyChanges`, `pushChanges` | `ConfigField`, `ConfigChange`, `ConfigPushResult` |
 | `data/model/Session.kt` | `Settings.issuesPerRepo` (default 25) | `Settings` |
 | `data/CiApi.kt` | The CI half of the backend | `CiApi` |
@@ -130,7 +158,7 @@ scrolls twice.
 | `data/ffi/FfiRostrumBackend.kt` | The new calls | — |
 | `data/fake/FakePhoneSettings.kt` | The fake phone's settings, shared by its parts | `FakePhoneSettings` |
 | `data/fake/FakeDesktopConfig.kt` | nymph-desk's settings and revision; copy, push, `changeElsewhere` | `FakeDesktopConfig` |
-| `data/fake/FakeCi.kt`, `SampleCi.kt` | The grid over the fake's open pull requests; logs, output, re-runs | `FakeCi`, `SampleCi` |
+| `data/fake/FakeCi.kt`, `SampleCi.kt` | The matrix over the fake's open, non-draft pull requests (columns from fetched rows, workflow groups, stack lines from `FakeStacks.samples`); logs, output, re-runs | `FakeCi`, `SampleCi` |
 | `ui/desktopconfig/ConfigChangeText.kt` | Change rows and the push sheet's words | `ConfigChangeView`, `ConfigChangeText`, `PushConfigText` |
 | `ui/desktopconfig/PushSettingsViewModel.kt` | The push sheet's state | `PushSheetState`, `PushSheetActions`, `PushSettingsViewModel` |
 | `ui/desktopconfig/PushSettingsSheet.kt` | The push sheet | `PushSettingsSheet`, `ConfigChangeList` |
@@ -138,10 +166,10 @@ scrolls twice.
 | `ui/settings/SettingsSections.kt`, `SettingsScreen.kt`, `SettingsViewModel.kt`, `SettingsModels.kt` | Fetching section, Send row, choice dialog | `FetchSection`, `FetchLimitChoices` |
 | `ui/desktop/DesktopScreen.kt`, `DesktopRoute.kt` | "Settings" section with the Send row; hosts the push sheet | — |
 | `ui/ci/CiGridState.kt` | Screen, sheet, log view and retry states | `CiGridUiState`, `CiSheet`, `CiDetail`, `LogView`, `RetryState`, `CiGridActions` |
-| `ui/ci/CiLayout.kt` | Pure helpers | `CiGridLayout`, `CiText`, `LogRow`, `LogLayout` |
+| `ui/ci/CiLayout.kt` | Pure helpers: one-repository narrowing, regrouping, repository starts, failures, empty message, sentences, log rows | `CiGridLayout`, `CiRepoFailure`, `CiText`, `LogRow`, `LogLayout` |
 | `ui/ci/CiGridViewModel.kt` | Loading, ticking, polling, cells, logs, re-runs | `CiGridViewModel` |
 | `ui/ci/CiGridScreen.kt` | Route and screen | `CiRoute`, `CiGridScreen` |
-| `ui/ci/CiGridTable.kt` | The two-way scrolling matrix | `CiGridTable` |
+| `ui/ci/CiGridTable.kt` | The two-way scrolling matrix: failure strip, empty state, one header, rows | `CiGridTable` |
 | `ui/ci/CiCellSheet.kt` | A cell's sheet: header, Retry, output | `CiCellSheet` |
 | `ui/ci/CiLogView.kt` | The log viewer | `CiLogView` |
 | `ui/navigation/Destinations.kt`, `RostrumNavHost.kt` | `Destination.Checks(repo?)` | — |
@@ -173,3 +201,11 @@ logs, output and re-runs, `InvalidInput` for an unfetched cell's re-runs).
   request instead.
 - **Opened from a repository, the grid shows only that repository** and
   fetches only it (`refreshCiRepo`).
+- **Header and cells stay aligned**: one header for the whole matrix, and
+  it and every row draw their columns at `CellWidth` under one shared
+  `ScrollState`; a group band spans `CellWidth × (end − start)`.
+- **A row names its repository** (`owner/name #N`): the same number in two
+  repositories is two rows, and a cell's description names both.
+- **Cells are opened by row index and column index** into the grid shown,
+  never by section; a re-run is asked for by the row's repository, number
+  and the column's `CiCheckKey`.

@@ -6,19 +6,22 @@ import io.github.rhizonymph.rostrum.data.Outcome
 import io.github.rhizonymph.rostrum.data.model.CiCell
 import io.github.rhizonymph.rostrum.data.model.CiCheckKey
 import io.github.rhizonymph.rostrum.data.model.CiCheckOutput
+import io.github.rhizonymph.rostrum.data.model.CiColumn
+import io.github.rhizonymph.rostrum.data.model.CiColumnGroup
 import io.github.rhizonymph.rostrum.data.model.CiGrid
 import io.github.rhizonymph.rostrum.data.model.CiGridFilter
 import io.github.rhizonymph.rostrum.data.model.CiJobLog
 import io.github.rhizonymph.rostrum.data.model.CiLine
 import io.github.rhizonymph.rostrum.data.model.CiNotRerunnable
+import io.github.rhizonymph.rostrum.data.model.CiRepo
 import io.github.rhizonymph.rostrum.data.model.CiRerun
 import io.github.rhizonymph.rostrum.data.model.CiRerunChoice
 import io.github.rhizonymph.rostrum.data.model.CiRerunOption
 import io.github.rhizonymph.rostrum.data.model.CiRollup
 import io.github.rhizonymph.rostrum.data.model.CiRollupState
 import io.github.rhizonymph.rostrum.data.model.CiRow
-import io.github.rhizonymph.rostrum.data.model.CiSection
 import io.github.rhizonymph.rostrum.data.model.CiSource
+import io.github.rhizonymph.rostrum.data.model.CiStackPlace
 import io.github.rhizonymph.rostrum.data.model.CiStatus
 import io.github.rhizonymph.rostrum.data.model.ColorRole
 import io.github.rhizonymph.rostrum.data.model.RepoLoad
@@ -127,54 +130,137 @@ internal class FakeCi(
 
     // --- the grid ----------------------------------------------------------------------
 
+    /**
+     * One matrix over every watched repository, as the core builds it: rows
+     * are the open, non-draft pull requests in the feed's order (a stack's
+     * members together, bottom first), columns the union of the checks of
+     * the fetched rows ordered workflow then name (no workflow first), so
+     * the attention filter never shifts a column.
+     */
     private fun grid(filter: CiGridFilter): CiGrid {
         builds++
-        val sections = host.watchedRepos.map { section(it, filter) }
-        val lines = buildList {
-            sections.forEachIndexed { index, section ->
-                if (index > 0) add(CiLine.Spacer)
-                add(CiLine.Header(index))
-                if (section.rows.isEmpty()) add(CiLine.Notice(index))
-                section.rows.indices.forEach { add(CiLine.Row(index, it)) }
+        val candidates = host.watchedRepos.flatMap { repo -> candidates(repo) }
+        val columns = candidates
+            .filter { it.fetched }
+            .flatMap { c -> c.cells.keys }
+            .distinct()
+            .sortedWith(compareBy<CiCheckKey>({ it.workflow != null }, { it.workflow.orEmpty() }, { it.name }))
+        val repos = host.watchedRepos.associateWith { RepoCount() }
+        val rows = mutableListOf<CiRow>()
+        val lines = mutableListOf<CiLine>()
+        var hidden = 0
+        var currentStack: Any? = null
+        candidates.forEach { c ->
+            val cells = columns.map { c.cells[it] }
+            val rollup = rollup(cells)
+            val count = repos.getValue(c.repo)
+            if (filter.needsAttention && rollup.state != CiRollupState.Failing && rollup.state != CiRollupState.Running) {
+                hidden++
+                count.hidden++
+                return@forEach
             }
-        }
-        val cells = sections.flatMap { s -> s.rows.flatMap { it.cells.filterNotNull() } }
-        return CiGrid(
-            sections = sections,
-            lines = lines,
-            ticks = cells.any { it.ticks },
-            anyRunning = cells.any { it.status == CiStatus.Queued || it.status == CiStatus.InProgress },
-        )
-    }
-
-    private fun section(repo: String, filter: CiGridFilter): CiSection {
-        val checks = SampleCi.columns(repo)
-        val at = fetched[repo]
-        val rows = host.openPulls(repo).sortedByDescending { it.number }.map { pull ->
-            val cells = checks.indices.map { column -> if (at == null) null else cell(Spot(repo, pull.number, column)) }
-            CiRow(
-                number = pull.number,
-                title = pull.title,
-                headSha = "%07x".format((repo.hashCode().toLong() * 31 + pull.number) and 0xFFFFFFF),
-                rollup = rollup(cells),
+            count.rows++
+            if (c.stack != currentStack) {
+                c.stack?.let { lines += CiLine.Stack(c.stackSize) }
+                currentStack = c.stack
+            }
+            lines += CiLine.Row(rows.size)
+            rows += CiRow(
+                repo = c.repo,
+                number = c.number,
+                title = c.title,
+                headSha = "%07x".format((c.repo.hashCode().toLong() * 31 + c.number) and 0xFFFFFFF),
+                rollup = rollup,
                 cells = cells,
-                stack = null,
-                fetched = at != null,
+                stack = c.place,
+                fetched = c.fetched,
                 truncated = false,
             )
         }
-        val shown = if (filter.needsAttention) {
-            rows.filter { it.rollup.state == CiRollupState.Failing || it.rollup.state == CiRollupState.Running }
-        } else {
-            rows
-        }
-        return CiSection(
-            repo = repo,
-            columns = checks.map { it.column },
-            rows = shown,
-            load = at?.let { RepoLoad.Loaded(it) } ?: RepoLoad.Idle,
-            hidden = rows.size - shown.size,
+        val shown = rows.flatMap { it.cells.filterNotNull() }
+        return CiGrid(
+            columns = columns.map { key -> CiColumn(key, key.workflow?.let { "$it / ${key.name}" } ?: key.name) },
+            groups = groups(columns),
+            rows = rows,
+            repos = repos.map { (repo, count) ->
+                CiRepo(repo, fetched[repo]?.let { RepoLoad.Loaded(it) } ?: RepoLoad.Idle, count.rows, count.hidden)
+            },
+            lines = lines,
+            hidden = hidden,
+            ticks = shown.any { it.ticks },
+            anyRunning = shown.any { it.status == CiStatus.Queued || it.status == CiStatus.InProgress },
         )
+    }
+
+    private class RepoCount(var rows: Int = 0, var hidden: Int = 0)
+
+    /** A pull request the grid may show, before the attention filter. */
+    private class Candidate(
+        val repo: String,
+        val number: Int,
+        val title: String,
+        val fetched: Boolean,
+        val cells: Map<CiCheckKey, CiCell>,
+        /** Identifies the stack it belongs to, if any. */
+        val stack: FakeStackDef?,
+        val stackSize: Int,
+        val place: CiStackPlace?,
+    )
+
+    /** [repo]'s open, non-draft pull requests, newest first, each stack's members together at its first member. */
+    private fun candidates(repo: String): List<Candidate> {
+        val checks = SampleCi.columns(repo)
+        val fetchedRepo = repo in fetched
+        val pulls = host.openPulls(repo).filter { !it.isDraft }.sortedByDescending { it.number }
+        val stackOf = FakeStacks.samples.filter { it.repo == repo }.flatMap { def -> def.members.map { it to def } }.toMap()
+        val numbers = pulls.map { it.number }.toSet()
+        val byNumber = pulls.associateBy { it.number }
+        val done = mutableSetOf<FakeStackDef>()
+        val ordered = pulls.flatMap { pull ->
+            val def = stackOf[pull.number] ?: return@flatMap listOf(pull to null)
+            if (!done.add(def)) return@flatMap emptyList()
+            def.members.filter { it in numbers }.map { byNumber.getValue(it) to def }
+        }
+        return ordered.map { (pull, def) ->
+            val members = def?.members?.filter { it in numbers }.orEmpty()
+            val cells = if (!fetchedRepo) {
+                emptyMap()
+            } else {
+                checks.indices.mapNotNull { column ->
+                    cell(Spot(repo, pull.number, column))?.let { checks[column].column.key to it }
+                }.toMap()
+            }
+            Candidate(
+                repo = repo,
+                number = pull.number,
+                title = pull.title,
+                fetched = fetchedRepo,
+                cells = cells,
+                stack = def,
+                stackSize = members.size,
+                place = def?.let {
+                    val at = members.indexOf(pull.number)
+                    when {
+                        members.size == 1 -> CiStackPlace.Only
+                        at == 0 -> CiStackPlace.Bottom
+                        at == members.size - 1 -> CiStackPlace.Top
+                        else -> CiStackPlace.Middle
+                    }
+                },
+            )
+        }
+    }
+
+    /** Adjacent columns of one workflow. */
+    private fun groups(columns: List<CiCheckKey>): List<CiColumnGroup> = buildList {
+        var start = 0
+        columns.forEachIndexed { index, key ->
+            val next = columns.getOrNull(index + 1)
+            if (next == null || next.workflow != key.workflow) {
+                add(CiColumnGroup(key.workflow, start, index + 1))
+                start = index + 1
+            }
+        }
     }
 
     private fun status(spot: Spot): CiStatus? = when {
