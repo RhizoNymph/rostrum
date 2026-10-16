@@ -27,6 +27,11 @@ pub struct Config {
     pub repos: Vec<String>,
     /// Seconds between feed refreshes.
     pub refresh_secs: u64,
+    /// Seconds between refreshes of the open issues. Issues ride the feed's
+    /// poll but only when this much time has passed since they last loaded;
+    /// the Refresh action, and showing a stale Issues tab, fetch them at
+    /// once. A device's own habit like `refresh_secs`, so not shared.
+    pub issue_refresh_secs: u64,
     /// Maximum open PRs fetched per repository.
     pub prs_per_repo: u32,
     /// Maximum open issues fetched per repository.
@@ -165,6 +170,7 @@ impl Default for Config {
                 "rust-lang/rust".to_string(),
             ],
             refresh_secs: 60,
+            issue_refresh_secs: rostrum_core::poll::DEFAULT_ISSUE_INTERVAL.as_secs(),
             prs_per_repo: 25,
             issues_per_repo: 25,
             feed_tab: FeedTab::PullRequests,
@@ -463,6 +469,12 @@ impl Config {
     pub fn refresh_interval(&self) -> std::time::Duration {
         // A pathological config should not turn into a request storm.
         std::time::Duration::from_secs(self.refresh_secs.clamp(10, 3600))
+    }
+
+    /// How old the open issues may get before a poll refreshes them, clamped
+    /// like [`Self::refresh_interval`] but allowing up to a day.
+    pub fn issue_refresh_interval(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.issue_refresh_secs.clamp(10, 86_400))
     }
 }
 
@@ -805,6 +817,41 @@ mod tests {
     #[test]
     fn empty_repos_are_hidden_by_default() {
         assert!(Config::default().hide_empty_repos);
+    }
+
+    #[test]
+    fn issues_refresh_every_five_minutes_by_default() {
+        let config = Config::default();
+        assert_eq!(config.issue_refresh_secs, 300);
+        assert_eq!(config.issue_refresh_interval().as_secs(), 300);
+        let older: Config =
+            serde_json::from_str(r#"{ "repos": ["a/b"], "refresh_secs": 30 }"#).expect("parses");
+        assert_eq!(
+            older.issue_refresh_secs, 300,
+            "a file without the key gets the default"
+        );
+    }
+
+    #[test]
+    fn the_issue_interval_is_read_and_clamped() {
+        let config: Config =
+            serde_json::from_str(r#"{ "issue_refresh_secs": 900 }"#).expect("parses");
+        assert_eq!(config.issue_refresh_interval().as_secs(), 900);
+        let fast = Config {
+            issue_refresh_secs: 0,
+            ..Config::default()
+        };
+        assert_eq!(fast.issue_refresh_interval().as_secs(), 10);
+        let slow = Config {
+            issue_refresh_secs: u64::MAX,
+            ..Config::default()
+        };
+        assert_eq!(slow.issue_refresh_interval().as_secs(), 86_400);
+    }
+
+    #[test]
+    fn the_issue_interval_stays_on_the_machine() {
+        assert!(!SHARED_KEYS.contains(&"issue_refresh_secs"));
     }
 
     #[test]

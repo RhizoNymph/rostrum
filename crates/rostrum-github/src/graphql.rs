@@ -68,13 +68,13 @@ macro_rules! pr_fields {
     };
 }
 
-/// Open pull requests for one repository, most recently updated first.
-pub const OPEN_PULL_REQUESTS: &str = concat!(
-    r#"
-query($owner: String!, $name: String!, $first: Int!) {
-  rateLimit { cost remaining resetAt }
-  viewer { login avatarUrl }
-  repository(owner: $owner, name: $name) {
+/// What the feed selects on a repository: its sort facts and its open pull
+/// requests, most recently updated first. Shared by the one-repository
+/// document and the batched one ([`crate::batch`]), so the two cannot drift.
+macro_rules! open_pulls_selection {
+    () => {
+        concat!(
+            r#"
     pushedAt
     createdAt
     updatedAt
@@ -82,10 +82,26 @@ query($owner: String!, $name: String!, $first: Int!) {
     owner { __typename login }
     pullRequests(states: OPEN, first: $first, orderBy: {field: UPDATED_AT, direction: DESC}) {
       nodes {"#,
-    pr_fields!(),
-    r#"      }
+            pr_fields!(),
+            r#"      }
     }
-  }
+"#
+        )
+    };
+}
+
+/// [`OPEN_PULL_REQUESTS`]'s selection on one repository, for batching.
+pub const OPEN_PULLS_SELECTION: &str = open_pulls_selection!();
+
+/// Open pull requests for one repository, most recently updated first.
+pub const OPEN_PULL_REQUESTS: &str = concat!(
+    r#"
+query($owner: String!, $name: String!, $first: Int!) {
+  rateLimit { cost remaining resetAt }
+  viewer { login avatarUrl }
+  repository(owner: $owner, name: $name) {"#,
+    open_pulls_selection!(),
+    r#"  }
 }
 "#
 );
@@ -619,6 +635,41 @@ pub struct RepoQueryData {
     pub viewer: Option<AuthorNode>,
     /// `null` when the repository does not exist or is not visible.
     pub repository: Option<RepositoryNode>,
+}
+
+/// Whether a GraphQL answer is GitHub refusing because the budget is spent:
+/// a 200 carrying a `RATE_LIMITED` error.
+pub fn is_rate_limited(errors: &[GraphQlError]) -> bool {
+    errors
+        .iter()
+        .any(|error| error.kind.as_deref() == Some("RATE_LIMITED"))
+}
+
+/// What a GraphQL response cost, for the spend tally: its
+/// `rateLimit.cost` when the document selected one, otherwise one point —
+/// GitHub's minimum, and what every unselected document here costs.
+///
+/// A second, shallow decode of the body: everything but `data.rateLimit` is
+/// skipped, so the caller's own decode stays the one that matters.
+pub fn response_cost(body: &str) -> u32 {
+    #[derive(Deserialize)]
+    struct Envelope {
+        data: Option<CostData>,
+    }
+    #[derive(Deserialize)]
+    struct CostData {
+        #[serde(rename = "rateLimit")]
+        rate_limit: Option<Cost>,
+    }
+    #[derive(Deserialize)]
+    struct Cost {
+        cost: u32,
+    }
+    serde_json::from_str::<Envelope>(body)
+        .ok()
+        .and_then(|envelope| envelope.data)
+        .and_then(|data| data.rate_limit)
+        .map_or(1, |rate_limit| rate_limit.cost)
 }
 
 #[derive(Clone, Debug, Deserialize)]

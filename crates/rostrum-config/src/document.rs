@@ -141,6 +141,11 @@ pub fn merge3(base: &Config, disk: &Config, mine: &Config) -> Config {
     Config {
         repos: pick(&base.repos, &disk.repos, &mine.repos),
         refresh_secs: pick(&base.refresh_secs, &disk.refresh_secs, &mine.refresh_secs),
+        issue_refresh_secs: pick(
+            &base.issue_refresh_secs,
+            &disk.issue_refresh_secs,
+            &mine.issue_refresh_secs,
+        ),
         prs_per_repo: pick(&base.prs_per_repo, &disk.prs_per_repo, &mine.prs_per_repo),
         issues_per_repo: pick(
             &base.issues_per_repo,
@@ -311,6 +316,7 @@ mod tests {
         let mut changed = base.clone();
         changed.repos = vec!["x/y".into()];
         changed.refresh_secs = 11;
+        changed.issue_refresh_secs = 14;
         changed.prs_per_repo = 12;
         changed.issues_per_repo = 13;
         changed.feed_tab = rostrum_core::FeedTab::Issues;

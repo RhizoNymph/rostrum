@@ -9,8 +9,9 @@ new one.
 - The feed's **Pull requests | Issues** tab bar, with per-tab counts, the
   `[`/`]` keys, and the selected tab persisted in the config. The bar's third
   tab, **Closed**, is `closed_prs`; see `docs/features/closed_prs.md`.
-- Fetching each repository's open issues in the same poll cycle as its pull
-  requests, caching them, and painting them on a cold start.
+- Fetching every repository's open issues on their own cadence
+  (`issue_refresh_secs`, five minutes by default) in multi-repository
+  batches, caching them, and painting them on a cold start.
 - Flattening issues into the feed with the same container layout, filters,
   hide-empty and collapse rules as pull requests.
 - Selection as an enum over pull request and issue, by identity.
@@ -95,27 +96,40 @@ and the phone.
 
 ### Fetching
 
-1. `Store::refresh_all` (startup, the poll timer, `ctrl-r`) calls
-   `refresh_repo` **and** `refresh_issues` for every repository; `add_repo`
-   does both for the new one.
-2. `refresh_issues` (`crates/rostrum/src/sync/issues.rs`) is guarded by
-   `pending_issues: HashMap<RepoId, Task<()>>`, separate from the pull request
+1. Each poll tick asks `rostrum_core::poll::plan_poll` which repositories'
+   issues are due (`issues_due`): never fetched, last fetch failed, or loaded
+   longer ago than `issue_refresh_secs` (default 300 s, clamped 10 s–1 day;
+   a machine setting, not shared with the phone). The Refresh action
+   (`ctrl-r`) takes every repository's; showing the Issues tab
+   (`set_tab`) takes every one older than the cadence; `add_repo` and a
+   config reload take the new ones. Nothing is sent while a rate-limit pause
+   holds. See `docs/features/poll_budget.md`.
+2. `refresh_issues_batch` (`crates/rostrum/src/sync/issues.rs`) is guarded
+   per repository by its own `InFlight`, separate from the pull request
    guard, so a merge probe re-issuing the pull request query neither waits on
-   nor cancels an issue fetch. A spinner shows only on first load.
-3. `GitHubClient::open_issues` posts `OPEN_ISSUES`
+   nor cancels an issue fetch. A spinner shows only on first load. The due
+   repositories go out in chunks of `batch::chunk_size(Issues, …)` — all
+   together for any realistic count (five repositories: 3 points in one
+   request).
+3. `GitHubClient::open_issues_batch` posts `OPEN_ISSUES_SELECTION` under an
+   alias per repository; the one-repository `GitHubClient::open_issues`
+   posts `OPEN_ISSUES`, the same selection
    (`crates/rostrum-github/src/issues/wire.rs`):
    `issues(states: OPEN, first: $first, orderBy: UPDATED_AT DESC)` with the
    number, title, url, state, stateReason, timestamps, author, assignees and
    labels (ten each), comment count and milestone. GraphQL `issues` never
    returns pull requests, so nothing is filtered. Captured live at cost 1.
-4. `apply_issue_refresh` replaces `repo.issues`, sets `issues_load`, logs the
-   rate limit, and writes the list to the cache fire-and-forget. A failure sets
-   `issues_load = Failed` and keeps any issues already held.
+4. `apply_issue_batch` replaces each answered repository's `repo.issues`,
+   sets `issues_load`, logs the rate limit, and writes the list to the cache
+   fire-and-forget. A repository's failure (its alias `NOT_FOUND` or
+   `FORBIDDEN`, or the whole batch failing) sets its `issues_load = Failed`
+   and keeps any issues already held — except a rate-limit refusal, which
+   leaves a list that is showing as it was.
 
 Why a second request rather than a selection on the pull request query:
 separate load states, no coupling to the merge-probe timer, and no conflict
-with the pull request query's own evolution. The price is one more request per
-repository per poll, each costing one point.
+with the pull request query's own evolution, and its own slower cadence. The
+price is one batched request per cadence, about 0.51 points per repository.
 
 ### Cold start
 
@@ -396,7 +410,7 @@ stays, with GitHub's reason, and nothing typed is lost.
 | `crates/rostrum-db/src/issues.rs` | Issue cache | `Db::{save_issues, load_issues, save_issue_detail, load_issue_detail}` |
 | `crates/rostrum-db/src/schema.rs` | `cache_issue`, `cache_issue_detail` | — |
 | `crates/rostrum-config/src/lib.rs` | `feed_tab`, `issues_per_repo` | `Config::feed_tab` |
-| `crates/rostrum/src/sync/issues.rs` | Issue refresh, cache write, tab, reveal | `Store::{refresh_issues, set_tab, reveal}` |
+| `crates/rostrum/src/sync/issues.rs` | Issue batches on their cadence, cache write, tab (refreshing a stale Issues tab), reveal | `Store::{refresh_issues, set_tab, reveal}` |
 | `crates/rostrum/src/feed/mod.rs` | Tab bar, tab keys, identity selection | `FeedEvent::NewIssue`, `NextTab`, `PreviousTab` |
 | `crates/rostrum/src/feed/rows.rs` | Row renderers, including the issue row and the header's `+ New issue` | — |
 | `crates/rostrum/src/nav.rs` | Navigation over either kind of item row | `selected_row`, `navigate` |

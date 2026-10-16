@@ -12,7 +12,7 @@
 use chrono::Utc;
 use gpui::Context;
 use gpui_tokio::Tokio;
-use rostrum_core::{FeedTab, LoadState, RepoId, closed_needs_fetch};
+use rostrum_core::{FeedTab, LoadState, RepoId, budget::Feature, closed_needs_fetch};
 use rostrum_github::{CLOSED_PER_REPO, GitHubError, RepoClosedPulls};
 
 use super::Store;
@@ -21,9 +21,12 @@ impl Store {
     /// Fetch one repository's closed pull requests, unless a fetch is
     /// already in flight for it.
     pub fn refresh_closed(&mut self, id: RepoId, cx: &mut Context<Self>) {
-        let Some(client) = self.client.clone() else {
+        let Some(client) = self.client_for(Feature::Closed) else {
             return;
         };
+        if self.paused(Feature::Closed) {
+            return;
+        }
         if self.pending_closed.contains_key(&id) {
             return;
         }

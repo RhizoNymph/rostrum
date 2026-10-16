@@ -19,12 +19,13 @@ use crate::graphql::{Connection, RateLimit};
 /// hundred columns is already past what fits.
 pub const CONTEXTS_PER_COMMIT: u32 = 100;
 
-/// Open pull requests' head-commit checks for one repository, most recently
-/// updated first — the same page of pull requests the feed fetches.
-pub const CI_CHECKS: &str = r#"
-query($owner: String!, $name: String!, $first: Int!) {
-  rateLimit { cost remaining resetAt }
-  repository(owner: $owner, name: $name) {
+/// What the CI view selects on a repository: every open pull request's head
+/// commit and its rollup contexts, most recently updated first — the same
+/// page of pull requests the feed fetches. Shared by the one-repository
+/// document and the batched one ([`crate::batch`]).
+macro_rules! ci_checks_selection {
+    () => {
+        r#"
     pullRequests(states: OPEN, first: $first, orderBy: {field: UPDATED_AT, direction: DESC}) {
       nodes {
         number
@@ -68,9 +69,25 @@ query($owner: String!, $name: String!, $first: Int!) {
         }
       }
     }
-  }
+"#
+    };
 }
-"#;
+
+/// [`CI_CHECKS`]'s selection on one repository, for batching.
+pub const CI_CHECKS_SELECTION: &str = ci_checks_selection!();
+
+/// Open pull requests' head-commit checks for one repository, most recently
+/// updated first — the same page of pull requests the feed fetches.
+pub const CI_CHECKS: &str = concat!(
+    r#"
+query($owner: String!, $name: String!, $first: Int!) {
+  rateLimit { cost remaining resetAt }
+  repository(owner: $owner, name: $name) {"#,
+    ci_checks_selection!(),
+    r#"  }
+}
+"#
+);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -8,8 +8,11 @@
 mod ci;
 mod closed;
 mod config_file;
+mod feed;
+mod inflight;
 mod issues;
 mod linked;
+mod poll;
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -17,18 +20,17 @@ use std::{
     sync::Arc,
 };
 
-use chrono::Utc;
 use gpui::{Context, Task};
 use gpui_tokio::Tokio;
 use rostrum_core::{
-    AppState, AuthorEntry, ClosedPull, Divergence, FeedFilter, FeedTab, Issue, ItemSortKey,
-    LoadState, LoginKey, MergeProbeBudget, PrNumber, PullRequest, RepoId, RepoMeta, RepoSortKey,
-    RepoState, Stack, User, apply_divergences, carry_forward_divergence, closed_roster,
-    divergence_query, issue_roster, needs_merge_probe, roster,
+    AppState, AuthorEntry, ClosedPull, FeedFilter, FeedTab, Issue, ItemSortKey, LoginKey, PrNumber,
+    PullRequest, RepoId, RepoMeta, RepoSortKey, RepoState, Stack, User,
+    budget::{Feature, Pace},
+    closed_roster, issue_roster, roster,
 };
 use rostrum_db::Db;
 use rostrum_git::{Autostash, BranchName};
-use rostrum_github::{GitHubClient, GitHubError, client::RepoPullRequests, resolve_token};
+use rostrum_github::{GitHubClient, GitHubError, resolve_token};
 use rostrum_handoff::PrMeta;
 
 use rostrum_config::{Config, ConflictHandler, Warning};
@@ -171,37 +173,32 @@ pub struct Store {
     pub auth: AuthStatus,
     pub warnings: Vec<Warning>,
     client: Option<GitHubClient>,
-    /// In-flight refresh per repository. Presence here is the overlap guard: a
-    /// slow request can never stack up behind a fast timer.
-    pending: HashMap<RepoId, Task<()>>,
-    /// In-flight issue refresh per repository, guarded the same way and kept
-    /// apart from `pending` so a merge probe's pull request refresh never
-    /// waits on, or cancels, an issue fetch.
-    pending_issues: HashMap<RepoId, Task<()>>,
+    /// Pull request batches in flight. A repository in flight is left out of
+    /// the next batch: the overlap guard, so a slow request can never stack
+    /// up behind a fast timer.
+    feed: inflight::InFlight,
+    /// What follows the feed's batches: divergence, checks, merge probes;
+    /// see [`feed`].
+    cycle: feed::FeedCycle,
+    /// Issue batches in flight, guarded the same way and kept apart from
+    /// `feed` so a merge probe's pull request refresh never waits on, or
+    /// cancels, an issue fetch.
+    issues_flight: inflight::InFlight,
     /// In-flight closed pull request fetch per repository, guarded the same
     /// way; see [`closed`].
     pending_closed: HashMap<RepoId, Task<()>>,
     /// Every watched repository's CI checks, for the CI view.
     pub ci: rostrum_core::ci::CiChecks,
-    /// In-flight checks refresh per repository, guarded like the others.
-    pending_ci: HashMap<RepoId, Task<()>>,
+    /// Checks batches in flight, guarded like the others.
+    ci_flight: inflight::InFlight,
     /// The CI view's faster poll, alive only while the view is showing.
     ci_watch: Option<Task<()>>,
     /// Held so the poll loop is not dropped (dropping a `Task` cancels it).
     poll: Option<Task<()>>,
-    /// Follow-up refreshes chasing a merge state GitHub has not finished
-    /// computing, one per repository. Replacing an entry cancels the previous
-    /// timer, so a repo can never accumulate probes.
-    merge_probes: HashMap<RepoId, Task<()>>,
-    /// Probes already spent this poll cycle, per repository. Bounds the chase
-    /// so a merge state that stays `UNKNOWN` — which is what a token without
-    /// push access sees — does not become a permanent request loop.
-    merge_probe_attempts: HashMap<RepoId, MergeProbeBudget>,
-    /// In-flight divergence batch per repository, issued after each refresh
-    /// lands. Replacing an entry cancels the previous request, so a probe
-    /// whose refresh has already been superseded never writes stale counts
-    /// over newer ones.
-    divergence_probes: HashMap<RepoId, Task<()>>,
+    /// The periodic log of what each feature spent; see [`poll`].
+    spend_log: Option<Task<()>>,
+    /// The last interval the poll loop chose, and why.
+    pace: Option<Pace>,
     /// The latest "sync all", running or finished. Kept after completion so
     /// the per-row verdicts persist until the next sync replaces them.
     sync: Option<SyncProgress>,
@@ -250,16 +247,16 @@ impl Store {
             auth: AuthStatus::Resolving,
             warnings,
             client: None,
-            pending: HashMap::new(),
-            pending_issues: HashMap::new(),
+            feed: Default::default(),
+            cycle: Default::default(),
+            issues_flight: Default::default(),
             pending_closed: HashMap::new(),
             ci: Default::default(),
-            pending_ci: HashMap::new(),
+            ci_flight: Default::default(),
             ci_watch: None,
             poll: None,
-            merge_probes: HashMap::new(),
-            merge_probe_attempts: HashMap::new(),
-            divergence_probes: HashMap::new(),
+            spend_log: None,
+            pace: None,
             sync: None,
             sync_task: None,
             push_all: push::PushAllSync::default(),
@@ -419,13 +416,14 @@ impl Store {
         {
             self.state.selection = None;
         }
-        // Dropping the in-flight tasks cancels their requests.
-        self.pending.remove(id);
-        self.pending_issues.remove(id);
+        // A batch carrying it runs on for the others; its answer finds no
+        // repository to land on. Its own closed fetch is cancelled.
+        self.feed.forget(id);
+        self.issues_flight.forget(id);
+        self.ci_flight.forget(id);
+        self.cycle.forget(id);
         self.pending_closed.remove(id);
-        self.pending_ci.remove(id);
         self.ci.forget(id);
-        self.divergence_probes.remove(id);
         self.stacks.forget(id);
         // A verdict for a repository that is no longer listed has no row to
         // sit on, and would resurface if the repo were re-added.
@@ -546,9 +544,14 @@ impl Store {
     }
 
     pub fn is_refreshing(&self) -> bool {
-        !self.pending.is_empty()
-            || !self.pending_issues.is_empty()
-            || !self.pending_closed.is_empty()
+        !self.feed.is_empty() || !self.issues_flight.is_empty() || !self.pending_closed.is_empty()
+    }
+
+    /// The client, tallying what it spends under `feature`.
+    fn client_for(&self, feature: Feature) -> Option<GitHubClient> {
+        self.client
+            .as_ref()
+            .map(|client| client.for_feature(feature))
     }
 
     /// The authenticated client, once auth has resolved.
@@ -765,296 +768,6 @@ impl Store {
         .detach();
     }
 
-    pub fn refresh_all(&mut self, cx: &mut Context<Self>) {
-        // A full refresh is the start of a new cycle, so every repository gets
-        // its probe budget back. Probes themselves call `refresh_repo`, which
-        // leaves the budget alone.
-        self.merge_probe_attempts.clear();
-
-        let ids: Vec<RepoId> = self
-            .state
-            .repos
-            .iter()
-            .map(|repo| repo.id.clone())
-            .collect();
-        // Closed pull requests ride the poll only while their tab is
-        // showing; see [`closed`].
-        let closed_shown = self.state.tab == FeedTab::Closed;
-        for id in ids {
-            self.refresh_repo(id.clone(), cx);
-            self.refresh_issues(id.clone(), cx);
-            if closed_shown {
-                self.refresh_closed(id.clone(), cx);
-            }
-            self.refresh_ci(id, cx);
-        }
-    }
-
-    pub fn refresh_repo(&mut self, id: RepoId, cx: &mut Context<Self>) {
-        let Some(client) = self.client.clone() else {
-            return;
-        };
-        // Overlap guard.
-        if self.pending.contains_key(&id) {
-            return;
-        }
-        let Some(repo) = self.state.repo_mut(&id) else {
-            return;
-        };
-
-        // Only show a spinner on first load; a background refresh of a repo
-        // that already has data should not blank the card out.
-        if repo.prs.is_empty() {
-            repo.load = LoadState::Loading;
-        }
-        cx.notify();
-
-        let limit = self.config.prs_per_repo;
-        let fetch_id = id.clone();
-        let apply_id = id.clone();
-
-        let task = cx.spawn(async move |this, cx| {
-            let outcome = Tokio::spawn(&*cx, async move {
-                client.open_pull_requests(&fetch_id, limit).await
-            })
-            .await;
-
-            // No await points after this: `apply_refresh` removes this task's
-            // own handle from `pending`, which drops it.
-            this.update(cx, |this, cx| this.apply_refresh(&apply_id, outcome, cx))
-                .ok();
-        });
-
-        self.pending.insert(id, task);
-    }
-
-    fn apply_refresh(
-        &mut self,
-        id: &RepoId,
-        outcome: Result<Result<RepoPullRequests, GitHubError>, gpui_tokio::JoinError>,
-        cx: &mut Context<Self>,
-    ) {
-        let now = Utc::now();
-
-        match outcome {
-            Ok(Ok(mut fetched)) => {
-                // Every repository's response carries it; whichever arrives
-                // first wins and the rest agree, since it is a property of the
-                // token rather than of the repository.
-                if let Some(viewer) = fetched.viewer.take() {
-                    if self.viewer.as_ref() != Some(&viewer) {
-                        tracing::debug!(login = %viewer.login, "resolved the viewer");
-                    }
-                    self.viewer = Some(viewer);
-                }
-                if let Some(repo) = self.state.repo_mut(id) {
-                    // The feed query never carries divergence; keep what the
-                    // last batch found until the next one answers.
-                    carry_forward_divergence(&repo.prs, &mut fetched.pull_requests);
-                    repo.prs = fetched.pull_requests;
-                    // An answer without metadata keeps the last known
-                    // metadata rather than dropping the repository to the
-                    // bottom of a sort for one poll.
-                    if fetched.meta.is_some() {
-                        repo.meta = fetched.meta;
-                    }
-                    repo.load = LoadState::Loaded { at: now };
-                }
-                if let Some(db) = self.db.clone() {
-                    let repo = id.clone();
-                    let (prs, meta) = self
-                        .state
-                        .repo(&repo)
-                        .map(|repo| (repo.prs.clone(), repo.meta.clone()))
-                        .unwrap_or_default();
-                    // Fire and forget: a cache write failing must not disturb
-                    // the refresh that produced it. sqlx needs the Tokio
-                    // reactor, so this goes through the bridge rather than
-                    // GPUI's executor.
-                    Tokio::spawn(&*cx, async move {
-                        if let Err(error) = db.save_pull_requests(&repo, &prs).await {
-                            tracing::warn!(%repo, %error, "could not cache pull requests");
-                        }
-                        if let Some(meta) = meta
-                            && let Err(error) = db.save_repo_meta(&repo, &meta).await
-                        {
-                            tracing::warn!(%repo, %error, "could not cache repository metadata");
-                        }
-                    })
-                    .detach();
-                }
-
-                self.probe_merge_state(id, cx);
-                self.fetch_divergences(id, cx);
-                self.fetch_stacks(id, cx);
-
-                if let Some(limit) = fetched.rate_limit {
-                    tracing::debug!(
-                        repo = %id,
-                        cost = limit.cost,
-                        remaining = limit.remaining,
-                        "refreshed"
-                    );
-                }
-            }
-            Ok(Err(err)) => {
-                tracing::warn!(repo = %id, error = %err, "refresh failed");
-                if let Some(repo) = self.state.repo_mut(id) {
-                    repo.load = LoadState::Failed {
-                        message: err.to_string(),
-                        at: now,
-                    };
-                }
-            }
-            Err(err) => {
-                tracing::warn!(repo = %id, error = %err, "refresh task did not complete");
-                if let Some(repo) = self.state.repo_mut(id) {
-                    repo.load = LoadState::Failed {
-                        message: format!("refresh did not complete: {err}"),
-                        at: now,
-                    };
-                }
-            }
-        }
-
-        self.pending.remove(id);
-        cx.notify();
-    }
-
-    /// Re-query a repository shortly after a refresh that found merge states
-    /// GitHub had not finished computing.
-    ///
-    /// GitHub computes `mergeable` and `mergeStateStatus` lazily: the query
-    /// that asks for them returns `UNKNOWN` *and* starts the computation, so a
-    /// single poll can never see the answer. Without this the feed would show
-    /// "computing" until the next full poll — for a poll interval measured in
-    /// minutes, that is every pull request, every launch.
-    fn probe_merge_state(&mut self, id: &RepoId, cx: &mut Context<Self>) {
-        let computing = self
-            .state
-            .repo(id)
-            .is_some_and(|repo| needs_merge_probe(&repo.prs));
-
-        if !computing {
-            self.merge_probes.remove(id);
-            self.merge_probe_attempts.remove(id);
-            return;
-        }
-
-        let budget = self.merge_probe_attempts.entry(id.clone()).or_default();
-        // Back off, because the wait is GitHub finishing a background job and
-        // the second attempt is evidence the first was too early.
-        let Some(delay) = budget.next_delay() else {
-            // Out of budget until the next poll cycle. This is the steady state
-            // for a repository whose merge state the token may not read, so it
-            // must be quiet rather than an error.
-            tracing::debug!(repo = %id, "merge state still unknown; waiting for the next poll");
-            self.merge_probes.remove(id);
-            return;
-        };
-        tracing::debug!(
-            repo = %id,
-            attempt = budget.spent(),
-            delay_ms = delay.as_millis(),
-            "merge state computing; scheduling a probe"
-        );
-        let probe_id = id.clone();
-        let task = cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(delay).await;
-            this.update(cx, |this, cx| this.refresh_repo(probe_id, cx))
-                .ok();
-        });
-        self.merge_probes.insert(id.clone(), task);
-    }
-
-    /// Ask GitHub how far each of a repository's pull requests has drifted
-    /// from its base, in one batched request, and write the answers back.
-    ///
-    /// Separate from the feed query because `Ref.compare` is not reachable
-    /// from a `PullRequest` node; it hangs off the base ref, so it has to be
-    /// a second document built from the refs the feed just returned.
-    fn fetch_divergences(&mut self, id: &RepoId, cx: &mut Context<Self>) {
-        let Some(client) = self.client.clone() else {
-            return;
-        };
-        let Some(repo) = self.state.repo(id) else {
-            return;
-        };
-        let (numbers, pairs) = divergence_query(&repo.prs);
-        if pairs.is_empty() {
-            self.divergence_probes.remove(id);
-            return;
-        }
-
-        let fetch_id = id.clone();
-        let apply_id = id.clone();
-        let task = cx.spawn(async move |this, cx| {
-            let outcome = Tokio::spawn(
-                &*cx,
-                async move { client.divergences(&fetch_id, &pairs).await },
-            )
-            .await;
-
-            // No await points after this: `apply_divergences` removes this
-            // task's own handle from `divergence_probes`, which drops it.
-            this.update(cx, |this, cx| {
-                this.apply_divergences(&apply_id, &numbers, outcome, cx)
-            })
-            .ok();
-        });
-        self.divergence_probes.insert(id.clone(), task);
-    }
-
-    /// Write a batch of divergence answers onto the pull requests they were
-    /// asked about.
-    ///
-    /// Matched by number rather than by position: a refresh may have landed
-    /// while the batch was in flight, reordering or replacing the list, and a
-    /// count written to the wrong row is worse than none.
-    ///
-    /// A failed batch is logged at debug and changes nothing. The counts on
-    /// screen were right a minute ago and are still the best available
-    /// answer; blanking them would turn a transient error into a visible
-    /// flicker on every poll that hits one.
-    fn apply_divergences(
-        &mut self,
-        id: &RepoId,
-        numbers: &[PrNumber],
-        outcome: Result<Result<Vec<Option<Divergence>>, GitHubError>, gpui_tokio::JoinError>,
-        cx: &mut Context<Self>,
-    ) {
-        match outcome {
-            Ok(Ok(divergences)) => {
-                if let Some(repo) = self.state.repo_mut(id) {
-                    apply_divergences(&mut repo.prs, numbers, divergences);
-                }
-                tracing::debug!(repo = %id, count = numbers.len(), "divergence updated");
-            }
-            Ok(Err(error)) => {
-                tracing::debug!(repo = %id, %error, "divergence batch failed; keeping previous counts");
-            }
-            Err(error) => {
-                tracing::debug!(repo = %id, %error, "divergence batch did not complete");
-            }
-        }
-
-        self.divergence_probes.remove(id);
-        cx.notify();
-    }
-
-    fn start_polling(&mut self, cx: &mut Context<Self>) {
-        let interval = self.config.refresh_interval();
-        self.poll = Some(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(interval).await;
-                // Errors here mean the store was dropped, so the loop ends.
-                if this.update(cx, |this, cx| this.refresh_all(cx)).is_err() {
-                    break;
-                }
-            }
-        }));
-    }
-
     /// Toggle a repository's collapsed state.
     pub fn toggle_collapsed(&mut self, id: &RepoId, cx: &mut Context<Self>) {
         if let Some(repo) = self.state.repo_mut(id) {
@@ -1062,6 +775,15 @@ impl Store {
             cx.notify();
         }
     }
+}
+
+/// Whether GitHub refused for rate limiting: the budget's fault, not the
+/// repository's, and already a pause in the client's tracker.
+fn is_rate_limit(error: &GitHubError) -> bool {
+    matches!(
+        error,
+        GitHubError::RateLimited { .. } | GitHubError::SecondaryRateLimit { .. }
+    )
 }
 
 #[cfg(test)]

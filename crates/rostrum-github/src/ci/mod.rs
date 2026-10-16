@@ -12,4 +12,4 @@ mod tests;
 
 pub use client::RepoCiChecks;
 pub use rest::{RerunError, classify_rerun, job_log_path, rerun_call};
-pub use wire::{CI_CHECKS, CONTEXTS_PER_COMMIT};
+pub use wire::{CI_CHECKS, CI_CHECKS_SELECTION, CONTEXTS_PER_COMMIT};

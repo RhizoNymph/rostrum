@@ -6,6 +6,7 @@ use reqwest::{
     header::{ACCEPT, HeaderMap},
 };
 use rostrum_core::{
+    budget::{BudgetState, Feature, RateLimitHit, SpendTally},
     Conversation, Divergence, EarlierRequest, Label, NodeId, PageUpdate, PrNumber, PullRequest,
     RepoId, RepoMeta, User,
 };
@@ -26,7 +27,10 @@ use crate::{
     rest::{AddLabels, IssueState, MergePullRequest, PullRequestFile, SubmitReview},
 };
 
+mod budget;
 mod stacks;
+
+pub use budget::BudgetTracker;
 
 const GRAPHQL_URL: &str = "https://api.github.com/graphql";
 const REST_BASE: &str = "https://api.github.com";
@@ -60,6 +64,10 @@ pub struct GitHubClient {
     graphql_url: String,
     /// The root REST paths are appended to, without a trailing slash.
     pub(crate) rest_base: String,
+    /// The rate-limit budget every clone spends, and reports into.
+    budget: BudgetTracker,
+    /// Which part of the app this clone spends for, in the tally.
+    feature: Feature,
 }
 
 impl GitHubClient {
@@ -83,7 +91,29 @@ impl GitHubClient {
             token,
             graphql_url: graphql_url.to_string(),
             rest_base: rest_base.trim_end_matches('/').to_string(),
+            budget: BudgetTracker::default(),
+            feature: Feature::Detail,
         })
+    }
+
+    /// This client, tallying what it spends under `feature`. Clones share one
+    /// budget whatever they are tagged with.
+    pub fn for_feature(&self, feature: Feature) -> Self {
+        Self {
+            feature,
+            ..self.clone()
+        }
+    }
+
+    /// What is known of the rate-limit budget now: the last observation per
+    /// resource, any pause in force, and the tally since [`Self::take_spend`].
+    pub fn budget(&self) -> BudgetState {
+        self.budget.snapshot()
+    }
+
+    /// Hand over what has been spent since the last call, per feature.
+    pub fn take_spend(&self) -> SpendTally {
+        self.budget.take_spend()
     }
 
     /// Who the token belongs to.
@@ -690,7 +720,7 @@ impl GitHubClient {
     /// It exists for the one caller — [`Self::divergences`] — whose document
     /// legitimately answers with partial data and per-alias errors, and which
     /// therefore has to read both halves itself.
-    async fn graphql_raw<T: DeserializeOwned>(
+    pub(crate) async fn graphql_raw<T: DeserializeOwned>(
         &self,
         query: &str,
         variables: serde_json::Value,
@@ -698,19 +728,32 @@ impl GitHubClient {
     ) -> Result<GraphQlResponse<T>, GitHubError> {
         let body = json!({ "query": query, "variables": variables });
         let response = self
-            .execute(
+            .transmit(
                 self.http
                     .post(&self.graphql_url)
                     .bearer_auth(self.token.as_str())
                     .json(&body),
             )
             .await?;
+        self.budget
+            .record_graphql(self.feature, graphql::response_cost(&response.body));
         response.check_status(resource)?;
 
-        serde_json::from_str(&response.body).map_err(|source| GitHubError::Decode {
-            context: format!("GraphQL response for {resource}"),
-            source,
-        })
+        let parsed: GraphQlResponse<T> =
+            serde_json::from_str(&response.body).map_err(|source| GitHubError::Decode {
+                context: format!("GraphQL response for {resource}"),
+                source,
+            })?;
+        // GitHub answers an exhausted GraphQL budget with a 200 whose only
+        // error is `RATE_LIMITED`. It is the budget, not this document, that
+        // failed, so it is the same typed error a REST 403 becomes.
+        if graphql::is_rate_limited(&parsed.errors) {
+            let reset_at = budget::primary_reset(&response.headers, Utc::now());
+            self.budget
+                .record_hit(RateLimitHit::Primary { reset_at });
+            return Err(GitHubError::RateLimited { reset_at });
+        }
+        Ok(parsed)
     }
 
     /// A REST request with the auth and versioning headers already applied.
@@ -722,16 +765,26 @@ impl GitHubClient {
             .header("x-github-api-version", API_VERSION)
     }
 
-    /// Send a request and read the whole response, keeping the status and
-    /// headers that error classification needs.
+    /// Send a REST request and read the whole response, keeping the status
+    /// and headers that error classification needs. Counted as one REST
+    /// request in the tally.
     pub(crate) async fn execute(
         &self,
         request: RequestBuilder,
     ) -> Result<RawResponse, GitHubError> {
+        let response = self.transmit(request).await?;
+        self.budget.record_rest(self.feature);
+        Ok(response)
+    }
+
+    /// Send any request, reading the budget it reports and recording a
+    /// rate-limit refusal before anyone interprets the response.
+    async fn transmit(&self, request: RequestBuilder) -> Result<RawResponse, GitHubError> {
         let response = request.send().await?;
         let status = response.status();
         let headers = response.headers().clone();
         let body = response.text().await?;
+        self.budget.record_response(status, &headers, &body);
         Ok(RawResponse {
             status,
             headers,
@@ -888,6 +941,10 @@ pub(crate) fn classify_status(
                 GitHubError::SecondaryRateLimit {
                     retry_after_secs: retry_after,
                 }
+            } else if budget::mentions_secondary_limit(body) {
+                GitHubError::SecondaryRateLimit {
+                    retry_after_secs: rostrum_core::budget::SECONDARY_DEFAULT_RETRY.as_secs(),
+                }
             } else if header_u64(headers, "x-ratelimit-remaining") == Some(0) {
                 GitHubError::RateLimited {
                     reset_at: header_u64(headers, "x-ratelimit-reset")
@@ -973,6 +1030,24 @@ mod tests {
             StatusCode::FORBIDDEN,
             &headers(&[("retry-after", "60"), ("x-ratelimit-remaining", "0")]),
             "",
+            "a/b",
+        );
+        assert!(matches!(
+            err,
+            Some(GitHubError::SecondaryRateLimit {
+                retry_after_secs: 60
+            })
+        ));
+    }
+
+    /// GitHub's secondary limit does not always carry `retry-after`; its
+    /// wording does, and then the documented minute is waited.
+    #[test]
+    fn secondary_wording_is_a_secondary_limit() {
+        let err = classify_status(
+            StatusCode::FORBIDDEN,
+            &headers(&[("x-ratelimit-remaining", "4000")]),
+            r#"{"message":"You have exceeded a secondary rate limit. Please wait."}"#,
             "a/b",
         );
         assert!(matches!(

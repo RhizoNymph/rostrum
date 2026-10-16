@@ -18,16 +18,12 @@ use crate::{
     graphql::{AuthorNode, Connection as GqlConnection, LabelNode, Paged, RateLimit},
 };
 
-/// Open issues for one repository, most recently updated first.
-///
-/// `issues` never returns pull requests — GitHub's GraphQL keeps the two
-/// apart, unlike the REST `issues` list — so nothing here has to filter them
-/// out. Two bounded connections per issue at ten entries each, the same shape
-/// the pull request query uses; GitHub costs this at one point.
-pub const OPEN_ISSUES: &str = r#"
-query($owner: String!, $name: String!, $first: Int!) {
-  rateLimit { cost remaining resetAt }
-  repository(owner: $owner, name: $name) {
+/// What the Issues tab selects on a repository: its open issues, most
+/// recently updated first. Shared by the one-repository document and the
+/// batched one ([`crate::batch`]).
+macro_rules! open_issues_selection {
+    () => {
+        r#"
     issues(states: OPEN, first: $first, orderBy: {field: UPDATED_AT, direction: DESC}) {
       nodes {
         id
@@ -45,9 +41,29 @@ query($owner: String!, $name: String!, $first: Int!) {
         milestone { title }
       }
     }
-  }
+"#
+    };
 }
-"#;
+
+/// Open issues for one repository, most recently updated first.
+///
+/// `issues` never returns pull requests — GitHub's GraphQL keeps the two
+/// apart, unlike the REST `issues` list — so nothing here has to filter them
+/// out. Two bounded connections per issue at ten entries each, the same shape
+/// the pull request query uses; GitHub costs this at one point.
+pub const OPEN_ISSUES: &str = concat!(
+    r#"
+query($owner: String!, $name: String!, $first: Int!) {
+  rateLimit { cost remaining resetAt }
+  repository(owner: $owner, name: $name) {"#,
+    open_issues_selection!(),
+    r#"  }
+}
+"#
+);
+
+/// [`OPEN_ISSUES`]'s selection on one repository, for batching.
+pub const OPEN_ISSUES_SELECTION: &str = open_issues_selection!();
 
 /// Everything the issue pane shows, in one round trip.
 ///

@@ -217,7 +217,7 @@ field optional, so an older response still decodes (as `meta: None`);
 to `User` rather than failing the repository. `RepoPullRequests::meta` carries
 the result out of `GitHubClient::open_pull_requests`.
 
-On the desktop, `Store::apply_refresh` writes `meta` onto the `RepoState`
+On the desktop, `Store::apply_pulls` writes `meta` onto the `RepoState`
 (keeping the previous value if an answer lacks it) and caches it with
 `Db::save_repo_meta` alongside the pull requests. `open_database` reads it
 back with `Db::load_repo_meta`, and `hydrate` fills `meta` only where the

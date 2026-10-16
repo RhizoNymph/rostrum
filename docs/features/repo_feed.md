@@ -218,11 +218,12 @@ existing chip stands.
 
 The count is not part of the feed query. `Ref.compare` takes the head ref
 name as an argument and a GraphQL field cannot read a sibling's value, so it
-is a second, batched request per repository issued from `apply_refresh`: one
-document with an aliased `compare` per pull request, branch names passed as
-variables so no user data reaches the document text. Verified live at cost 1.
-The result is written onto `PullRequest::base_divergence`, which
-`apply_refresh` carries forward across the wholesale `repo.prs` replacement so
+is a follow-up request once a poll's pull request batches have landed: one
+document for every repository at once, with an aliased `compare` per pull
+request under an aliased repository, branch names passed as variables so no
+user data reaches the document text. One point however many repositories
+(`docs/features/poll_budget.md`). The result is written onto
+`PullRequest::base_divergence`, which `apply_pulls` carries forward across the wholesale `repo.prs` replacement so
 the chip does not flicker to absent for the round-trip.
 
 ## Sync all worktrees

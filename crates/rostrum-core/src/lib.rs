@@ -6,6 +6,7 @@
 pub mod arrivals;
 pub mod authors;
 pub mod branches;
+pub mod budget;
 pub mod ci;
 pub mod closed;
 pub mod feed;
@@ -14,6 +15,7 @@ pub mod link;
 pub mod model;
 pub mod paging;
 pub mod navigation;
+pub mod poll;
 pub mod probe;
 pub mod repo_meta;
 pub mod review;

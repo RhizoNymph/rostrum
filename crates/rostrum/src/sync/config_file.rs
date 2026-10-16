@@ -171,10 +171,9 @@ impl Store {
         if limits_changed {
             self.refresh_all(cx);
         } else {
-            for id in added {
-                self.refresh_repo(id.clone(), cx);
-                self.refresh_issues(id, cx);
-            }
+            // One batch each for however many were added.
+            self.refresh_feed(added.clone(), super::feed::FeedOrigin::Poll, cx);
+            self.refresh_issues_batch(added, cx);
         }
         self.refresh_closed_if_shown(cx);
         if !gone.is_empty() {

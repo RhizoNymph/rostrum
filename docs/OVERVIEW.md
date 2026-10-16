@@ -162,11 +162,21 @@ Overview:
     preferences — hidden drafts, hidden empty repos, the author selection —
     are in force on the first painted frame rather than snapping on later.
 
-    `SyncEngine` (a GPUI entity) then runs a poll loop: one GraphQL query per
-    configured repo, staggered, guarded against overlap by an in-flight `Task`
-    handle. Network futures execute on a Tokio runtime bridged into GPUI's
-    executor; results are applied back on the main thread via
-    `entity.update(cx, ..)` followed by `cx.notify()`.
+    The store (a GPUI entity) then runs a poll loop. Each tick asks the pure
+    planner (`rostrum_core::poll::plan_poll`) what is due — every
+    repository's open pull requests, the issues older than
+    `issue_refresh_secs`, the Closed tab's lists while it shows, or nothing
+    while GitHub's rate limit has paused polling — and sends each kind as
+    aliased multi-repository GraphQL batches, chunked by a cost model
+    (`rostrum_github::batch`), guarded against overlap per repository. When
+    the last pull request batch lands, one divergence batch, the stacks, and
+    the CI checks that could have changed (`plan_ci`) follow. The wait
+    before the next tick stretches as the shared GraphQL budget runs down
+    (`rostrum_core::budget::pace`); the client records every response's
+    budget, refusal and cost, and the status bar shows what is left
+    (`docs/features/poll_budget.md`). Network futures execute on a Tokio
+    runtime bridged into GPUI's executor; results are applied back on the
+    main thread via `entity.update(cx, ..)` followed by `cx.notify()`.
 
     `AppState` holds the canonical `Vec<RepoState>`. Whenever it changes, the
     feed's flat `Vec<FeedRow>` is rebuilt and pushed into `ListState` via
@@ -176,9 +186,10 @@ Overview:
     (push and creation times, stars, owner) those orders read, and they are
     cached beside the pull requests so a sorted feed opens in order.
 
-    Each refresh also fetches the repository's open issues — a second GraphQL
-    document with its own overlap guard and its own `LoadState` on
-    `RepoState` — and caches them, so a cold start paints both tabs.
+    Open issues are a separate batched document on their own cadence (five
+    minutes by default; at once on Refresh or when a stale Issues tab is
+    shown), with their own overlap guard and their own `LoadState` on
+    `RepoState`, and are cached so a cold start paints both tabs.
     `AppState.tab` (persisted as `feed_tab`) picks which list `flatten_tab`
     builds — or, for the Closed tab, `flatten_closed`'s single list across
     repositories in ending order, whose per-repository closed lists are
@@ -372,6 +383,15 @@ Features Index:
     entry_points: [crates/rostrum-github/src/lib.rs, crates/rostrum/src/sync/mod.rs]
     depends_on: []
     doc: docs/features/github_sync.md
+  poll_budget:
+    description: >
+      Staying inside the GitHub rate limit shared with gh and the phone —
+      multi-repository batches chosen by a cost model, CI skip rules, the
+      issue cadence, budget tracking from every response, pacing and
+      rate-limit pauses, the status bar readout, and the spend log.
+    entry_points: [crates/rostrum-core/src/budget/mod.rs, crates/rostrum-core/src/poll/mod.rs, crates/rostrum-github/src/batch/mod.rs, crates/rostrum-github/src/client/budget.rs, crates/rostrum/src/sync/poll.rs, crates/rostrum/src/budget_chip.rs]
+    depends_on: [github_sync, repo_feed, issues, ci_grid]
+    doc: docs/features/poll_budget.md
   local_git:
     description: Worktree-aware clone status, divergence, pull/merge/rebase, sync-all, Push and Push all (fast-forward, or leased rewrite behind a confirmation).
     entry_points: [crates/rostrum-git/src/lib.rs, crates/rostrum-local/src/lib.rs, crates/rostrum-local/src/push/mod.rs, crates/rostrum/src/sync/mod.rs, crates/rostrum/src/sync/push.rs, crates/rostrum/src/detail/push.rs, crates/rostrum/src/feed/push_all.rs]

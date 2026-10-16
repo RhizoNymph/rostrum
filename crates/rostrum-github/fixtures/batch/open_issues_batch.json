@@ -1,0 +1,272 @@
+{
+    "data": {
+        "rateLimit": {
+            "cost": 1,
+            "remaining": 4928,
+            "resetAt": "2026-10-16T17:40:39Z"
+        },
+        "r0": {
+            "issues": {
+                "nodes": [
+                    {
+                        "id": "I_kwDOFExXwM8AAAABXtEaLA",
+                        "number": 65710,
+                        "title": "OpenCode provider: \"Failed to load models: missing field `npm`\" (catalog models with provider.api and no npm)",
+                        "url": "https://github.com/zed-industries/zed/issues/65710",
+                        "state": "OPEN",
+                        "stateReason": null,
+                        "createdAt": "2026-10-16T14:18:19Z",
+                        "updatedAt": "2026-10-16T16:50:53Z",
+                        "author": {
+                            "login": "admmoises",
+                            "avatarUrl": "https://avatars.githubusercontent.com/u/140353739?v=4"
+                        },
+                        "assignees": {
+                            "nodes": []
+                        },
+                        "labels": {
+                            "nodes": [
+                                {
+                                    "name": "state:needs triage",
+                                    "color": "fbca04"
+                                }
+                            ]
+                        },
+                        "comments": {
+                            "totalCount": 0
+                        },
+                        "milestone": null
+                    },
+                    {
+                        "id": "I_kwDOFExXwM6QxPvG",
+                        "number": 15138,
+                        "title": "Dependency Dashboard",
+                        "url": "https://github.com/zed-industries/zed/issues/15138",
+                        "state": "OPEN",
+                        "stateReason": null,
+                        "createdAt": "2024-07-25T02:36:47Z",
+                        "updatedAt": "2026-10-16T16:17:30Z",
+                        "author": {
+                            "login": "renovate",
+                            "avatarUrl": "https://avatars.githubusercontent.com/in/2740?v=4"
+                        },
+                        "assignees": {
+                            "nodes": []
+                        },
+                        "labels": {
+                            "nodes": [
+                                {
+                                    "name": "ignore top-ranking issues",
+                                    "color": "F76E1D"
+                                }
+                            ]
+                        },
+                        "comments": {
+                            "totalCount": 3
+                        },
+                        "milestone": null
+                    },
+                    {
+                        "id": "I_kwDOFExXwM6MZj9c",
+                        "number": 13104,
+                        "title": "Add (more) LSP/rust-analyzer actions ",
+                        "url": "https://github.com/zed-industries/zed/issues/13104",
+                        "state": "OPEN",
+                        "stateReason": null,
+                        "createdAt": "2024-06-16T07:45:58Z",
+                        "updatedAt": "2026-10-16T15:52:02Z",
+                        "author": {
+                            "login": "FlixCoder",
+                            "avatarUrl": "https://avatars.githubusercontent.com/u/20093204?u=7cc26530eec4948b25c2a77a3299da8ad9b2733a&v=4"
+                        },
+                        "assignees": {
+                            "nodes": []
+                        },
+                        "labels": {
+                            "nodes": [
+                                {
+                                    "name": "area:languages/rust",
+                                    "color": "1d0f6c"
+                                },
+                                {
+                                    "name": "area:languages",
+                                    "color": "1d0f6c"
+                                },
+                                {
+                                    "name": "area:language server",
+                                    "color": "1d76db"
+                                }
+                            ]
+                        },
+                        "comments": {
+                            "totalCount": 3
+                        },
+                        "milestone": null
+                    }
+                ]
+            }
+        },
+        "r1": {
+            "issues": {
+                "nodes": [
+                    {
+                        "id": "I_kwDOAAsO6M8AAAABXlIlmw",
+                        "number": 164415,
+                        "title": "Should path separators participate in Path/PathBuf `Hash` impl?",
+                        "url": "https://github.com/rust-lang/rust/issues/164415",
+                        "state": "OPEN",
+                        "stateReason": null,
+                        "createdAt": "2026-10-16T02:47:21Z",
+                        "updatedAt": "2026-10-16T16:48:17Z",
+                        "author": {
+                            "login": "jieyouxu",
+                            "avatarUrl": "https://avatars.githubusercontent.com/u/39484203?u=206bbf9558401e555c8c2eaaa906e8e910cd6df6&v=4"
+                        },
+                        "assignees": {
+                            "nodes": []
+                        },
+                        "labels": {
+                            "nodes": [
+                                {
+                                    "name": "T-libs",
+                                    "color": "bfd4f2"
+                                },
+                                {
+                                    "name": "C-discussion",
+                                    "color": "f5f1fd"
+                                },
+                                {
+                                    "name": "A-filesystem",
+                                    "color": "f7e101"
+                                }
+                            ]
+                        },
+                        "comments": {
+                            "totalCount": 4
+                        },
+                        "milestone": null
+                    },
+                    {
+                        "id": "I_kwDOAAsO6M8AAAABXg_Gtg",
+                        "number": 164379,
+                        "title": "Crate metadata and crate hash depend on the host CPU",
+                        "url": "https://github.com/rust-lang/rust/issues/164379",
+                        "state": "OPEN",
+                        "stateReason": null,
+                        "createdAt": "2026-10-15T20:02:29Z",
+                        "updatedAt": "2026-10-16T15:50:48Z",
+                        "author": {
+                            "login": "tiny-ac",
+                            "avatarUrl": "https://avatars.githubusercontent.com/u/280102235?u=801a20903aaf8bbadd67dde1e7e9189cc30c6f43&v=4"
+                        },
+                        "assignees": {
+                            "nodes": []
+                        },
+                        "labels": {
+                            "nodes": [
+                                {
+                                    "name": "A-metadata",
+                                    "color": "f7e101"
+                                },
+                                {
+                                    "name": "P-medium",
+                                    "color": "eb6420"
+                                },
+                                {
+                                    "name": "T-compiler",
+                                    "color": "bfd4f2"
+                                },
+                                {
+                                    "name": "regression-from-stable-to-beta",
+                                    "color": "e4008a"
+                                },
+                                {
+                                    "name": "C-bug",
+                                    "color": "f5f1fd"
+                                },
+                                {
+                                    "name": "A-reproducibility",
+                                    "color": "f7e101"
+                                }
+                            ]
+                        },
+                        "comments": {
+                            "totalCount": 4
+                        },
+                        "milestone": null
+                    },
+                    {
+                        "id": "I_kwDOAAsO6M8AAAABXqwf_Q",
+                        "number": 164433,
+                        "title": "`async_drop`: async-dropping a coroutine with no async drops of its own leaks its captures and locals",
+                        "url": "https://github.com/rust-lang/rust/issues/164433",
+                        "state": "OPEN",
+                        "stateReason": null,
+                        "createdAt": "2026-10-16T11:23:35Z",
+                        "updatedAt": "2026-10-16T15:28:12Z",
+                        "author": {
+                            "login": "ChoKyuWon",
+                            "avatarUrl": "https://avatars.githubusercontent.com/u/11254910?u=63eb93068ce25100b609fb42ed756a33af731928&v=4"
+                        },
+                        "assignees": {
+                            "nodes": [
+                                {
+                                    "login": "mu001999",
+                                    "avatarUrl": "https://avatars.githubusercontent.com/u/21022101?u=a40b2006961f92c2a1c80f158ce7edbf42431699&v=4"
+                                }
+                            ]
+                        },
+                        "labels": {
+                            "nodes": [
+                                {
+                                    "name": "A-destructors",
+                                    "color": "f7e101"
+                                },
+                                {
+                                    "name": "T-compiler",
+                                    "color": "bfd4f2"
+                                },
+                                {
+                                    "name": "C-bug",
+                                    "color": "f5f1fd"
+                                },
+                                {
+                                    "name": "WG-async",
+                                    "color": "c2e0c6"
+                                },
+                                {
+                                    "name": "I-memleak",
+                                    "color": "e10c02"
+                                },
+                                {
+                                    "name": "F-async_drop",
+                                    "color": "f9c0cc"
+                                }
+                            ]
+                        },
+                        "comments": {
+                            "totalCount": 0
+                        },
+                        "milestone": null
+                    }
+                ]
+            }
+        },
+        "r2": null
+    },
+    "errors": [
+        {
+            "type": "NOT_FOUND",
+            "path": [
+                "r2"
+            ],
+            "locations": [
+                {
+                    "line": 42,
+                    "column": 3
+                }
+            ],
+            "message": "Could not resolve to a Repository with the name 'RhizoNymph/no-such-repository-rostrum-fixture'."
+        }
+    ]
+}
