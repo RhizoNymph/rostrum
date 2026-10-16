@@ -131,9 +131,12 @@ impl Store {
     /// Skipped for a repository with no open pull requests (there is nothing
     /// to group) and, for an hour, for one that said stacks are not enabled.
     pub(super) fn fetch_stacks(&mut self, id: &RepoId, cx: &mut Context<Self>) {
-        let Some(client) = self.client.clone() else {
+        let Some(client) = self.client_for(rostrum_core::budget::Feature::Stacks) else {
             return;
         };
+        if self.paused(rostrum_core::budget::Feature::Stacks) {
+            return;
+        }
         if self.state.repo(id).is_none_or(|repo| repo.prs.is_empty()) {
             return;
         }

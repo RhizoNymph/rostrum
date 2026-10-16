@@ -1,5 +1,6 @@
 //! rostrum — open pull requests across many repositories, in one feed.
 
+mod budget_chip;
 mod ci;
 mod detail;
 mod feed;
@@ -388,6 +389,14 @@ impl Render for Workspace {
         let issues = store.state.total_open_issues();
         let repo_count = store.state.repos.len();
         let refreshing = store.is_refreshing();
+        let budget = store.budget().and_then(|state| {
+            budget_chip::budget_chip(
+                &state,
+                store.pace(),
+                chrono::Utc::now(),
+                budget_chip::local_clock,
+            )
+        });
         let warnings: Vec<String> = store.warnings.iter().map(|w| w.0.clone()).collect();
 
         v_flex()
@@ -427,6 +436,18 @@ impl Render for Workspace {
                                 .text_size(rems(0.72))
                                 .text_color(theme.text_subtle)
                                 .child("refreshing…"),
+                        )
+                    })
+                    .when_some(budget, |el, chip| {
+                        let color = match chip.tone {
+                            budget_chip::Tone::Quiet => theme.text_muted,
+                            budget_chip::Tone::Warning => theme.warning,
+                            budget_chip::Tone::Danger => theme.danger,
+                        };
+                        el.child(
+                            Chip::new(chip.label)
+                                .color(color)
+                                .tooltip("rate-budget", chip.tooltip),
                         )
                     })
                     .child(Dot::new(status_color))
