@@ -1,0 +1,1527 @@
+{
+    "data": {
+        "rateLimit": {
+            "cost": 1,
+            "remaining": 4927,
+            "resetAt": "2026-10-16T17:40:39Z"
+        },
+        "r0": {
+            "pullRequests": {
+                "nodes": [
+                    {
+                        "number": 65721,
+                        "headRefOid": "0e28f68813def64031f6595c89b0ee3db1410938",
+                        "commits": {
+                            "nodes": [
+                                {
+                                    "commit": {
+                                        "oid": "0e28f68813def64031f6595c89b0ee3db1410938",
+                                        "statusCheckRollup": {
+                                            "state": "SUCCESS",
+                                            "contexts": {
+                                                "totalCount": 7,
+                                                "nodes": [
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117086602851,
+                                                        "name": "welcome",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SKIPPED",
+                                                        "startedAt": "2026-10-16T16:46:20Z",
+                                                        "completedAt": "2026-10-16T16:46:19Z",
+                                                        "detailsUrl": "https://github.com/zed-industries/zed/actions/runs/38934542801/job/117086602851",
+                                                        "checkSuite": {
+                                                            "databaseId": 105516813700,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38934542801,
+                                                                "runNumber": 315,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "Welcome First Contribution"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117086600962,
+                                                        "name": "route-pr",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-16T16:46:26Z",
+                                                        "completedAt": "2026-10-16T16:46:32Z",
+                                                        "detailsUrl": "https://github.com/zed-industries/zed/actions/runs/38934543335/job/117086600962",
+                                                        "checkSuite": {
+                                                            "databaseId": 105516815085,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38934543335,
+                                                                "runNumber": 41456,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "Community PR Board"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117086696255,
+                                                        "name": "route-pr",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-16T16:46:34Z",
+                                                        "completedAt": "2026-10-16T16:46:44Z",
+                                                        "detailsUrl": "https://github.com/zed-industries/zed/actions/runs/38934564852/job/117086696255",
+                                                        "checkSuite": {
+                                                            "databaseId": 105516875495,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38934564852,
+                                                                "runNumber": 41457,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "Community PR Board"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117086569364,
+                                                        "name": "nudge-contributor",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-16T16:46:23Z",
+                                                        "completedAt": "2026-10-16T16:46:26Z",
+                                                        "detailsUrl": "https://github.com/zed-industries/zed/actions/runs/38934533520/job/117086569364",
+                                                        "checkSuite": {
+                                                            "databaseId": 105516788729,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38934533520,
+                                                                "runNumber": 1362,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "Maintainer Edits Nudge"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117086567452,
+                                                        "name": "check-authorship-and-label",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-16T16:46:22Z",
+                                                        "completedAt": "2026-10-16T16:46:28Z",
+                                                        "detailsUrl": "https://github.com/zed-industries/zed/actions/runs/38934533574/job/117086567452",
+                                                        "checkSuite": {
+                                                            "databaseId": 105516788874,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38934533574,
+                                                                "runNumber": 6491,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "PR Issue Labeler"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117086676088,
+                                                        "name": "welcome",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-16T16:46:31Z",
+                                                        "completedAt": "2026-10-16T16:46:41Z",
+                                                        "detailsUrl": "https://github.com/zed-industries/zed/actions/runs/38934564842/job/117086676088",
+                                                        "checkSuite": {
+                                                            "databaseId": 105516875415,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38934564842,
+                                                                "runNumber": 316,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "Welcome First Contribution"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "StatusContext",
+                                                        "context": "verification/cla-signed",
+                                                        "state": "SUCCESS",
+                                                        "createdAt": "2026-10-16T16:46:15Z",
+                                                        "targetUrl": "https://s3.amazonaws.com/cla-bot-logs/zed-industries-b89d3cb6-6314-463a-bfcc-76f98c64ccec",
+                                                        "description": null
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "number": 65720,
+                        "headRefOid": "aa18145a312dbece8802ed45e0eb146235dc316f",
+                        "commits": {
+                            "nodes": [
+                                {
+                                    "commit": {
+                                        "oid": "aa18145a312dbece8802ed45e0eb146235dc316f",
+                                        "statusCheckRollup": {
+                                            "state": "SUCCESS",
+                                            "contexts": {
+                                                "totalCount": 7,
+                                                "nodes": [
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117076477120,
+                                                        "name": "welcome",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SKIPPED",
+                                                        "startedAt": "2026-10-16T16:23:14Z",
+                                                        "completedAt": "2026-10-16T16:23:07Z",
+                                                        "detailsUrl": "https://github.com/zed-industries/zed/actions/runs/38931522031/job/117076477120",
+                                                        "checkSuite": {
+                                                            "databaseId": 105508449628,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38931522031,
+                                                                "runNumber": 313,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "Welcome First Contribution"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117076429175,
+                                                        "name": "route-pr",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-16T16:23:14Z",
+                                                        "completedAt": "2026-10-16T16:23:21Z",
+                                                        "detailsUrl": "https://github.com/zed-industries/zed/actions/runs/38931521955/job/117076429175",
+                                                        "checkSuite": {
+                                                            "databaseId": 105508449405,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38931521955,
+                                                                "runNumber": 41452,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "Community PR Board"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117076545911,
+                                                        "name": "route-pr",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-16T16:23:50Z",
+                                                        "completedAt": "2026-10-16T16:23:57Z",
+                                                        "detailsUrl": "https://github.com/zed-industries/zed/actions/runs/38931544827/job/117076545911",
+                                                        "checkSuite": {
+                                                            "databaseId": 105508514044,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38931544827,
+                                                                "runNumber": 41454,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "Community PR Board"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117076409658,
+                                                        "name": "nudge-contributor",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-16T16:23:06Z",
+                                                        "completedAt": "2026-10-16T16:23:09Z",
+                                                        "detailsUrl": "https://github.com/zed-industries/zed/actions/runs/38931515941/job/117076409658",
+                                                        "checkSuite": {
+                                                            "databaseId": 105508432916,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38931515941,
+                                                                "runNumber": 1361,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "Maintainer Edits Nudge"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117076409637,
+                                                        "name": "check-authorship-and-label",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-16T16:23:12Z",
+                                                        "completedAt": "2026-10-16T16:23:17Z",
+                                                        "detailsUrl": "https://github.com/zed-industries/zed/actions/runs/38931515991/job/117076409637",
+                                                        "checkSuite": {
+                                                            "databaseId": 105508433051,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38931515991,
+                                                                "runNumber": 6490,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "PR Issue Labeler"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117076505629,
+                                                        "name": "welcome",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-16T16:23:19Z",
+                                                        "completedAt": "2026-10-16T16:23:33Z",
+                                                        "detailsUrl": "https://github.com/zed-industries/zed/actions/runs/38931544796/job/117076505629",
+                                                        "checkSuite": {
+                                                            "databaseId": 105508513992,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38931544796,
+                                                                "runNumber": 314,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "Welcome First Contribution"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "StatusContext",
+                                                        "context": "verification/cla-signed",
+                                                        "state": "SUCCESS",
+                                                        "createdAt": "2026-10-16T16:23:04Z",
+                                                        "targetUrl": "https://s3.amazonaws.com/cla-bot-logs/zed-industries-949b777c-8314-4789-ac99-373d769879bc",
+                                                        "description": null
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "number": 59842,
+                        "headRefOid": "ab879fa3d6be691cad296c08d9bef7b7f4eb098a",
+                        "commits": {
+                            "nodes": [
+                                {
+                                    "commit": {
+                                        "oid": "ab879fa3d6be691cad296c08d9bef7b7f4eb098a",
+                                        "statusCheckRollup": {
+                                            "state": "SUCCESS",
+                                            "contexts": {
+                                                "totalCount": 1,
+                                                "nodes": [
+                                                    {
+                                                        "__typename": "StatusContext",
+                                                        "context": "verification/cla-signed",
+                                                        "state": "SUCCESS",
+                                                        "createdAt": "2026-10-16T16:10:12Z",
+                                                        "targetUrl": "https://s3.amazonaws.com/cla-bot-logs/zed-industries-480dd86a-4043-4a94-8e69-c182336e538f",
+                                                        "description": null
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "r1": {
+            "pullRequests": {
+                "nodes": [
+                    {
+                        "number": 164438,
+                        "headRefOid": "c7a023aabe31e29ef571b9db7d9c1231856dead4",
+                        "commits": {
+                            "nodes": [
+                                {
+                                    "commit": {
+                                        "oid": "c7a023aabe31e29ef571b9db7d9c1231856dead4",
+                                        "statusCheckRollup": {
+                                            "state": "PENDING",
+                                            "contexts": {
+                                                "totalCount": 13,
+                                                "nodes": [
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117089767758,
+                                                        "name": "Calculate job matrix",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-16T16:53:48Z",
+                                                        "completedAt": "2026-10-16T16:54:30Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38935476469/job/117089767758",
+                                                        "checkSuite": {
+                                                            "databaseId": 105519417794,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38935476469,
+                                                                "runNumber": 234830,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117089767284,
+                                                        "name": "Run zizmor",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-16T16:53:46Z",
+                                                        "completedAt": "2026-10-16T16:54:07Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38935476471/job/117089767284",
+                                                        "checkSuite": {
+                                                            "databaseId": 105519417781,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38935476471,
+                                                                "runNumber": 2097,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "Crabwatch"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117090102875,
+                                                        "name": "PR - test-aarch64-gnu-llvm-22-1",
+                                                        "status": "IN_PROGRESS",
+                                                        "conclusion": null,
+                                                        "startedAt": "2026-10-16T16:54:34Z",
+                                                        "completedAt": null,
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38935476469/job/117090102875",
+                                                        "checkSuite": {
+                                                            "databaseId": 105519417794,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38935476469,
+                                                                "runNumber": 234830,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117090102613,
+                                                        "name": "PR - test-aarch64-gnu-llvm-22-2",
+                                                        "status": "IN_PROGRESS",
+                                                        "conclusion": null,
+                                                        "startedAt": "2026-10-16T16:54:34Z",
+                                                        "completedAt": null,
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38935476469/job/117090102613",
+                                                        "checkSuite": {
+                                                            "databaseId": 105519417794,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38935476469,
+                                                                "runNumber": 234830,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117090102725,
+                                                        "name": "PR - test-pr-check-1",
+                                                        "status": "IN_PROGRESS",
+                                                        "conclusion": null,
+                                                        "startedAt": "2026-10-16T16:54:32Z",
+                                                        "completedAt": null,
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38935476469/job/117090102725",
+                                                        "checkSuite": {
+                                                            "databaseId": 105519417794,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38935476469,
+                                                                "runNumber": 234830,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117090102887,
+                                                        "name": "PR - test-pr-check-2",
+                                                        "status": "IN_PROGRESS",
+                                                        "conclusion": null,
+                                                        "startedAt": "2026-10-16T16:54:32Z",
+                                                        "completedAt": null,
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38935476469/job/117090102887",
+                                                        "checkSuite": {
+                                                            "databaseId": 105519417794,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38935476469,
+                                                                "runNumber": 234830,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117090102715,
+                                                        "name": "PR - test-tidy",
+                                                        "status": "IN_PROGRESS",
+                                                        "conclusion": null,
+                                                        "startedAt": "2026-10-16T16:54:32Z",
+                                                        "completedAt": null,
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38935476469/job/117090102715",
+                                                        "checkSuite": {
+                                                            "databaseId": 105519417794,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38935476469,
+                                                                "runNumber": 234830,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117090102779,
+                                                        "name": "PR - test-x86_64-gnu-gcc",
+                                                        "status": "IN_PROGRESS",
+                                                        "conclusion": null,
+                                                        "startedAt": "2026-10-16T16:54:32Z",
+                                                        "completedAt": null,
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38935476469/job/117090102779",
+                                                        "checkSuite": {
+                                                            "databaseId": 105519417794,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38935476469,
+                                                                "runNumber": 234830,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117090102673,
+                                                        "name": "PR - test-x86_64-gnu-gcc-core-tests",
+                                                        "status": "IN_PROGRESS",
+                                                        "conclusion": null,
+                                                        "startedAt": "2026-10-16T16:54:32Z",
+                                                        "completedAt": null,
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38935476469/job/117090102673",
+                                                        "checkSuite": {
+                                                            "databaseId": 105519417794,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38935476469,
+                                                                "runNumber": 234830,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117090102950,
+                                                        "name": "PR - test-x86_64-gnu-llvm-22",
+                                                        "status": "IN_PROGRESS",
+                                                        "conclusion": null,
+                                                        "startedAt": "2026-10-16T16:54:32Z",
+                                                        "completedAt": null,
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38935476469/job/117090102950",
+                                                        "checkSuite": {
+                                                            "databaseId": 105519417794,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38935476469,
+                                                                "runNumber": 234830,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117090102833,
+                                                        "name": "PR - test-x86_64-gnu-miri",
+                                                        "status": "IN_PROGRESS",
+                                                        "conclusion": null,
+                                                        "startedAt": "2026-10-16T16:54:33Z",
+                                                        "completedAt": null,
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38935476469/job/117090102833",
+                                                        "checkSuite": {
+                                                            "databaseId": 105519417794,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38935476469,
+                                                                "runNumber": 234830,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117090102877,
+                                                        "name": "PR - test-x86_64-gnu-next-trait-solver-polonius",
+                                                        "status": "IN_PROGRESS",
+                                                        "conclusion": null,
+                                                        "startedAt": "2026-10-16T16:54:32Z",
+                                                        "completedAt": null,
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38935476469/job/117090102877",
+                                                        "checkSuite": {
+                                                            "databaseId": 105519417794,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38935476469,
+                                                                "runNumber": 234830,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 117090102658,
+                                                        "name": "PR - test-x86_64-gnu-tools",
+                                                        "status": "IN_PROGRESS",
+                                                        "conclusion": null,
+                                                        "startedAt": "2026-10-16T16:54:32Z",
+                                                        "completedAt": null,
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38935476469/job/117090102658",
+                                                        "checkSuite": {
+                                                            "databaseId": 105519417794,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38935476469,
+                                                                "runNumber": 234830,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "number": 162916,
+                        "headRefOid": "6c86bb2e4b2dcaf867b3ab1c9965da3530491bbc",
+                        "commits": {
+                            "nodes": [
+                                {
+                                    "commit": {
+                                        "oid": "6c86bb2e4b2dcaf867b3ab1c9965da3530491bbc",
+                                        "statusCheckRollup": {
+                                            "state": "SUCCESS",
+                                            "contexts": {
+                                                "totalCount": 14,
+                                                "nodes": [
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 116483445891,
+                                                        "name": "Calculate job matrix",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-15T14:36:10Z",
+                                                        "completedAt": "2026-10-15T14:36:48Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38752848174/job/116483445891",
+                                                        "checkSuite": {
+                                                            "databaseId": 105017974007,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38752848174,
+                                                                "runNumber": 234686,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 116483446303,
+                                                        "name": "Run zizmor",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-15T14:36:09Z",
+                                                        "completedAt": "2026-10-15T14:36:31Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38752848215/job/116483446303",
+                                                        "checkSuite": {
+                                                            "databaseId": 105017974192,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38752848215,
+                                                                "runNumber": 2000,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "Crabwatch"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 116483815995,
+                                                        "name": "PR - test-aarch64-gnu-llvm-22-1",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-15T14:36:52Z",
+                                                        "completedAt": "2026-10-15T15:43:20Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38752848174/job/116483815995",
+                                                        "checkSuite": {
+                                                            "databaseId": 105017974007,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38752848174,
+                                                                "runNumber": 234686,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 116483815954,
+                                                        "name": "PR - test-aarch64-gnu-llvm-22-2",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-15T14:36:52Z",
+                                                        "completedAt": "2026-10-15T15:30:09Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38752848174/job/116483815954",
+                                                        "checkSuite": {
+                                                            "databaseId": 105017974007,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38752848174,
+                                                                "runNumber": 234686,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 116483816130,
+                                                        "name": "PR - test-pr-check-1",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-15T14:36:50Z",
+                                                        "completedAt": "2026-10-15T15:06:59Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38752848174/job/116483816130",
+                                                        "checkSuite": {
+                                                            "databaseId": 105017974007,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38752848174,
+                                                                "runNumber": 234686,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 116483816110,
+                                                        "name": "PR - test-pr-check-2",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-15T14:36:51Z",
+                                                        "completedAt": "2026-10-15T15:15:18Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38752848174/job/116483816110",
+                                                        "checkSuite": {
+                                                            "databaseId": 105017974007,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38752848174,
+                                                                "runNumber": 234686,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 116483816234,
+                                                        "name": "PR - test-tidy",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-15T14:36:50Z",
+                                                        "completedAt": "2026-10-15T14:42:41Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38752848174/job/116483816234",
+                                                        "checkSuite": {
+                                                            "databaseId": 105017974007,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38752848174,
+                                                                "runNumber": 234686,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 116483816083,
+                                                        "name": "PR - test-x86_64-gnu-gcc",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-15T14:36:51Z",
+                                                        "completedAt": "2026-10-15T15:59:44Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38752848174/job/116483816083",
+                                                        "checkSuite": {
+                                                            "databaseId": 105017974007,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38752848174,
+                                                                "runNumber": 234686,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 116483816452,
+                                                        "name": "PR - test-x86_64-gnu-gcc-core-tests",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-15T14:36:50Z",
+                                                        "completedAt": "2026-10-15T14:48:43Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38752848174/job/116483816452",
+                                                        "checkSuite": {
+                                                            "databaseId": 105017974007,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38752848174,
+                                                                "runNumber": 234686,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 116483816162,
+                                                        "name": "PR - test-x86_64-gnu-llvm-22",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-15T14:36:51Z",
+                                                        "completedAt": "2026-10-15T15:28:39Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38752848174/job/116483816162",
+                                                        "checkSuite": {
+                                                            "databaseId": 105017974007,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38752848174,
+                                                                "runNumber": 234686,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 116483816033,
+                                                        "name": "PR - test-x86_64-gnu-miri",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-15T14:36:51Z",
+                                                        "completedAt": "2026-10-15T15:34:03Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38752848174/job/116483816033",
+                                                        "checkSuite": {
+                                                            "databaseId": 105017974007,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38752848174,
+                                                                "runNumber": 234686,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 116483816144,
+                                                        "name": "PR - test-x86_64-gnu-next-trait-solver-polonius",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-15T14:36:51Z",
+                                                        "completedAt": "2026-10-15T15:35:34Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38752848174/job/116483816144",
+                                                        "checkSuite": {
+                                                            "databaseId": 105017974007,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38752848174,
+                                                                "runNumber": 234686,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 116483816693,
+                                                        "name": "PR - test-x86_64-gnu-tools",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-15T14:36:51Z",
+                                                        "completedAt": "2026-10-15T15:28:05Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38752848174/job/116483816693",
+                                                        "checkSuite": {
+                                                            "databaseId": 105017974007,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38752848174,
+                                                                "runNumber": 234686,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 116526452922,
+                                                        "name": "publish toolstate",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SKIPPED",
+                                                        "startedAt": "2026-10-15T15:59:45Z",
+                                                        "completedAt": "2026-10-15T15:59:45Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/38752848174/job/116526452922",
+                                                        "checkSuite": {
+                                                            "databaseId": 105017974007,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 38752848174,
+                                                                "runNumber": 234686,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "number": 163948,
+                        "headRefOid": "85e8d234dd462ceedd84c0408ba930f148127185",
+                        "commits": {
+                            "nodes": [
+                                {
+                                    "commit": {
+                                        "oid": "85e8d234dd462ceedd84c0408ba930f148127185",
+                                        "statusCheckRollup": {
+                                            "state": "SUCCESS",
+                                            "contexts": {
+                                                "totalCount": 15,
+                                                "nodes": [
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 112858142623,
+                                                        "name": "Calculate job matrix",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-07T14:54:04Z",
+                                                        "completedAt": "2026-10-07T14:54:44Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/37640580696/job/112858142623",
+                                                        "checkSuite": {
+                                                            "databaseId": 101967707018,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 37640580696,
+                                                                "runNumber": 233201,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 112858142215,
+                                                        "name": "Run zizmor",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-07T14:54:03Z",
+                                                        "completedAt": "2026-10-07T14:54:32Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/37640580604/job/112858142215",
+                                                        "checkSuite": {
+                                                            "databaseId": 101967706740,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 37640580604,
+                                                                "runNumber": 972,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "Crabwatch"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 112858507841,
+                                                        "name": "PR - test-aarch64-gnu-llvm-22-1",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-07T14:54:50Z",
+                                                        "completedAt": "2026-10-07T16:00:27Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/37640580696/job/112858507841",
+                                                        "checkSuite": {
+                                                            "databaseId": 101967707018,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 37640580696,
+                                                                "runNumber": 233201,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 112858507756,
+                                                        "name": "PR - test-aarch64-gnu-llvm-22-2",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-07T14:54:50Z",
+                                                        "completedAt": "2026-10-07T15:51:08Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/37640580696/job/112858507756",
+                                                        "checkSuite": {
+                                                            "databaseId": 101967707018,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 37640580696,
+                                                                "runNumber": 233201,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 112858507836,
+                                                        "name": "PR - test-pr-check-1",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-07T14:54:48Z",
+                                                        "completedAt": "2026-10-07T15:41:58Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/37640580696/job/112858507836",
+                                                        "checkSuite": {
+                                                            "databaseId": 101967707018,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 37640580696,
+                                                                "runNumber": 233201,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 112858507784,
+                                                        "name": "PR - test-pr-check-2",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-07T14:54:47Z",
+                                                        "completedAt": "2026-10-07T15:33:54Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/37640580696/job/112858507784",
+                                                        "checkSuite": {
+                                                            "databaseId": 101967707018,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 37640580696,
+                                                                "runNumber": 233201,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 112858507805,
+                                                        "name": "PR - test-tidy",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-07T14:54:48Z",
+                                                        "completedAt": "2026-10-07T15:02:32Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/37640580696/job/112858507805",
+                                                        "checkSuite": {
+                                                            "databaseId": 101967707018,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 37640580696,
+                                                                "runNumber": 233201,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 112858507762,
+                                                        "name": "PR - test-x86_64-gnu-gcc",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-07T14:55:07Z",
+                                                        "completedAt": "2026-10-07T16:22:33Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/37640580696/job/112858507762",
+                                                        "checkSuite": {
+                                                            "databaseId": 101967707018,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 37640580696,
+                                                                "runNumber": 233201,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 112858507686,
+                                                        "name": "PR - test-x86_64-gnu-gcc-core-tests",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-07T14:54:47Z",
+                                                        "completedAt": "2026-10-07T15:13:48Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/37640580696/job/112858507686",
+                                                        "checkSuite": {
+                                                            "databaseId": 101967707018,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 37640580696,
+                                                                "runNumber": 233201,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 112858507967,
+                                                        "name": "PR - test-x86_64-gnu-llvm-22",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-07T14:54:48Z",
+                                                        "completedAt": "2026-10-07T15:54:54Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/37640580696/job/112858507967",
+                                                        "checkSuite": {
+                                                            "databaseId": 101967707018,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 37640580696,
+                                                                "runNumber": 233201,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 112858507759,
+                                                        "name": "PR - test-x86_64-gnu-miri",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-07T14:54:47Z",
+                                                        "completedAt": "2026-10-07T15:44:15Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/37640580696/job/112858507759",
+                                                        "checkSuite": {
+                                                            "databaseId": 101967707018,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 37640580696,
+                                                                "runNumber": 233201,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 112858507948,
+                                                        "name": "PR - test-x86_64-gnu-next-trait-solver-polonius",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-07T14:54:48Z",
+                                                        "completedAt": "2026-10-07T16:01:39Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/37640580696/job/112858507948",
+                                                        "checkSuite": {
+                                                            "databaseId": 101967707018,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 37640580696,
+                                                                "runNumber": 233201,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 112858507786,
+                                                        "name": "PR - test-x86_64-gnu-tools",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-07T14:54:48Z",
+                                                        "completedAt": "2026-10-07T15:52:04Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/37640580696/job/112858507786",
+                                                        "checkSuite": {
+                                                            "databaseId": 101967707018,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 37640580696,
+                                                                "runNumber": 233201,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 112895755382,
+                                                        "name": "publish toolstate",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SKIPPED",
+                                                        "startedAt": "2026-10-07T16:22:33Z",
+                                                        "completedAt": "2026-10-07T16:22:33Z",
+                                                        "detailsUrl": "https://github.com/rust-lang/rust/actions/runs/37640580696/job/112895755382",
+                                                        "checkSuite": {
+                                                            "databaseId": 101967707018,
+                                                            "app": {
+                                                                "name": "GitHub Actions",
+                                                                "slug": "github-actions"
+                                                            },
+                                                            "workflowRun": {
+                                                                "databaseId": 37640580696,
+                                                                "runNumber": 233201,
+                                                                "runAttempt": 1,
+                                                                "workflow": {
+                                                                    "name": "CI"
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "__typename": "CheckRun",
+                                                        "databaseId": 112859124511,
+                                                        "name": "Bors try build",
+                                                        "status": "COMPLETED",
+                                                        "conclusion": "SUCCESS",
+                                                        "startedAt": "2026-10-07T14:56:07Z",
+                                                        "completedAt": "2026-10-07T15:55:43Z",
+                                                        "detailsUrl": "https://bors.rust-lang.org",
+                                                        "checkSuite": {
+                                                            "databaseId": 101968529195,
+                                                            "app": null,
+                                                            "workflowRun": null
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "r2": null
+    },
+    "errors": [
+        {
+            "type": "NOT_FOUND",
+            "path": [
+                "r2"
+            ],
+            "locations": [
+                {
+                    "line": 94,
+                    "column": 3
+                }
+            ],
+            "message": "Could not resolve to a Repository with the name 'RhizoNymph/no-such-repository-rostrum-fixture'."
+        }
+    ]
+}

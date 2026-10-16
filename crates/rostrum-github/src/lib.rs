@@ -1,6 +1,7 @@
 //! GitHub data layer: token resolution, GraphQL reads, REST mutations.
 
 pub mod auth;
+pub mod batch;
 pub mod branches;
 pub mod ci;
 pub mod client;
@@ -13,7 +14,8 @@ pub mod rest;
 pub mod stacks;
 
 pub use auth::{Token, resolve_token};
-pub use client::GitHubClient;
+pub use batch::{FetchedPulls, RepoBatch};
+pub use client::{BudgetTracker, GitHubClient};
 pub use closed::{CLOSED_PER_REPO, RepoClosedPulls};
 pub use conversation::PULL_REQUEST_CONVERSATION;
 pub use error::GitHubError;
