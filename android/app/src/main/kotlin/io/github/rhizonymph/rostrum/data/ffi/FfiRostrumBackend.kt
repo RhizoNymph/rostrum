@@ -12,6 +12,9 @@ import io.github.rhizonymph.rostrum.data.model.CiGridFilter
 import io.github.rhizonymph.rostrum.data.model.CiJobLog
 import io.github.rhizonymph.rostrum.data.model.CiRerun
 import io.github.rhizonymph.rostrum.data.model.CiRerunChoice
+import io.github.rhizonymph.rostrum.data.model.CiTrigger
+import io.github.rhizonymph.rostrum.data.model.ApiBudget
+import io.github.rhizonymph.rostrum.data.model.PollSchedule
 import io.github.rhizonymph.rostrum.data.model.ConfigPushResult
 import io.github.rhizonymph.rostrum.data.model.AuthorRoster
 import io.github.rhizonymph.rostrum.data.model.StackRewritePlan
@@ -153,6 +156,9 @@ class FfiRostrumBackend(name: String, openCore: CoreOpener) : RostrumBackend {
     override suspend fun setIssuesPerRepo(count: Int): Outcome<Settings> =
         core("setIssuesPerRepo") { it.setIssuesPerRepo(count.coerceAtLeast(0).toUInt()).toModel() }
 
+    override suspend fun setIssueRefreshInterval(seconds: Long): Outcome<Settings> =
+        core("setIssueRefreshInterval") { it.setIssueRefreshInterval(seconds.coerceAtLeast(0).toULong()).toModel() }
+
     override suspend fun setNotifications(newPullRequests: Boolean, reviewRequests: Boolean): Outcome<Settings> =
         core("setNotifications") { it.setNotifications(newPullRequests, reviewRequests).toModel() }
 
@@ -164,6 +170,12 @@ class FfiRostrumBackend(name: String, openCore: CoreOpener) : RostrumBackend {
     override suspend fun cachedFeed(): Outcome<FeedSnapshot> = core("cachedFeed") { it.cachedFeed().toModel() }
 
     override suspend fun refreshFeed(): Outcome<FeedSnapshot> = core("refreshFeed") { it.refreshFeed().toModel() }
+
+    override suspend fun pollFeed(): Outcome<FeedSnapshot> = core("pollFeed") { it.pollFeed().toModel() }
+
+    override suspend fun pollSchedule(): Outcome<PollSchedule> = core("pollSchedule") { it.pollSchedule().toModel() }
+
+    override suspend fun apiBudget(): Outcome<ApiBudget?> = core("apiBudget") { it.apiBudget()?.toModel() }
 
     override suspend fun refreshRepo(repo: String): Outcome<FeedSnapshot> =
         core("refreshRepo") { it.refreshRepo(repo).toModel() }
@@ -462,11 +474,18 @@ class FfiRostrumBackend(name: String, openCore: CoreOpener) : RostrumBackend {
     override suspend fun ciGrid(filter: CiGridFilter): Outcome<CiGrid> =
         core("ciGrid") { it.ciGrid(filter.toFfi()).toModel() }
 
-    override suspend fun refreshCi(filter: CiGridFilter): Outcome<CiGrid> =
-        core("refreshCi") { it.refreshCi(filter.toFfi()).toModel() }
+    override suspend fun refreshCi(filter: CiGridFilter, trigger: CiTrigger): Outcome<CiGrid> =
+        core("refreshCi") { core -> core.fetchCi(filter, null, trigger).toModel() }
 
-    override suspend fun refreshCiRepo(repo: String, filter: CiGridFilter): Outcome<CiGrid> =
-        core("refreshCiRepo") { it.refreshCiRepo(repo, filter.toFfi()).toModel() }
+    override suspend fun refreshCiRepo(repo: String, filter: CiGridFilter, trigger: CiTrigger): Outcome<CiGrid> =
+        core("refreshCiRepo") { core -> core.fetchCi(filter, repo, trigger).toModel() }
+
+    /** The core's call for [trigger]: `open_ci`, `watch_ci`, or `refresh_ci[_repo]`. */
+    private suspend fun RostrumCore.fetchCi(filter: CiGridFilter, repo: String?, trigger: CiTrigger) = when (trigger) {
+        CiTrigger.Opened -> openCi(filter.toFfi(), repo)
+        CiTrigger.Watch -> watchCi(filter.toFfi(), repo)
+        CiTrigger.Explicit -> if (repo == null) refreshCi(filter.toFfi()) else refreshCiRepo(repo, filter.toFfi())
+    }
 
     override suspend fun jobLog(repo: String, jobId: Long, full: Boolean): Outcome<CiJobLog> =
         core("jobLog") { it.jobLog(repo, jobId.toULong(), full).toModel() }

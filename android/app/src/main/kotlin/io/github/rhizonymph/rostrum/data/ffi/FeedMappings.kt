@@ -60,6 +60,7 @@ internal fun FfiSettings.toModel() = Settings(
     autostash = autostash,
     feed = feed.toModel(),
     issuesPerRepo = issuesPerRepo.toInt(),
+    issueRefreshSecs = issueRefreshSecs.toLong(),
 )
 
 internal fun FfiRepoLoad.toModel(): RepoLoad = when (this) {
@@ -137,6 +138,7 @@ internal fun FfiFeedSnapshot.toModel() = FeedSnapshot(
     filterActive = filterActive,
     mergeStatesSettling = mergeStatesSettling,
     viewer = viewer?.toModel(),
+    budget = budget?.toModel(),
 )
 
 internal fun FfiAuthorChip.toModel() = AuthorChip(login, avatarUrl, openItems.toInt(), isViewer, selected)

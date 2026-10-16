@@ -8,19 +8,23 @@
 //! (`rerun_targets`) and the optimistic flip (`mark_requeued`). The requests
 //! are `rostrum-github`'s (`ci_checks`, `job_log`, `check_output`, `rerun`).
 //!
-//! Checks are fetched only when asked (`refresh_ci`, `refresh_ci_repo`),
-//! never with the feed or the background notification check. `ci_grid`
-//! rebuilds from what is held, so Kotlin calls it once a second while the
-//! grid says `ticks`, and `refresh_ci` every 15 s while it says
-//! `any_running`, as the desktop does.
+//! Checks are fetched only when asked, never with the feed or the
+//! background notification check, and only where the desktop's skip rules
+//! say they could have changed (`fetch`): `open_ci` when the grid opens,
+//! `watch_ci` every 15 s while the grid says `any_running` (only what is
+//! queued or running), `refresh_ci` on pull to refresh (everything). Each
+//! sends as few batched documents as the cost model allows, and nothing
+//! while GitHub has paused polling. `ci_grid` rebuilds from what is held, so
+//! Kotlin calls it once a second while the grid says `ticks`.
 
 mod convert;
+mod fetch;
 mod types;
 
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use chrono::Utc;
-use futures::{StreamExt, stream};
+use fetch::{CiFetch, CiPlan, land_checks};
 use rostrum_core::{
     PrNumber, RepoId,
     ci::{
@@ -28,21 +32,19 @@ use rostrum_core::{
         parse_log, rerun_targets,
     },
 };
-use rostrum_github::{GitHubClient, GitHubError, ci::RerunError};
+use rostrum_github::{GitHubClient, ci::RerunError};
 
 pub use types::*;
 
 use crate::{
+    budget::paused_error,
     engine::{
         RostrumCore,
-        actor::{Actor, WeakActor},
+        actor::WeakActor,
         state::{CoreState, parse_repo},
     },
     error::RostrumError,
 };
-
-/// Repositories fetched at once.
-const CONCURRENT_FETCHES: usize = 4;
 
 /// After a re-run is accepted, how long before re-fetching: long enough for
 /// GitHub to have created the new attempt.
@@ -69,97 +71,70 @@ fn grid_of(state: &CoreState, filter: CiGridFilter) -> CiGrid {
     convert::grid(&grid, state.ci.any_running(), Utc::now())
 }
 
-/// Fetch `repos`' checks and store them, at most four at a time. A failure
-/// stays in its repository; a rejected token is returned for the caller to
-/// report.
-async fn fetch_into(
-    actor: &Actor,
-    client: &GitHubClient,
-    repos: Vec<RepoId>,
-    limit: u32,
-) -> Result<Option<GitHubError>, RostrumError> {
-    let starting = repos.clone();
-    actor
-        .call(move |state| {
-            for repo in &starting {
-                state.ci.begin(repo);
-            }
-        })
-        .await?;
-    let mut landing = stream::iter(repos)
-        .map(|repo| async move {
-            let outcome = client.ci_checks(&repo, limit).await;
-            (repo, outcome)
-        })
-        .buffer_unordered(CONCURRENT_FETCHES);
-    let mut rejected = None;
-    while let Some((repo, outcome)) = landing.next().await {
-        let outcome = match outcome {
-            Ok(fetched) => Ok(fetched.checks),
-            Err(error) => {
-                tracing::warn!(%repo, %error, "checks fetch failed");
-                let message = error.to_string();
-                if matches!(error, GitHubError::Unauthorized) {
-                    rejected = Some(error);
-                }
-                Err(message)
-            }
-        };
-        actor
-            .call(move |state| match outcome {
-                Ok(checks) => {
-                    tracing::debug!(%repo, prs = checks.len(), "checks fetched");
-                    state.ci.loaded(&repo, checks, Utc::now());
-                }
-                Err(message) => state.ci.failed(&repo, message, Utc::now()),
-            })
-            .await?;
-    }
-    Ok(rejected)
+/// Fetch the checks `why` calls for among `only`, for as long as the core
+/// lives. `Ok(Some(pause))` when GitHub has paused polling and nothing was
+/// sent.
+async fn fetch_checks(
+    me: &WeakActor,
+    why: CiFetch,
+    only: Option<BTreeSet<RepoId>>,
+) -> Result<Option<rostrum_core::budget::Pause>, RostrumError> {
+    let plan = me
+        .call(move |state| state.plan_checks(why, only.as_ref(), Utc::now()))
+        .await??;
+    let (client, repos, limit) = match plan {
+        CiPlan::Paused(pause) => return Ok(Some(pause)),
+        CiPlan::Fetch {
+            client,
+            repos,
+            limit,
+        } => (client, repos, limit),
+    };
+    let fetched = land_checks(me, &client, repos, limit).await;
+    let _ = me
+        .call(|state| state.log_spend_if_due(std::time::Instant::now()))
+        .await;
+    fetched.map(|()| None)
 }
 
 /// Re-fetch one repository's checks after `delay`, for as long as the core
-/// lives.
-fn refetch_later(me: WeakActor, client: GitHubClient, repo: RepoId, limit: u32, delay: Duration) {
+/// lives and GitHub has not paused polling.
+fn refetch_later(me: WeakActor, repo: RepoId, delay: Duration) {
     tokio::spawn(async move {
         tokio::time::sleep(delay).await;
-        let Some(actor) = me.upgrade() else {
-            return;
-        };
-        if let Err(error) = fetch_into(&actor, &client, vec![repo.clone()], limit).await {
+        let only = BTreeSet::from([repo.clone()]);
+        if let Err(error) = fetch_checks(&me, CiFetch::Explicit, Some(only)).await {
             tracing::debug!(%repo, %error, "re-fetch after a re-run did not land");
         }
     });
 }
 
 impl RostrumCore {
-    async fn fetch_ci(&self, only: Option<RepoId>) -> Result<(), RostrumError> {
+    /// Fetch what `why` calls for: every watched repository, or just
+    /// `repo`. Explicit requests fail with `GitHubRateLimited` while GitHub
+    /// has paused polling; the grid's own fetches skip quietly.
+    async fn fetch_ci(&self, why: CiFetch, repo: Option<RepoId>) -> Result<(), RostrumError> {
         self.ensure_hydrated().await?;
-        let (client, repos, limit) = self
-            .actor
-            .try_call(move |state| {
-                let repos = match only {
-                    Some(repo) => {
-                        if !state.feed.repos.iter().any(|known| known.id == repo) {
-                            return Err(RostrumError::invalid(format!(
-                                "{repo} is not in the repository list"
-                            )));
-                        }
-                        vec![repo]
-                    }
-                    None => state.feed.repo_ids(),
-                };
-                Ok((
-                    state.github()?,
-                    repos,
-                    state.config.prs_per_repo.clamp(1, 100),
-                ))
-            })
-            .await?;
-        if let Some(rejected) = fetch_into(&self.actor, &client, repos, limit).await? {
-            return Err(self.github_failed(rejected).await);
+        if let Some(repo) = &repo {
+            let known = repo.clone();
+            let watched = self
+                .actor
+                .call(move |state| state.feed.repo(&known).is_some())
+                .await?;
+            if !watched {
+                return Err(RostrumError::invalid(format!(
+                    "{repo} is not in the repository list"
+                )));
+            }
         }
-        Ok(())
+        let only = repo.map(|repo| BTreeSet::from([repo]));
+        // A rejected token is already noted in the session as the batch
+        // lands.
+        let paused = fetch_checks(&self.actor.downgrade(), why, only).await?;
+        match paused {
+            Some(pause) if why == CiFetch::Explicit => Err(paused_error(&pause)),
+            _ => Ok(()),
+        }
     }
 
     async fn ci_client(&self, repo: &str) -> Result<(RepoId, GitHubClient), RostrumError> {
@@ -167,6 +142,15 @@ impl RostrumCore {
         let client = self.actor.try_call(|state| state.github()).await?;
         Ok((id, client))
     }
+
+    async fn grid_now(&self, filter: CiGridFilter) -> Result<CiGrid, RostrumError> {
+        self.actor.call(move |state| grid_of(state, filter)).await
+    }
+}
+
+/// `owner/name` Kotlin passed, if any.
+fn repo_arg(repo: Option<String>) -> Result<Option<RepoId>, RostrumError> {
+    repo.as_deref().map(parse_repo).transpose()
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -178,12 +162,14 @@ impl RostrumCore {
         self.actor.call(move |state| grid_of(state, filter)).await
     }
 
-    /// Fetch every watched repository's checks (one request each), then the
-    /// grid. A repository that fails keeps what it had and says so in its
-    /// `CiGrid::repos` entry.
+    /// Fetch every watched repository's checks (pull to refresh), in as few
+    /// batched requests as the cost model allows, then the grid. A
+    /// repository that fails keeps what it had and says so in its
+    /// `CiGrid::repos` entry. `GitHubRateLimited` while GitHub has paused
+    /// polling (nothing is sent).
     pub async fn refresh_ci(&self, filter: CiGridFilter) -> Result<CiGrid, RostrumError> {
-        self.fetch_ci(None).await?;
-        self.actor.call(move |state| grid_of(state, filter)).await
+        self.fetch_ci(CiFetch::Explicit, None).await?;
+        self.grid_now(filter).await
     }
 
     /// [`Self::refresh_ci`] for one watched repository.
@@ -192,8 +178,35 @@ impl RostrumCore {
         repo: String,
         filter: CiGridFilter,
     ) -> Result<CiGrid, RostrumError> {
-        self.fetch_ci(Some(parse_repo(&repo)?)).await?;
-        self.actor.call(move |state| grid_of(state, filter)).await
+        self.fetch_ci(CiFetch::Explicit, Some(parse_repo(&repo)?))
+            .await?;
+        self.grid_now(filter).await
+    }
+
+    /// The grid opening (on every watched repository, or `repo`): fetch
+    /// only the checks that could have changed since the last fetch — never
+    /// fetched, failed, a head moved, a pull request added, something
+    /// running, or older than ten minutes. Skips quietly while GitHub has
+    /// paused polling.
+    pub async fn open_ci(
+        &self,
+        filter: CiGridFilter,
+        repo: Option<String>,
+    ) -> Result<CiGrid, RostrumError> {
+        self.fetch_ci(CiFetch::Opened, repo_arg(repo)?).await?;
+        self.grid_now(filter).await
+    }
+
+    /// The grid's 15 s watch while `any_running`: fetch only the
+    /// repositories with anything queued or running. Skips quietly while
+    /// GitHub has paused polling.
+    pub async fn watch_ci(
+        &self,
+        filter: CiGridFilter,
+        repo: Option<String>,
+    ) -> Result<CiGrid, RostrumError> {
+        self.fetch_ci(CiFetch::Watch, repo_arg(repo)?).await?;
+        self.grid_now(filter).await
     }
 
     /// An Actions job's log, parsed: lines by kind, collapsible groups, steps,
@@ -279,22 +292,23 @@ impl RostrumCore {
         let (id, client) = self.ci_client(&repo).await?;
         let target = rostrum_core::ci::RerunTarget::from(target);
         let flip = id.clone();
-        let (me, limit) = self
+        let me = self
             .actor
             .call(move |state| {
                 let marked = requeue(&mut state.ci, &flip, target);
                 tracing::debug!(repo = %flip, ?target, marked, "checks marked queued");
-                (state.me.clone(), state.config.prs_per_repo.clamp(1, 100))
+                state.me.clone()
             })
             .await?;
         match client.rerun(&id, target).await {
             Ok(()) => {
-                refetch_later(me, client, id, limit, AFTER_RERUN);
+                refetch_later(me, id, AFTER_RERUN);
                 Ok(())
             }
             Err(error) => {
                 tracing::info!(repo = %id, ?target, %error, "re-run refused");
-                if let Err(refetch) = fetch_into(&self.actor, &client, vec![id], limit).await {
+                let only = BTreeSet::from([id.clone()]);
+                if let Err(refetch) = fetch_checks(&me, CiFetch::Explicit, Some(only)).await {
                     tracing::debug!(%refetch, "re-fetch after a refused re-run failed");
                 }
                 Err(match error {

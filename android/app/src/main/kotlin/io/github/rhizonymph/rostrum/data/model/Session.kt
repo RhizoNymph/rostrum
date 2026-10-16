@@ -30,6 +30,8 @@ data class Settings(
     val feed: FeedPreferences,
     /** Open issues fetched per repository (1..=100). */
     val issuesPerRepo: Int = 25,
+    /** Seconds before a background refresh fetches open issues again (10..=86400). */
+    val issueRefreshSecs: Long = 300,
 )
 
 /** Something worth a system notification (`notifications.rs`). */

@@ -69,6 +69,14 @@ impl Actor {
             .map_err(|_| RostrumError::internal("a state update failed"))
     }
 
+    /// A handle that does not keep the actor alive, for work that may
+    /// outlive the call that started it.
+    pub(crate) fn downgrade(&self) -> WeakActor {
+        WeakActor {
+            tx: self.tx.downgrade(),
+        }
+    }
+
     /// Like [`Actor::call`] for closures that can fail.
     pub(crate) async fn try_call<R, F>(&self, f: F) -> Result<R, RostrumError>
     where
@@ -83,5 +91,17 @@ impl WeakActor {
     /// A strong handle, or `None` once the core has been dropped.
     pub(crate) fn upgrade(&self) -> Option<Actor> {
         self.tx.upgrade().map(|tx| Actor { tx })
+    }
+
+    /// [`Actor::call`] while the core lives; `Internal` once it is gone.
+    pub(crate) async fn call<R, F>(&self, f: F) -> Result<R, RostrumError>
+    where
+        F: FnOnce(&mut CoreState) -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        let actor = self
+            .upgrade()
+            .ok_or_else(|| RostrumError::internal("the core has shut down"))?;
+        actor.call(f).await
     }
 }

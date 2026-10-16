@@ -171,9 +171,13 @@ they survive the graph being rebuilt.
   toggle: `wantsNotifications()` is true when some signed-in profile has a
   toggle on.
 - `NotificationCheck.run()` starts the manager (restoring every profile),
-  then per profile: `SignedOut`, `NotificationsOff`, `Posted(n)`,
+  then per profile: `SignedOut`, `NotificationsOff`, `Paused(until)` (GitHub
+  has paused that profile's token for rate limiting: nothing is sent, and
+  since budgets are per token the other profiles go ahead), `Posted(n)`,
   `Retry(error)` (network, rate limit) or `GaveUp(error)`. The worker
-  retries if any profile asked to.
+  retries if any profile asked to; a paused profile does not ask.
+- Each profile's core keeps its own token's budget (`apiBudget()`); the
+  feed's budget chip shows the active profile's (`poll_budget.md`).
 - Each notification's title starts with the profile's label, its id is
   stable per profile and pull request, and its tap intent carries
   `EXTRA_PROFILE`. `AppLinks.parse` reads it back into

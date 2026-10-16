@@ -108,6 +108,13 @@ pub struct World {
     pub ci: Vec<(u32, Vec<Value>)>,
     /// The answer to every re-run request; `None` is 201.
     pub rerun: Option<(u16, String)>,
+    /// GitHub's `x-ratelimit-*` headers on every answer: `(limit,
+    /// remaining, reset)` with `reset` in Unix seconds; every request also
+    /// spends one from `remaining`. `None` sends no rate headers.
+    pub rate: Option<(u32, u32, i64)>,
+    /// Refuse every request with GitHub's secondary rate limit (403 with
+    /// `retry-after` this many seconds).
+    pub secondary_limit: Option<u64>,
 }
 
 pub struct FakeGitHub {
@@ -137,9 +144,10 @@ impl FakeGitHub {
                         return;
                     };
                     let (status, body) = answer(&world, &request);
+                    let headers = rate_headers(&world, &request);
                     recorded.0.lock().expect("log").push(request);
                     let response = format!(
-                        "HTTP/1.1 {status} Status\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        "HTTP/1.1 {status} Status\r\ncontent-type: application/json\r\ncontent-length: {}\r\n{headers}connection: close\r\n\r\n{body}",
                         body.len()
                     );
                     let _ = stream.write_all(response.as_bytes()).await;
@@ -189,11 +197,40 @@ fn answer(world: &Mutex<World>, request: &Request) -> (u16, String) {
     if world.reject_token {
         return (401, json!({"message": "Bad credentials"}).to_string());
     }
+    if world.secondary_limit.is_some() {
+        return (
+            403,
+            json!({"message": "You have exceeded a secondary rate limit. Please wait a few minutes before you try again."})
+                .to_string(),
+        );
+    }
     if request.path == "/graphql" {
         let body: Value = serde_json::from_str(&request.body).expect("graphql body");
         return (200, graphql(&world, &body).to_string());
     }
     rest(&mut world, request)
+}
+
+/// The rate-limit headers for one answer, each line ending in CRLF; every
+/// request spends one from the configured remainder.
+fn rate_headers(world: &Mutex<World>, request: &Request) -> String {
+    let mut world = world.lock().expect("world");
+    let mut headers = String::new();
+    if let Some(retry) = world.secondary_limit {
+        headers.push_str(&format!("retry-after: {retry}\r\n"));
+    }
+    if let Some((limit, remaining, reset)) = &mut world.rate {
+        *remaining = remaining.saturating_sub(1);
+        let resource = if request.path == "/graphql" {
+            "graphql"
+        } else {
+            "core"
+        };
+        headers.push_str(&format!(
+            "x-ratelimit-resource: {resource}\r\nx-ratelimit-limit: {limit}\r\nx-ratelimit-remaining: {remaining}\r\nx-ratelimit-reset: {reset}\r\n"
+        ));
+    }
+    headers
 }
 
 fn find<'a>(world: &'a World, variables: &Value) -> Option<&'a Vec<Pr>> {
@@ -212,6 +249,64 @@ fn find<'a>(world: &'a World, variables: &Value) -> Option<&'a Vec<Pr>> {
 fn graphql(world: &World, body: &Value) -> Value {
     let query = body["query"].as_str().unwrap_or_default();
     let variables = &body["variables"];
+    if query.contains("repository(owner: $o0") {
+        return batch(world, query, variables);
+    }
+    single(world, query, variables)
+}
+
+/// A batched document (`rN: repository(owner: $oN, name: $nN) { … }`):
+/// each alias answered as the one-repository document would be, its errors'
+/// paths re-rooted at the alias.
+fn batch(world: &World, query: &str, variables: &Value) -> Value {
+    let mut data = serde_json::Map::new();
+    data.insert(
+        "rateLimit".into(),
+        json!({"cost": 1, "remaining": 4999, "resetAt": "2030-01-01T00:00:00Z"}),
+    );
+    if query.contains("viewer { login avatarUrl }") {
+        data.insert(
+            "viewer".into(),
+            json!({"login": world.viewer, "avatarUrl": null}),
+        );
+    }
+    let mut errors = Vec::new();
+    let mut index = 0;
+    while let Some(owner) = variables[format!("o{index}")].as_str() {
+        let mut one = json!({
+            "owner": owner,
+            "name": variables[format!("n{index}")],
+            "first": variables["first"],
+        });
+        let mut pair = 0;
+        while let Some(base) = variables[format!("r{index}b{pair}")].as_str() {
+            one[format!("b{pair}")] = json!(base);
+            one[format!("h{pair}")] = variables[format!("r{index}h{pair}")].clone();
+            pair += 1;
+        }
+        let alias = format!("r{index}");
+        let answer = single(world, query, &one);
+        data.insert(alias.clone(), answer["data"]["repository"].clone());
+        for error in answer["errors"].as_array().into_iter().flatten() {
+            let mut error = error.clone();
+            if let Some(path) = error["path"].as_array_mut()
+                && let Some(first) = path.first_mut()
+            {
+                *first = json!(alias);
+            }
+            errors.push(error);
+        }
+        index += 1;
+    }
+    let mut answer = json!({"data": data});
+    if !errors.is_empty() {
+        answer["errors"] = json!(errors);
+    }
+    answer
+}
+
+/// A one-repository document.
+fn single(world: &World, query: &str, variables: &Value) -> Value {
     let viewer = json!({"login": world.viewer, "avatarUrl": null});
 
     // The CI query: open pull requests with their check contexts. Matched

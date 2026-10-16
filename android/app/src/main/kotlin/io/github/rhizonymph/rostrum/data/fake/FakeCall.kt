@@ -7,8 +7,8 @@ package io.github.rhizonymph.rostrum.data.fake
  */
 enum class FakeCall {
     SetGitHubToken, Viewer,
-    Settings, AddRepo, RemoveRepo, SetRefreshInterval, SetPrsPerRepo, SetIssuesPerRepo, SetNotifications, SetAutostash,
-    CachedFeed, RefreshFeed, RefreshRepo, SetQuery, SetFilter, ToggleAuthor, ClearFilter, ToggleCollapsed, AuthorRoster,
+    Settings, AddRepo, RemoveRepo, SetRefreshInterval, SetPrsPerRepo, SetIssuesPerRepo, SetIssueRefreshInterval, SetNotifications, SetAutostash,
+    CachedFeed, RefreshFeed, PollFeed, PollSchedule, ApiBudget, RefreshRepo, SetQuery, SetFilter, ToggleAuthor, ClearFilter, ToggleCollapsed, AuthorRoster,
     PullDetail, CachedPullDetail, PullHeader, RepositoryLabels, AddLabel, RemoveLabel, AddComment, ReplyToThread,
     Merge, ClosePullRequest, ReopenPullRequest, SetDraft, UpdateBranch,
     FilesOverview, FileDiff,

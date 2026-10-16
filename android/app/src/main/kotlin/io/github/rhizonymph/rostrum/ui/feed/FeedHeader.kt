@@ -136,7 +136,6 @@ fun FilterChipsRow(
 ) {
     Row(
         modifier = modifier
-            .fillMaxWidth()
             .horizontalScroll(rememberScrollState())
             .padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),

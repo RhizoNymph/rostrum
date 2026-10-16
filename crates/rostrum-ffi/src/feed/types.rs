@@ -4,6 +4,7 @@
 use std::time::SystemTime;
 
 use crate::{
+    budget::ApiBudget,
     issues::IssueSummary,
     sort::SortSettings,
     stacks::PullItem,
@@ -45,6 +46,11 @@ pub struct FeedSnapshot {
     pub merge_states_settling: bool,
     /// Who the GitHub token belongs to, once a refresh has said.
     pub viewer: Option<UserRef>,
+    /// The token's rate-limit budget as of this snapshot, and when the next
+    /// background refresh runs (or until when GitHub has paused it). `None`
+    /// when signed out.
+    #[uniffi(default = None)]
+    pub budget: Option<ApiBudget>,
 }
 
 /// The feed filter's standing preferences, persisted in the settings file.

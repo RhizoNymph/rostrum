@@ -143,6 +143,25 @@ class NotificationsTest {
     }
 
     @Test
+    fun `a profile GitHub has paused is skipped without a request, the others go ahead`() = runTest {
+        val paused = registry.seed("nymph-desk")
+        val other = registry.seed("Work", ProfileKind.TokenOnly)
+        listOf(paused, other).forEach { vault.seed(it, mapOf(SecretKey.GitHubToken to TEST_TOKEN)) }
+        val posted = mutableListOf<NotificationSpec>()
+        val check = check(posted)
+        check.run()
+        val until = TEST_NOW.plusSeconds(600)
+        registry.backend(paused).budget.pausedUntil = until
+        // Were it asked, the paused profile would fail the test.
+        registry.backend(paused).failNext(FakeCall.CheckNotifications, BackendError.Internal("asked while paused"))
+        val result = check.run() as CheckResult.Checked
+        assertEquals(ProfileCheck.Paused(until), result.profiles[paused])
+        assertEquals(ProfileCheck.Posted(1), result.profiles[other])
+        assertFalse(result.shouldRetry)
+        assertEquals(listOf(other), posted.map { it.profile })
+    }
+
+    @Test
     fun `a revoked token gives up on that profile`() = runTest {
         val only = registry.seed("nymph-desk")
         vault.seed(only, mapOf(SecretKey.GitHubToken to TEST_TOKEN))

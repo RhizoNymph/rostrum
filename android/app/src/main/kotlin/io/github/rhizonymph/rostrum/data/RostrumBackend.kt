@@ -53,7 +53,7 @@ import kotlinx.coroutines.flow.Flow
  * Secrets are never persisted here: the app keeps them in its secret store and
  * hands them in with [setGitHubToken] and [setRemote] at start-up.
  */
-interface RostrumBackend : IssuesApi, StackActionsApi, CiApi, DesktopConfigApi {
+interface RostrumBackend : IssuesApi, StackActionsApi, CiApi, DesktopConfigApi, BudgetApi {
     // --- session -------------------------------------------------------------
 
     /**
@@ -92,6 +92,9 @@ interface RostrumBackend : IssuesApi, StackActionsApi, CiApi, DesktopConfigApi {
     /** Open issues fetched per repository; clamped to 1..=100. */
     suspend fun setIssuesPerRepo(count: Int): Outcome<Settings>
 
+    /** How old open issues may get before a background refresh fetches them; clamped to 10..=86400. */
+    suspend fun setIssueRefreshInterval(seconds: Long): Outcome<Settings>
+
     suspend fun setNotifications(newPullRequests: Boolean, reviewRequests: Boolean): Outcome<Settings>
 
     suspend fun setAutostash(autostash: Boolean): Outcome<Settings>
@@ -101,8 +104,19 @@ interface RostrumBackend : IssuesApi, StackActionsApi, CiApi, DesktopConfigApi {
     /** The feed from memory or the cache. No network; paints the first frame. */
     suspend fun cachedFeed(): Outcome<FeedSnapshot>
 
-    /** Fetch every watched repository. Fails only for sign-in problems. */
+    /**
+     * Fetch everything now (pull to refresh). Fails for sign-in problems, and
+     * with [BackendError.GitHubRateLimited] while GitHub has paused polling
+     * (nothing is sent then).
+     */
     suspend fun refreshFeed(): Outcome<FeedSnapshot>
+
+    /**
+     * The foreground timer's refresh: only what is due (issues on their own,
+     * slower cadence). While GitHub has paused polling nothing is sent and
+     * the snapshot comes back as it stands. Wait [BudgetApi.pollSchedule] between calls.
+     */
+    suspend fun pollFeed(): Outcome<FeedSnapshot>
 
     /** Fetch one repository, e.g. just after adding it. */
     suspend fun refreshRepo(repo: String): Outcome<FeedSnapshot>
@@ -304,7 +318,10 @@ interface RostrumBackend : IssuesApi, StackActionsApi, CiApi, DesktopConfigApi {
 
     // --- notifications -------------------------------------------------------
 
-    /** Refresh and report what is new since the last check. */
+    /**
+     * Refresh and report what is new since the last check. Fails with
+     * [BackendError.GitHubRateLimited] while GitHub has paused polling.
+     */
     suspend fun checkNotifications(): Outcome<List<NotificationEvent>>
 
     /** Fold the current feed into the seen set without reporting it. */

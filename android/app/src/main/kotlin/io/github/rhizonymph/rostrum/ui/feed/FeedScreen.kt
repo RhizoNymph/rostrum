@@ -2,6 +2,7 @@ package io.github.rhizonymph.rostrum.ui.feed
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -20,11 +21,12 @@ import io.github.rhizonymph.rostrum.ui.common.dataOrNull
 import io.github.rhizonymph.rostrum.ui.components.ErrorView
 import io.github.rhizonymph.rostrum.ui.components.LoadingView
 import io.github.rhizonymph.rostrum.ui.components.NewIssueFab
+import java.time.ZoneId
 
 /**
  * The feed, stateless: header (with [profileLabel], the active profile, in
- * its pill), optional search field, filter chips, and the repository cards
- * under pull-to-refresh.
+ * its pill), optional search field, filter chips beside the GitHub budget
+ * chip (times in [zone]), and the repository cards under pull-to-refresh.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -33,6 +35,7 @@ fun FeedScreen(
     actions: FeedActions,
     modifier: Modifier = Modifier,
     profileLabel: String = "nymph-desk",
+    zone: ZoneId = ZoneId.systemDefault(),
 ) {
     val snapshot = state.feed.dataOrNull()
     Column(modifier.fillMaxSize()) {
@@ -48,7 +51,12 @@ fun FeedScreen(
         }
         if (snapshot != null) {
             FeedTabs(snapshot.tab, snapshot.tabCounts, snapshot.sort.summary, actions)
-            FilterChipsRow(snapshot.preferences, snapshot.viewer?.login, actions)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                FilterChipsRow(snapshot.preferences, snapshot.viewer?.login, actions, Modifier.weight(1f))
+                budgetChip(snapshot.budget, state.now, zone)?.let { chip ->
+                    BudgetChip(chip, actions.openBudget, Modifier.padding(top = 7.dp, end = 12.dp))
+                }
+            }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             PullToRefreshBox(

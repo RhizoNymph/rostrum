@@ -93,9 +93,10 @@ class FeedViewModel(
         }
     }
 
-    private suspend fun refreshNow(spinner: Boolean) {
+    /** [fetch] (pull to refresh's [RostrumBackend.refreshFeed] unless told otherwise) and show what it answers. */
+    private suspend fun refreshNow(spinner: Boolean, fetch: suspend () -> Outcome<FeedSnapshot> = backend::refreshFeed) {
         if (spinner) _state.update { it.copy(refreshing = true) }
-        when (val result = backend.refreshFeed().logErr(TAG, "feed_refresh_failed")) {
+        when (val result = fetch().logErr(TAG, "feed_refresh_failed")) {
             is Outcome.Ok -> {
                 apply(result.value)
                 _state.update { it.copy(authProblem = null) }
@@ -134,15 +135,30 @@ class FeedViewModel(
     }
 
     /**
-     * Refresh every `refreshIntervalSecs` for as long as the caller runs it;
-     * the screen runs it while it is started (`repeatOnLifecycle`).
+     * Refresh on the core's schedule for as long as the caller runs it: the
+     * settings interval, stretched as the GitHub budget runs down, or until
+     * a rate-limit pause lifts. Each refresh fetches only what is due
+     * ([RostrumBackend.pollFeed]). The screen runs it while it is started
+     * (`repeatOnLifecycle`).
      */
     suspend fun autoRefreshWhileVisible() {
         while (true) {
-            val seconds = backend.settings().valueOrNull()?.refreshIntervalSecs ?: DEFAULT_REFRESH_SECONDS
-            delay(seconds * 1_000)
-            refreshNow(spinner = false)
+            val schedule = backend.pollSchedule().logErr(TAG, "poll_schedule_failed").valueOrNull()
+            if (schedule != null && schedule.delaySecs != schedule.baseSecs) {
+                RostrumLog.d(TAG, "poll_paced", "delay_secs" to schedule.delaySecs, "pace" to schedule.pace::class.simpleName)
+            }
+            delay((schedule?.delaySecs ?: DEFAULT_REFRESH_SECONDS) * 1_000)
+            refreshNow(spinner = false, fetch = backend::pollFeed)
         }
+    }
+
+    /** The budget chip: open its explanation. */
+    fun openBudget() {
+        _state.update { it.copy(budgetOpen = true, now = clock.instant()) }
+    }
+
+    fun closeBudget() {
+        _state.update { it.copy(budgetOpen = false) }
     }
 
     private suspend fun loadDesktop(paired: Boolean) {

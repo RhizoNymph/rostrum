@@ -1,6 +1,10 @@
 //! The feed: every watched repository's open pull requests, filtered.
 
+mod apply;
+mod batch;
 pub(crate) mod chips;
+mod land;
+mod probe;
 mod refresh;
 mod state;
 pub(crate) mod summary;
@@ -8,9 +12,11 @@ mod types;
 
 use std::sync::Arc;
 
-use rostrum_core::{LoginKey, authors::visible, issue_roster, roster};
+use rostrum_core::{LoginKey, authors::visible, issue_roster, poll::Trigger, roster};
 
-pub(crate) use refresh::{ProbeSlot, Probes, Scope};
+pub(crate) use batch::checks as check_batches;
+pub(crate) use probe::ProbeCycle;
+pub(crate) use refresh::{Refreshed, Scope};
 pub(crate) use state::{FeedState, count, load_of};
 pub use types::{
     AuthorChip, AuthorRoster, BaseDivergence, FeedObserver, FeedPreferences, FeedSnapshot, FeedTab,
@@ -31,20 +37,32 @@ impl RostrumCore {
         self.actor.call(|state| state.snapshot()).await
     }
 
-    /// Fetch every watched repository (a few at a time), their distance from
-    /// base, and cache the result. A repository that fails keeps its previous
-    /// pull requests and reports the failure in its section; the call itself
-    /// fails only for `NotSignedIn` and `GitHubAuthFailed`. Merge states
-    /// GitHub is still computing are re-checked in the background and
-    /// delivered through the observer.
+    /// Refresh everything now, as pull to refresh does: every repository's
+    /// pull requests and issues, their distance from base, and stacks, in
+    /// as few GitHub requests as the cost model allows, then the cache. A
+    /// repository that fails keeps its previous pull requests and reports
+    /// the failure in its section; the call itself fails only for
+    /// `NotSignedIn`, `GitHubAuthFailed`, and `GitHubRateLimited` while
+    /// GitHub has paused polling (nothing is sent then). Merge states GitHub
+    /// is still computing are re-checked in the background and delivered
+    /// through the observer.
     pub async fn refresh_feed(&self) -> Result<FeedSnapshot, RostrumError> {
-        self.refresh(Scope::All, Probes::Schedule).await
+        self.refresh(Scope::Poll(Trigger::Explicit)).await?.asked()
+    }
+
+    /// The foreground timer's refresh: what is due — every repository's pull
+    /// requests, issues once older than `issue_refresh_secs`. While GitHub
+    /// has paused polling nothing is sent and the snapshot returns as it
+    /// stands (its `budget` says until when). Wait `poll_schedule()`
+    /// between calls.
+    pub async fn poll_feed(&self) -> Result<FeedSnapshot, RostrumError> {
+        Ok(self.refresh(Scope::Poll(Trigger::Timer)).await?.snapshot())
     }
 
     /// Fetch one repository, e.g. just after adding it.
     pub async fn refresh_repo(&self, repo: String) -> Result<FeedSnapshot, RostrumError> {
         let id = parse_repo(&repo)?;
-        self.refresh(Scope::One(id), Probes::Schedule).await
+        self.refresh(Scope::One(id)).await?.asked()
     }
 
     /// Set the search box: matches title, number, author and label names.

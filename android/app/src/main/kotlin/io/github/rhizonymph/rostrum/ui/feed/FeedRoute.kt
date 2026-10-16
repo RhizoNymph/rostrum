@@ -17,15 +17,18 @@ import io.github.rhizonymph.rostrum.ui.common.dataOrNull
 import io.github.rhizonymph.rostrum.ui.common.profileViewModel
 import io.github.rhizonymph.rostrum.ui.stacks.StackActionsHost
 import io.github.rhizonymph.rostrum.ui.stacks.StackActionsViewModel
+import java.time.ZoneId
 
 /**
  * The feed destination: binds [FeedViewModel] to [FeedScreen], the Sort
- * sheet and the filter sheet, refreshes on the settings interval while the screen is started, and
+ * sheet, the filter sheet and the budget sheet ([budgetSharing] says who
+ * else spends the token's budget), refreshes on the core's schedule while the screen is started, and
  * lets Back close the search field first.
  */
 @Composable
 fun FeedRoute(
     profileLabel: String,
+    budgetSharing: BudgetSharing = BudgetSharing.PastedToken,
     onOpenPullRequest: (PrRef) -> Unit,
     onOpenProfiles: () -> Unit,
     modifier: Modifier = Modifier,
@@ -77,6 +80,7 @@ fun FeedRoute(
             closeSearch = vm::closeSearch,
             queryChange = vm::onQueryChange,
             signOut = vm::signOut,
+            openBudget = vm::openBudget,
         )
     }
     val sheetActions = remember(vm) {
@@ -108,6 +112,11 @@ fun FeedRoute(
 
     val sort = state.feed.dataOrNull()?.sort
     if (state.sortOpen && sort != null) FeedSortSheet(sort, sortActions)
+
+    val budget = state.feed.dataOrNull()?.budget
+    if (state.budgetOpen && budget != null) {
+        BudgetSheet(budgetExplanation(budget, budgetSharing, state.now, ZoneId.systemDefault()), vm::closeBudget)
+    }
 
     val filters = state.filters
     val preferences = state.feed.dataOrNull()?.preferences
