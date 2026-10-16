@@ -12,6 +12,21 @@ data class CiGridFilter(
     val needsAttention: Boolean = false,
 )
 
+/**
+ * Why the grid fetches checks: the core sends only what each calls for,
+ * by the desktop's skip rules (`ci/fetch.rs`).
+ */
+enum class CiTrigger {
+    /** The grid opened: only what could have changed since the last fetch. */
+    Opened,
+
+    /** The 15 s watch while something runs: only what is queued or running. */
+    Watch,
+
+    /** The user asked (pull to refresh): everything. */
+    Explicit,
+}
+
 /** One check's state, folded from GitHub's status and conclusion. */
 enum class CiStatus { Queued, InProgress, Success, Failure, Cancelled, Skipped, Neutral, TimedOut, ActionRequired }
 

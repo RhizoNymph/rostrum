@@ -5,6 +5,7 @@ import io.github.rhizonymph.rostrum.data.Outcome
 import io.github.rhizonymph.rostrum.data.IssuesApi
 import io.github.rhizonymph.rostrum.data.RostrumBackend
 import io.github.rhizonymph.rostrum.data.StackActionsApi
+import io.github.rhizonymph.rostrum.data.BudgetApi
 import io.github.rhizonymph.rostrum.data.CiApi
 import io.github.rhizonymph.rostrum.data.DesktopConfigApi
 import io.github.rhizonymph.rostrum.data.model.AuthorRoster
@@ -95,7 +96,8 @@ class FakeRostrumBackend private constructor(
     IssuesApi by parts.issuesApi,
     StackActionsApi by parts.stacks,
     CiApi by parts.ci,
-    DesktopConfigApi by parts.desktopConfig {
+    DesktopConfigApi by parts.desktopConfig,
+    BudgetApi by parts.budget {
     constructor(
         clock: Clock = Clock.systemUTC(),
         latency: Duration = Duration.ZERO,
@@ -136,6 +138,13 @@ class FakeRostrumBackend private constructor(
 
     private var notificationChecks = 0
     private var refreshes = 0
+    private var polls = 0
+
+    /** How many times [pollFeed] ran, for tests. */
+    val feedPolls: Int get() = polls
+
+    /** The sample token's budget, for tests (set a pause, a low window). */
+    internal val budget: FakeBudget get() = parts.budget
 
     /** How many times [refreshFeed] succeeded, for tests. */
     val feedRefreshes: Int get() = refreshes
@@ -284,6 +293,11 @@ class FakeRostrumBackend private constructor(
         Outcome.Ok(currentSettings())
     }
 
+    override suspend fun setIssueRefreshInterval(seconds: Long): Outcome<Settings> = call(FakeCall.SetIssueRefreshInterval) {
+        phone.issueRefreshSecs = seconds.coerceIn(10, 86_400)
+        Outcome.Ok(currentSettings())
+    }
+
     override suspend fun setNotifications(newPullRequests: Boolean, reviewRequests: Boolean): Outcome<Settings> =
         call(FakeCall.SetNotifications) {
             phone.notifyNew = newPullRequests
@@ -332,7 +346,7 @@ class FakeRostrumBackend private constructor(
                 sort = sort,
                 stacks = FakeStacks.samples,
             ),
-        )
+        ).copy(budget = token?.let { parts.budget.budget() })
     }
 
     private fun emitFeed(): Outcome<FeedSnapshot> {
@@ -346,9 +360,22 @@ class FakeRostrumBackend private constructor(
 
     override suspend fun refreshFeed(): Outcome<FeedSnapshot> = call(FakeCall.RefreshFeed) {
         signedIn {
+            parts.budget.refusal()?.let { return@signedIn Outcome.Err(it) }
             refreshes++
             val now = clock.instant()
             repos.forEach { loads[it] = RepoLoad.Loaded(now) }
+            emitFeed()
+        }
+    }
+
+    override suspend fun pollFeed(): Outcome<FeedSnapshot> = call(FakeCall.PollFeed) {
+        signedIn {
+            polls++
+            // Nothing is sent while GitHub has paused polling; the snapshot says until when.
+            if (parts.budget.pause == null) {
+                val now = clock.instant()
+                repos.forEach { loads[it] = RepoLoad.Loaded(now) }
+            }
             emitFeed()
         }
     }
@@ -906,6 +933,7 @@ class FakeRostrumBackend private constructor(
 
     override suspend fun checkNotifications(): Outcome<List<NotificationEvent>> = call(FakeCall.CheckNotifications) {
         signedIn {
+            parts.budget.refusal()?.let { return@signedIn Outcome.Err(it) }
             notificationChecks++
             if (notificationChecks != 2) return@signedIn Outcome.Ok(emptyList())
             val pull = FakePull(

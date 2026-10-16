@@ -58,6 +58,7 @@ import io.github.rhizonymph.rostrum.ui.navigation.routeOf
 import io.github.rhizonymph.rostrum.ui.navigation.stepFor
 import io.github.rhizonymph.rostrum.ui.profiles.ProfileSwitcherSheet
 import io.github.rhizonymph.rostrum.ui.theme.RostrumText
+import io.github.rhizonymph.rostrum.data.model.ProfileKind
 import io.github.rhizonymph.rostrum.ui.theme.RostrumTheme
 import kotlinx.coroutines.launch
 
@@ -86,7 +87,7 @@ fun RostrumApp(container: AppContainer) {
                 FollowNotificationProfile(container, state)
                 val active = state.active
                 if (active == null) {
-                    ProfileGraph(GraphKey(null, signedIn = false), null, null, hasProfiles = false, stores, container.links, snackbar)
+                    ProfileGraph(GraphKey(null, signedIn = false), null, null, null, hasProfiles = false, stores, container.links, snackbar)
                 } else {
                     val handle = remember(active) { container.profiles.handle(active) }
                     val session by handle.session.state.collectAsStateWithLifecycle()
@@ -96,6 +97,7 @@ fun RostrumApp(container: AppContainer) {
                             key = GraphKey(active.value, current.isSignedIn),
                             handle = handle,
                             label = state.activeProfile?.label,
+                            kind = state.activeProfile?.kind,
                             hasProfiles = true,
                             stores = stores,
                             links = container.links,
@@ -136,6 +138,7 @@ private fun ProfileGraph(
     key: GraphKey,
     handle: ProfileHandle?,
     label: String?,
+    kind: ProfileKind?,
     hasProfiles: Boolean,
     stores: GraphViewModelStores,
     links: AppLinkInbox,
@@ -147,7 +150,7 @@ private fun ProfileGraph(
             LocalViewModelStoreOwner provides owner,
             LocalProfileHandle provides handle,
         ) {
-            MainScaffold(rememberNavController(), key.signedIn, handle, label, hasProfiles, links, snackbar)
+            MainScaffold(rememberNavController(), key.signedIn, handle, label, kind, hasProfiles, links, snackbar)
         }
     }
 }
@@ -158,6 +161,7 @@ private fun MainScaffold(
     signedIn: Boolean,
     handle: ProfileHandle?,
     label: String?,
+    kind: ProfileKind?,
     hasProfiles: Boolean,
     links: AppLinkInbox,
     snackbar: SnackbarHostState,
@@ -214,6 +218,7 @@ private fun MainScaffold(
             navController = navController,
             signedIn = signedIn,
             profileLabel = label,
+            profileKind = kind,
             onOpenProfiles = if (hasProfiles) ({ switcherOpen = true }) else null,
             modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding),
         )

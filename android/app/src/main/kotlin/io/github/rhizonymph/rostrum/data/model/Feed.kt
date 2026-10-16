@@ -33,6 +33,8 @@ data class FeedSnapshot(
     val mergeStatesSettling: Boolean,
     /** Who the GitHub token belongs to, once a refresh has said. */
     val viewer: UserRef?,
+    /** The token's rate-limit budget as of this snapshot; `null` when signed out. */
+    val budget: ApiBudget? = null,
 )
 
 /** The feed's two lists. */

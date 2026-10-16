@@ -8,6 +8,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.toRoute
 import io.github.rhizonymph.rostrum.data.model.PrRef
+import io.github.rhizonymph.rostrum.data.model.ProfileKind
+import io.github.rhizonymph.rostrum.ui.feed.BudgetSharing
 import io.github.rhizonymph.rostrum.ui.ci.CiRoute
 import io.github.rhizonymph.rostrum.ui.desktop.DesktopRoute
 import io.github.rhizonymph.rostrum.ui.feed.FeedRoute
@@ -30,7 +32,8 @@ import io.github.rhizonymph.rostrum.ui.settings.SettingsRoute
  * entry composable taking navigation callbacks, and this file wires them
  * together (including the Files tab and the review sheet into the pull
  * request shell, and the profiles section into Settings). [onOpenProfiles]
- * opens the profile switcher; `null` before any profile exists.
+ * opens the profile switcher; `null` before any profile exists. [profileKind]
+ * says whose GitHub budget the profile's token shares.
  */
 @Composable
 fun RostrumNavHost(
@@ -39,6 +42,7 @@ fun RostrumNavHost(
     profileLabel: String?,
     onOpenProfiles: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    profileKind: ProfileKind? = null,
 ) {
     val openProfiles = onOpenProfiles ?: {}
     val label = profileLabel.orEmpty()
@@ -64,6 +68,7 @@ fun RostrumNavHost(
         composable<Destination.Feed> {
             FeedRoute(
                 profileLabel = label,
+                budgetSharing = BudgetSharing.of(profileKind),
                 onOpenPullRequest = { pr -> navController.openPullRequest(pr) },
                 onOpenProfiles = openProfiles,
                 onOpenIssue = { issue -> navController.navigate(Destination.Issue(issue.repo, issue.number)) },

@@ -54,6 +54,7 @@ fun SettingsScreen(
     val colors = RostrumTheme.colors
     var confirmSignOut by rememberSaveable { mutableStateOf(false) }
     var chooseInterval by rememberSaveable { mutableStateOf(false) }
+    var chooseIssueInterval by rememberSaveable { mutableStateOf(false) }
     var chooseLimit by rememberSaveable { mutableStateOf<FetchLimit?>(null) }
     Column(modifier.fillMaxSize().background(colors.bg)) {
         ScreenHeader("Settings")
@@ -111,6 +112,8 @@ fun SettingsScreen(
                         onChooseInterval = { chooseInterval = true },
                         onNotifyNewChange = actions::setNotifyNewPullRequests,
                         onNotifyReviewsChange = actions::setNotifyReviewRequests,
+                        issueRefreshSecs = data.issueRefreshSecs,
+                        onChooseIssueInterval = { chooseIssueInterval = true },
                     )
                     Spacer(Modifier.height(12.dp))
                 }
@@ -126,6 +129,19 @@ fun SettingsScreen(
                             if (limit == FetchLimit.PullRequests) actions.setPrsPerRepo(it) else actions.setIssuesPerRepo(it)
                         },
                         onDismiss = { chooseLimit = null },
+                    )
+                }
+                if (chooseIssueInterval) {
+                    ChoiceDialog(
+                        title = "Refresh issues",
+                        choices = IssueRefreshChoices.forValue(data.issueRefreshSecs),
+                        current = data.issueRefreshSecs,
+                        label = ::refreshIntervalLabel,
+                        onChoose = {
+                            chooseIssueInterval = false
+                            actions.setIssueRefreshInterval(it)
+                        },
+                        onDismiss = { chooseIssueInterval = false },
                     )
                 }
                 if (chooseInterval) {

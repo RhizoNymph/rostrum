@@ -9,6 +9,7 @@ import io.github.rhizonymph.rostrum.data.describe
 import io.github.rhizonymph.rostrum.data.logErr
 import io.github.rhizonymph.rostrum.data.model.CiGrid
 import io.github.rhizonymph.rostrum.data.model.CiGridFilter
+import io.github.rhizonymph.rostrum.data.model.CiTrigger
 import io.github.rhizonymph.rostrum.data.model.CiJobLog
 import io.github.rhizonymph.rostrum.data.model.CiRerunOption
 import io.github.rhizonymph.rostrum.data.model.CiSource
@@ -29,10 +30,11 @@ import kotlinx.coroutines.launch
  * The CI grid: every open pull request's checks (or one repository's, when
  * [repo] is set), a cell's log or output, and re-runs.
  *
- * Opening shows the checks the core holds at once, then fetches. While the
- * screen is started ([start]…[stop]), the grid is rebuilt from what is held
- * every [tickMillis] when some label ticks, and fetched again every
- * [pollMillis] when something is queued or running, as the core advises.
+ * Opening shows the checks the core holds at once, then fetches what could
+ * have changed. While the screen is started ([start]…[stop]), the grid is
+ * rebuilt from what is held every [tickMillis] when some label ticks, and
+ * what is queued or running is fetched again every [pollMillis], as the core
+ * advises. Pull to refresh fetches everything.
  */
 class CiGridViewModel(
     private val backend: RostrumBackend,
@@ -56,7 +58,7 @@ class CiGridViewModel(
     init {
         viewModelScope.launch {
             rebuild()
-            fetch()
+            fetch(CiTrigger.Opened)
         }
     }
 
@@ -69,9 +71,10 @@ class CiGridViewModel(
         }
     }
 
-    private suspend fun fetch() {
+    /** Fetch what [trigger] calls for; the core skips what cannot have changed. */
+    private suspend fun fetch(trigger: CiTrigger) {
         _state.update { it.copy(refreshing = true) }
-        val fetched = (if (repo == null) backend.refreshCi(filter) else backend.refreshCiRepo(repo, filter))
+        val fetched = (if (repo == null) backend.refreshCi(filter, trigger) else backend.refreshCiRepo(repo, filter, trigger))
             .logErr(TAG, "ci_fetch_failed", "repo" to repo)
         when (fetched) {
             is Outcome.Ok -> show(fetched.value)
@@ -90,7 +93,7 @@ class CiGridViewModel(
     override fun refresh() {
         if (fetchJob?.isActive == true) return
         _state.update { it.copy(refreshing = true) }
-        fetchJob = viewModelScope.launch { fetch() }
+        fetchJob = viewModelScope.launch { fetch(CiTrigger.Explicit) }
     }
 
     override fun setNeedsAttention(on: Boolean) {
@@ -112,7 +115,7 @@ class CiGridViewModel(
             launch {
                 while (isActive) {
                     delay(pollMillis)
-                    if (grid?.anyRunning == true && fetchJob?.isActive != true) fetch()
+                    if (grid?.anyRunning == true && fetchJob?.isActive != true) fetch(CiTrigger.Watch)
                 }
             }
         }

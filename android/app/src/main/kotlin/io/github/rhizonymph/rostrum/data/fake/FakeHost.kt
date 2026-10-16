@@ -71,5 +71,6 @@ internal class FakeParts(clock: Clock) {
     val stacks = FakeStackActions(host, clock)
     val phone = FakePhoneSettings()
     val desktopConfig = FakeDesktopConfig(host, phone)
-    val ci = FakeCi(host, clock, started)
+    val budget = FakeBudget(host, clock, started, phone)
+    val ci = FakeCi(host, clock, started, budget)
 }

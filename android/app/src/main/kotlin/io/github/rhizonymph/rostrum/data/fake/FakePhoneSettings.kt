@@ -13,6 +13,7 @@ internal class FakePhoneSettings {
     var refreshIntervalSecs = 60L
     var prsPerRepo = 30
     var issuesPerRepo = 25
+    var issueRefreshSecs = 300L
     var notifyNew = true
     var notifyReviews = true
     var autostash = false
@@ -32,5 +33,6 @@ internal class FakePhoneSettings {
         autostash = autostash,
         feed = preferences,
         issuesPerRepo = issuesPerRepo,
+        issueRefreshSecs = issueRefreshSecs,
     )
 }

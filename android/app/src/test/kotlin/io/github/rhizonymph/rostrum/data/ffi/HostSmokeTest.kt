@@ -16,6 +16,8 @@ import io.github.rhizonymph.rostrum.data.model.IssueRef
 import io.github.rhizonymph.rostrum.data.model.FeedTab
 import io.github.rhizonymph.rostrum.data.model.MdBlockKind
 import io.github.rhizonymph.rostrum.data.model.PrRef
+import io.github.rhizonymph.rostrum.data.model.PollPace
+import io.github.rhizonymph.rostrum.data.model.PollSchedule
 import io.github.rhizonymph.rostrum.data.model.ProfileId
 import io.github.rhizonymph.rostrum.data.model.ProfileKind
 import io.github.rhizonymph.rostrum.testing.orFail
@@ -93,6 +95,19 @@ class HostSmokeTest {
         assertEquals("serde-rs/serde", backend.addRepo("https://github.com/serde-rs/serde").orFail())
         assertEquals(BackendError.DuplicateRepo("serde-rs/serde"), backend.addRepo("serde-rs/serde").error())
         assertTrue("serde-rs/serde" in backend.settings().orFail().repos)
+    }
+
+    @Test
+    @Order(3)
+    fun `the budget and the schedule answer without a token or network`(): Unit = runBlocking {
+        assertEquals(null, backend.apiBudget().orFail())
+        val schedule = backend.pollSchedule().orFail()
+        assertEquals(PollSchedule(60, 60, PollPace.Normal), schedule)
+        assertEquals(300L, backend.settings().orFail().issueRefreshSecs)
+        assertEquals(10L, backend.setIssueRefreshInterval(1).orFail().issueRefreshSecs)
+        assertEquals(300L, backend.setIssueRefreshInterval(300).orFail().issueRefreshSecs)
+        assertEquals(BackendError.NotSignedIn, backend.pollFeed().error())
+        assertEquals(null, backend.cachedFeed().orFail().budget)
     }
 
     @Test
