@@ -44,32 +44,42 @@ GPUI entities, and every async result is applied on the main thread through
 `entity.update(cx, ..)`. There is no second event bus and no shared `Arc<Mutex<_>>`
 state store.
 
-The poll loop follows Zed's `auto_update` shape:
+The poll loop waits, ticks, and asks the pure planner what is due:
 
 ```rust
 // started once, held in a field so it is not dropped
 cx.spawn(async move |this, cx| {
     loop {
-        this.update(cx, |this, cx| this.poll_due_repos(cx))?;
-        cx.background_executor().timer(TICK).await;
+        let delay = this.update(cx, |this, _| this.next_poll_delay())?;
+        cx.background_executor().timer(delay).await;
+        this.update(cx, |this, cx| this.poll_tick(Trigger::Timer, cx))?;
     }
 })
 ```
 
-`poll_due_repos` checks each repo's `next_refresh_at`, and for each due repo
-spawns a fetch **only if** that repo's `pending: Option<Task<()>>` is `None`.
-That field is the overlap guard: a slow request can never stack up behind a fast
-timer. On completion the task clears `pending`, writes results into `RepoState`,
-and calls `cx.notify()`.
+`poll_tick` runs `rostrum_core::poll::plan_poll` and sends each kind as
+multi-repository batches; `next_poll_delay` is the configured interval
+stretched by `rostrum_core::budget::pace` as the budget runs down, or the
+time until a rate-limit pause lifts. The overlap guard is per repository and
+per kind (`sync/inflight.rs`): a repository already in a batch in flight is
+left out of the next one, so a slow request can never stack up behind a fast
+timer. Everything about cadences, batching, skipping and backing off is in
+`docs/features/poll_budget.md`.
 
-Refresh cadence: 60s for the feed, 20s for the currently open PR, immediate on
-manual refresh or after a mutation. Repos are staggered across the tick so thirty
-repositories do not fire simultaneously.
+Refresh cadence: `refresh_secs` (60 s) for the feed, `issue_refresh_secs`
+(300 s) for issues, CI checks only when they could have changed (at most ten
+minutes stale), immediate on manual refresh or after a mutation.
 
 ## Reads — GraphQL v4
 
-One query per repo, returning everything the feed row needs plus enough for the
-detail header, avoiding a fan-out of per-PR requests:
+One selection per repository, returning everything the feed row needs plus
+enough for the detail header, avoiding a fan-out of per-PR requests. The poll
+sends it as an aliased batch (`r0: repository(owner: $o0, name: $n0) { … }`,
+`rostrum_github::batch`), sized by a cost model; at 25 pull requests per
+repository the cheapest size is one repository per document (GitHub rounds
+each document's 1.26 points down to 1), so in practice it goes out per
+repository. The one-repository document is `OPEN_PULL_REQUESTS`, and both
+share `OPEN_PULLS_SELECTION`:
 
 ```graphql
 viewer { login avatarUrl }
@@ -117,8 +127,8 @@ have matched. This is why `AuthorNode.login` is `Option<String>`. Both
 connections are capped at ten — two bounded lists, no extra round trips. See
 `docs/features/author_filter.md`.
 
-Open issues are a second document per repository in the same cycle,
-`OPEN_ISSUES`, with its own overlap guard (`pending_issues`) and its own
+Open issues are a second selection (`OPEN_ISSUES_SELECTION`), batched across
+repositories on their own cadence, with their own overlap guard and their own
 `LoadState`; a selected issue's detail is `ISSUE_DETAIL`. Both are described
 in `docs/features/issues.md`.
 
@@ -150,17 +160,18 @@ recently. Verified live: a first query returned `UNKNOWN` for four of ten open
 pull requests, and an identical query two seconds later returned real values
 for all four.
 
-`Store::probe_merge_state` therefore re-queries a repository after a refresh
-that saw any `MergeStatus::Computing`, backing off 2s, 4s, 8s and giving up
-after three attempts per poll cycle. The schedule is
+`Store::schedule_merge_probe` therefore re-queries, after a poll's batches
+have landed, every repository that saw any `MergeStatus::Computing` — in one
+batch — backing off 2s, 4s, 8s and giving up after three attempts per poll
+cycle. The schedule is
 `rostrum_core::MergeProbeBudget` (and the trigger `needs_merge_probe`), shared
 with the Android core, which chases the same way. The budget matters: a token that may not
 read a repository's merge state sees `UNKNOWN` permanently, and without a bound
 that is an endless request loop rather than a slow one.
 
-Probes are keyed by repository in `merge_probes`, so a newer probe replaces and
-cancels an older one, and `refresh_all` resets the budget because a full poll
-begins a new cycle.
+One probe timer covers the whole cycle (`FeedCycle`), and every poll resets
+the budget because a full poll begins a new cycle. Probes are tallied as
+`probes` and stop while polling is paused.
 
 Neither field needs the `merge-info-preview` Accept header any more; the plain
 query returns both, confirmed against the live API.
@@ -168,10 +179,13 @@ query returns both, confirmed against the live API.
 Drafts never trigger a probe. A draft reports `MergeStatus::Draft` regardless of
 what GitHub is computing, so there is nothing to wait for.
 
-Rate limiting for GraphQL is cost-based against a 5000 point/hour budget; a query
-of this shape costs on the order of tens of points, so a thirty-repo feed
-refreshing every 60s stays comfortably inside it. The `rateLimit { cost remaining
-resetAt }` field is requested on every query and recorded.
+Rate limiting for GraphQL is cost-based against a 5000 point/hour budget
+shared with `gh` and a paired phone. Each document of this shape costs one
+point (1.26, rounded); the old shape of four one-point documents per
+repository per minute exhausted the budget at about twenty repositories.
+`rateLimit { cost remaining resetAt }` is requested on the poll's documents
+and its cost tallied per feature; every response's `x-ratelimit-*` headers
+feed the client's `BudgetTracker`. See `docs/features/poll_budget.md`.
 
 ### Client endpoints and the viewer
 
@@ -324,12 +338,18 @@ Two decisions worth stating:
 
 `Ref.compare` takes the head ref name as an argument, and a GraphQL field
 cannot reference a sibling field's value, so the count cannot be folded into
-the feed query. It is instead a second request per repository, issued from
-`apply_refresh`: `build_divergence_batch(n)` generates one document with an
-aliased `pN: ref(...) { compare(...) }` per pull request and a matching
-`$bN`/`$hN` variable pair, so branch names travel as variables and never reach
-the document text. Verified live at cost 1. A `NOT_FOUND` scoped to one alias
-(`path: ["repository", "pN", "compare"]`) excuses only that alias —
+the feed query. It is instead a follow-up request once a poll's pull request
+batches have landed, for every repository at once:
+`batch::divergence::build_divergence_document` nests an aliased
+`pM: ref(...) { compare(...) }` per pull request under an aliased
+`rN: repository(...)`, with a matching `$rNbM`/`$rNhM` variable pair, so
+branch names travel as variables and never reach the document text.
+`Ref.compare` is not a connection, so the document costs one point however
+many repositories it spans (dry-run at 40 × 25). The one-repository
+`build_divergence_batch(n)` remains for the repository view. Verified live at
+cost 1. A `NOT_FOUND` scoped to one alias
+(`path: ["repository", "pN", "compare"]`, or `["rN", "pM", "compare"]` in
+the multi-repository batch) excuses only that alias —
 `unexcused_batch_errors` keeps everything else — so one cross-fork pull request
 cannot blank out the batch. The single `divergence()` remains for callers that
 want one answer.
@@ -462,14 +482,16 @@ Two rules that matter in practice:
 
 ## Invariants
 
-- Exactly one in-flight request per repo, enforced by `pending: Option<Task<()>>`.
+- At most one in-flight batch per repository per kind, enforced by
+  `InFlight` (`crates/rostrum/src/sync/inflight.rs`).
 - Every pull request carries its GraphQL `node_id`, so no mutation needs a lookup
   round trip to address it.
 - Mutations invalidate the affected PR's cache entry and trigger an immediate
   targeted refresh; optimistic local updates are reconciled by that refresh.
-- Rate-limit state is checked before issuing a poll; when exhausted, polling
-  pauses until `reset_at` and the UI shows the resume time rather than failing
-  silently.
+- Rate-limit state is checked before every background fetch; when GitHub
+  refuses (primary or secondary), polling pauses until the reset or
+  `retry-after` plus jitter and the status bar shows "paused until HH:MM"
+  rather than failing silently. Below 20% left the interval stretches.
 - The token never reaches disk, logs, or config.
 
 ## Files
@@ -482,17 +504,22 @@ Two rules that matter in practice:
 | `crates/rostrum-github/src/models.rs` | Wire types and domain conversions |
 | `crates/rostrum-github/src/error.rs` | `GitHubError` |
 | `crates/rostrum-github/src/branches.rs` | Repository branch metadata for the repository view |
-| `crates/rostrum-github/src/rate_limit.rs` | Budget accounting, backoff |
+| `crates/rostrum-github/src/client/budget.rs` | `BudgetTracker`: budget headers, rate-limit refusals, spend per feature — see `docs/features/poll_budget.md` |
+| `crates/rostrum-github/src/batch/` | Multi-repository documents, per-alias error splitting, the cost model and chunking |
+| `crates/rostrum-core/src/budget/`, `crates/rostrum-core/src/poll/` | Budget, pause and pacing rules; the poll planner, issue cadence and CI skip rules |
+| `crates/rostrum/src/sync/poll.rs` | Poll loop, tick, pacing, spend log |
+| `crates/rostrum/src/sync/feed.rs` | Pull request batches and their follow-ups (divergence, stacks, checks, merge probes) |
+| `crates/rostrum/src/sync/inflight.rs` | Per-repository overlap guard for batches |
 | `crates/rostrum-github/src/cache.rs` | SQLite schema, ETag storage |
 | `crates/rostrum/src/sync/mod.rs` | `SyncEngine` entity, poll loop, reconciliation |
-| `crates/rostrum/src/sync/issues.rs` | Issue refresh in the same poll cycle, its overlap guard and cache write |
+| `crates/rostrum/src/sync/issues.rs` | Issue batches on their cadence, their overlap guard and cache write |
 | `crates/rostrum-github/src/issues/` | Issue documents, REST requests, client methods — see `docs/features/issues.md` |
 | `crates/rostrum-db/src/issues.rs` | Issue lists and issue details cached per repository |
 | `crates/rostrum-github/src/closed/` | The closed pull request document (`CLOSED_PULL_REQUESTS`), its wire types, `GitHubClient::closed_pull_requests` — see `docs/features/closed_prs.md` |
 | `crates/rostrum/src/sync/closed.rs` | Closed refresh while the Closed tab is shown, its overlap guard and cache write |
 | `crates/rostrum-db/src/closed.rs` | `cache_closed_pull` |
 | `crates/rostrum-github/src/ci/` | The CI checks document, job logs, check output, re-runs — see `docs/features/ci_grid.md` |
-| `crates/rostrum/src/sync/ci.rs` | Checks refresh on the poll, the CI view's 15 s poll, optimistic requeue |
+| `crates/rostrum/src/sync/ci.rs` | Checks batches for what could have changed, the CI view's 15 s watch, optimistic requeue |
 | `crates/rostrum-core/src/probe.rs` | `MergeProbeBudget`, `needs_merge_probe` |
 | `crates/rostrum-db/src/files.rs` | Changed files cached per head sha |
 | `crates/rostrum-db/src/baseline.rs` | The notification seen set |

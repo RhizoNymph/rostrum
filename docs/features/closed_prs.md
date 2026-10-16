@@ -111,10 +111,11 @@ it covers days to weeks of a busy repository at one rate-limit point.
 ```
 Store::set_tab(Closed) ──► refresh_closed_if_shown ──► for each repo where
                                                          closed_needs_fetch(..)
-Store::refresh_all (poll / startup), tab == Closed ──► refresh_closed(every repo)
+poll tick (plan_poll: closed_shown), tab == Closed ──► refresh_closed(every repo)
 Store::add_repo, config file reload ──► refresh_closed_if_shown
 
 refresh_closed(id)                        (crates/rostrum/src/sync/closed.rs)
+  ├─ nothing while a rate-limit pause holds (Store::paused)
   ├─ overlap guard: pending_closed[id]
   ├─ closed_load = Loading only if nothing is held (no blanking a shown list)
   ├─ Tokio: GitHubClient::closed_pull_requests(id, CLOSED_PER_REPO)

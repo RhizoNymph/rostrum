@@ -16,8 +16,10 @@ has been running or how long since it finished, its log, and re-running it.
   title, short head sha, and a rollup.
 - One header row for the whole grid: workflow names over their jobs.
 - A failing-or-running filter.
-- Fetching the checks with the feed's poll, and every 15 s while the grid is
-  open and something is running.
+- Fetching the checks after the feed's poll for the repositories whose checks
+  could have changed (`rostrum_core::poll::ci_due`), in multi-repository
+  batches, and every 15 s while the grid is open for the repositories with
+  something running.
 - Logs: an Actions job's log in a searchable viewer with collapsible
   sections, the failing step highlighted, ANSI removed, and long logs cut to
   their tail with "load full". Another app's check: its output and
@@ -115,8 +117,10 @@ is known at render time without measuring.
 
 ## Data
 
-`CI_CHECKS` (`crates/rostrum-github/src/ci/wire.rs`): one request per
-repository, the open pull requests (the feed's `prs_per_repo` page, most
+`CI_CHECKS` (`crates/rostrum-github/src/ci/wire.rs`): one repository's open
+pull requests — and `CI_CHECKS_SELECTION`, the same selection the poll sends
+under an alias per repository (`GitHubClient::ci_checks_batch`, all watched
+repositories in one request for any realistic count: 0.51 points each) — (the feed's `prs_per_repo` page, most
 recently updated first) with their head commit's
 `statusCheckRollup.contexts(first: 100)`:
 
@@ -145,12 +149,17 @@ Decoding (`ContextNode::into_domain`) gives a `CheckEntry`:
   2h ago" with no duration.
 
 The store (`crates/rostrum/src/sync/ci.rs`) holds a `CiChecks`, one
-`RepoChecks { prs, load }` per repository. `Store::refresh_ci` is called by
-`refresh_all`, so the feed's poll refreshes checks too, with its own overlap
-guard (`pending_ci`). While the CI view is visible, `set_ci_visible(true)`
-fetches every repository once and starts a 15 s timer
+`RepoChecks { prs, load }` per repository. Once a poll's pull request
+batches have landed, `refresh_ci_planned` runs `plan_ci` over the landed
+repositories and fetches only those whose checks could have changed: never
+fetched or last failed, a pull request added, a head SHA that moved, a check
+queued or running, or ten minutes since the last fetch
+(`CI_SAFETY_INTERVAL`); drafts are left out. The Refresh action fetches all.
+The overlap guard is per repository (`ci_flight`). While the CI view is
+visible, `set_ci_visible(true)` fetches what is due and starts a 15 s timer
 (`CI_WATCH_INTERVAL`) that re-fetches only the repositories with something
-queued or running; hiding the view drops the timer.
+queued or running (`running_repos`), in one batch; hiding the view drops the
+timer, and a rate-limit pause stops it. See `docs/features/poll_budget.md`.
 
 ## The grid
 
@@ -381,7 +390,8 @@ narrows the matrix to that repository's rows and the columns they ran.
 | `crates/rostrum-github/src/ci/client.rs` | Client methods | `ci_checks`, `job_log`, `check_output`, `rerun`, `RepoCiChecks` |
 | `crates/rostrum-github/src/ci/tests.rs` | Decoding, grid and log tests on captured data | — |
 | `crates/rostrum-github/fixtures/ci/` | Captured rollups, a check run, annotations, a log excerpt | — |
-| `crates/rostrum/src/sync/ci.rs` | Store: fetch, faster poll, requeue | `Store::{refresh_ci, set_ci_visible, requeue}`, `CI_WATCH_INTERVAL` |
+| `crates/rostrum/src/sync/ci.rs` | Store: planned and watched checks batches, requeue | `Store::{refresh_ci, set_ci_visible, requeue}`, `CI_WATCH_INTERVAL` |
+| `crates/rostrum-core/src/poll/ci.rs` | When checks must be fetched again | `ci_due`, `CiReason`, `plan_ci`, `running_repos` |
 | `crates/rostrum/src/ci/mod.rs` | The CI view entity, keys, selection, re-run flow | `CiView`, `CiEvent`, `bind_keys` |
 | `crates/rostrum/src/ci/render.rs` | Toolbar, banner, failed repositories, empty state, wheel handling, layout | — |
 | `crates/rostrum/src/ci/matrix.rs` | The header row, stack lines, row headers, cells, drawn at the horizontal offset | — |

@@ -102,7 +102,9 @@ the API for cold starts.
 
 ### Reading
 
-1. `SyncEngine`'s refresh of a repository lands (`Store::apply_refresh`).
+1. A poll's pull request batches have all landed (`Store::feed_settled`,
+   `crates/rostrum/src/sync/feed.rs`); a merge probe's re-query does not
+   re-read stacks. Nothing is read while a rate-limit pause holds.
 2. `Store::fetch_stacks` (in `crates/rostrum/src/sync/stacks.rs`) issues
    `GitHubClient::stacks` — skipped for a repository with no open pull
    requests, and for an hour after a 404.
