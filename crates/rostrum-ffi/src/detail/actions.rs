@@ -12,7 +12,7 @@ use crate::{
     detail::{BranchUpdateMethod, MergeMethod},
     engine::{RostrumCore, state::PullKey},
     error::RostrumError,
-    feed::{Probes, Scope},
+    feed::{Refreshed, Scope},
 };
 
 impl From<MergeMethod> for GitHubMerge {
@@ -57,8 +57,9 @@ impl RostrumCore {
     /// is logged, not reported — the mutation itself succeeded.
     pub(crate) async fn after_mutation(&self, key: &PullKey) {
         if let Err(error) = self
-            .refresh(Scope::One(key.repo.clone()), Probes::Schedule)
+            .refresh(Scope::One(key.repo.clone()))
             .await
+            .and_then(Refreshed::asked)
         {
             tracing::warn!(repo = %key.repo, %error, "could not refresh after a change");
         }

@@ -18,10 +18,11 @@ use rostrum_core::{
 use rostrum_github::{GitHubClient, GitHubError};
 
 use crate::{
+    budget::{PollPace, SpendLog},
     diff::LoadedFiles,
     engine::{actor::WeakActor, notifier::Notifier, recent::Recent, writer::Writer},
     error::RostrumError,
-    feed::{FeedSnapshot, FeedState, ProbeSlot},
+    feed::{FeedSnapshot, FeedState, ProbeCycle},
     remote::RemoteSession,
     review::DraftBook,
     session::{GitHubApi, Session},
@@ -99,8 +100,12 @@ pub(crate) struct CoreState {
     pub files: Recent<PullKey, Arc<LoadedFiles>>,
     /// Repository label palettes, fetched once each.
     pub labels: HashMap<RepoId, Arc<Vec<Label>>>,
-    /// Merge-state re-checks per repository this poll cycle.
-    pub probes: HashMap<RepoId, ProbeSlot>,
+    /// This refresh cycle's merge-state probe.
+    pub probe: ProbeCycle,
+    /// The pace the last `poll_schedule` reported, to log when it changes.
+    pub last_pace: Option<PollPace>,
+    /// When the spend per feature was last logged.
+    pub spend_log: SpendLog,
     /// Repositories whose stacks GitHub said are not enabled, and when.
     pub stacks_unavailable: HashMap<RepoId, Instant>,
     /// Issue details fetched this session (SQLite keeps them all).
@@ -159,7 +164,9 @@ impl CoreState {
             conversations: Recent::new(RECENT_CONVERSATIONS),
             files: Recent::new(RECENT_DIFFS),
             labels: HashMap::new(),
-            probes: HashMap::new(),
+            probe: ProbeCycle::default(),
+            last_pace: None,
+            spend_log: SpendLog::new(Instant::now()),
             stacks_unavailable: HashMap::new(),
             issue_details: Recent::new(RECENT_CONVERSATIONS),
             assignable: HashMap::new(),
@@ -181,7 +188,6 @@ impl CoreState {
     /// kept — they are the user's unsent work, and SQLite still has them.
     pub(crate) fn forget_repo(&mut self, id: &RepoId) {
         self.feed.remove_repo(id);
-        self.probes.remove(id);
         self.labels.remove(id);
         self.conversations.retain(|key| &key.repo != id);
         self.files.retain(|key| &key.repo != id);
@@ -217,12 +223,14 @@ impl CoreState {
         }
     }
 
-    /// The feed as it stands, without counting a change.
+    /// The feed as it stands, with the budget as of now, without counting a
+    /// change.
     pub(crate) fn snapshot(&self) -> FeedSnapshot {
-        self.feed.snapshot(
-            self.session.viewer(),
-            self.probes.values().any(ProbeSlot::is_pending),
-        )
+        let mut snapshot = self
+            .feed
+            .snapshot(self.session.viewer(), self.probe.is_pending());
+        snapshot.budget = self.api_budget(chrono::Utc::now());
+        snapshot
     }
 
     /// Count a change to the feed, deliver the new snapshot to the observer,

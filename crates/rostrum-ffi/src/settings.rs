@@ -19,6 +19,9 @@ use crate::{
 /// Bounds on the foreground refresh interval, matching the desktop's clamp:
 /// a pathological value must not become a request storm.
 const REFRESH_SECS: std::ops::RangeInclusive<u64> = 10..=3600;
+/// Bounds on how old open issues may get before a refresh fetches them
+/// again, matching the desktop's clamp (`Config::issue_refresh_interval`).
+const ISSUE_REFRESH_SECS: std::ops::RangeInclusive<u64> = 10..=86_400;
 /// GitHub's page size caps a single query at 100.
 pub(crate) const PRS_PER_REPO: std::ops::RangeInclusive<u32> = 1..=100;
 /// Open issues fetched per repository: one GraphQL page, like pull requests.
@@ -44,6 +47,19 @@ pub struct Settings {
     /// Open issues fetched per repository (1..=100).
     #[uniffi(default = 25)]
     pub issues_per_repo: u32,
+    /// Seconds before open issues are fetched again by a background refresh
+    /// (clamped to 10..=86400). Pull to refresh fetches them at once.
+    #[uniffi(default = 300)]
+    pub issue_refresh_secs: u64,
+}
+
+/// The foreground refresh interval, clamped as the settings screen shows it.
+pub(crate) fn refresh_interval(config: &Config) -> std::time::Duration {
+    std::time::Duration::from_secs(
+        config
+            .refresh_secs
+            .clamp(*REFRESH_SECS.start(), *REFRESH_SECS.end()),
+    )
 }
 
 impl CoreState {
@@ -55,9 +71,7 @@ impl CoreState {
 fn settings_of(config: &Config, feed: FeedPreferences) -> Settings {
     Settings {
         repos: config.repos.clone(),
-        refresh_interval_secs: config
-            .refresh_secs
-            .clamp(*REFRESH_SECS.start(), *REFRESH_SECS.end()),
+        refresh_interval_secs: refresh_interval(config).as_secs(),
         prs_per_repo: config
             .prs_per_repo
             .clamp(*PRS_PER_REPO.start(), *PRS_PER_REPO.end()),
@@ -68,6 +82,7 @@ fn settings_of(config: &Config, feed: FeedPreferences) -> Settings {
         issues_per_repo: config
             .issues_per_repo
             .clamp(*ISSUES_PER_REPO.start(), *ISSUES_PER_REPO.end()),
+        issue_refresh_secs: config.issue_refresh_interval().as_secs(),
     }
 }
 
@@ -155,6 +170,14 @@ impl RostrumCore {
             .await
     }
 
+    /// Set how old open issues may get before a background refresh fetches
+    /// them again; out-of-range values are clamped to 10..=86400.
+    pub async fn set_issue_refresh_interval(&self, seconds: u64) -> Result<Settings, RostrumError> {
+        let seconds = seconds.clamp(*ISSUE_REFRESH_SECS.start(), *ISSUE_REFRESH_SECS.end());
+        self.edit_settings(move |config| config.issue_refresh_secs = seconds)
+            .await
+    }
+
     pub async fn set_notifications(
         &self,
         new_pull_requests: bool,
@@ -211,6 +234,28 @@ mod tests {
         );
         assert_eq!(settings.refresh_interval_secs, 10);
         assert_eq!(settings.prs_per_repo, 100);
+    }
+
+    #[test]
+    fn issues_refresh_every_five_minutes_unless_configured() {
+        let preferences = || FeedPreferences {
+            hide_drafts: false,
+            hide_empty_repos: true,
+            authors: vec![],
+            include_involved: false,
+        };
+        assert_eq!(
+            settings_of(&Config::default(), preferences()).issue_refresh_secs,
+            rostrum_core::poll::DEFAULT_ISSUE_INTERVAL.as_secs()
+        );
+        let hand_edited = Config {
+            issue_refresh_secs: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            settings_of(&hand_edited, preferences()).issue_refresh_secs,
+            10
+        );
     }
 
     #[test]
