@@ -124,8 +124,9 @@ Overview:
       on conversations, and a repository's own screen with its branch tree and
       trunks — ordered and assembled by the core, drawn by the app.
     android_ci_config: >
-      The phone's CI grid (every open pull request's checks, scrolling both
-      ways, with job logs, check output and confirmed re-runs) and sending
+      The phone's CI grid (one global matrix of every open, non-draft pull
+      request's checks under one shared header, scrolling both ways, with
+      job logs, check output and confirmed re-runs) and sending
       this profile's settings to the paired desktop, guarded by the desktop's
       revision — the core builds, times and parses; the app draws and polls.
     android_profiles: >
@@ -435,7 +436,7 @@ Features Index:
     depends_on: [android_app, android_core, feed_sort, issues, stacks, repo_view]
     doc: docs/features/android_issues_repo.md
   android_ci_config:
-    description: CI grid screen (two-way scrolling matrix, log viewer, check output, confirmed re-runs, tick and poll), sending settings to the paired desktop with a revision check, and the issues-per-repository setting, on Android.
+    description: CI grid screen (one global two-way scrolling matrix, log viewer, check output, confirmed re-runs, tick and poll), sending settings to the paired desktop with a revision check, and the issues-per-repository setting, on Android.
     entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/ci/CiGridScreen.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/ci/CiGridViewModel.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/desktopconfig/PushSettingsViewModel.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/CiApi.kt]
     depends_on: [android_app, android_core, ci_grid, remote_protocol]
     doc: docs/features/android_ci_config.md

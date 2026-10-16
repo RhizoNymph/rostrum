@@ -42,14 +42,13 @@ class CiGridViewModelTest {
 
         /** Open the cell of pull request [number] in the column labelled [column]. */
         fun open(repo: String, number: Int, column: String) {
-            val section = grid.sections.indexOfFirst { it.repo == repo }
-            val row = grid.sections[section].rows.indexOfFirst { it.number == number }
-            vm.openCell(section, row, grid.sections[section].columns.indexOfFirst { it.label == column })
+            val row = grid.rows.indexOfFirst { it.repo == repo && it.number == number }
+            vm.openCell(row, grid.columns.indexOfFirst { it.label == column })
         }
 
         fun status(repo: String, number: Int, column: String): CiStatus? {
-            val section = grid.sections.single { it.repo == repo }
-            return section.rows.single { it.number == number }.cells[section.columns.indexOfFirst { it.label == column }]?.status
+            val row = grid.rows.single { it.repo == repo && it.number == number }
+            return row.cells[grid.columns.indexOfFirst { it.label == column }]?.status
         }
     }
 
@@ -75,7 +74,8 @@ class CiGridViewModelTest {
         fun `a repository's grid shows only that repository and fetches only it`() = runTest(main.dispatcher) {
             val h = harness(repo = SamplePulls.ZED)
             advanceUntilIdle()
-            assertEquals(listOf(SamplePulls.ZED), h.grid.sections.map { it.repo })
+            assertEquals(listOf(SamplePulls.ZED), h.grid.repos.map { it.repo })
+            assertEquals(setOf(SamplePulls.ZED), h.grid.rows.map { it.repo }.toSet())
             assertEquals(1, h.backend.ci.fetches)
         }
 
@@ -103,8 +103,7 @@ class CiGridViewModelTest {
             h.vm.setNeedsAttention(true)
             advanceUntilIdle()
             assertTrue(h.vm.state.value.filter.needsAttention)
-            val rostrum = h.grid.sections.single { it.repo == SamplePulls.ROSTRUM }
-            assertEquals(listOf(10, 9), rostrum.rows.map { it.number })
+            assertEquals(listOf(10, 9), h.grid.rows.filter { it.repo == SamplePulls.ROSTRUM }.map { it.number })
             assertEquals(1, h.backend.ci.fetches)
         }
 
@@ -236,7 +235,7 @@ class CiGridViewModelTest {
         fun `a cell outside the grid opens nothing`() = runTest(main.dispatcher) {
             val h = harness(repo = SamplePulls.ROSTRUM)
             advanceUntilIdle()
-            h.vm.openCell(0, 99, 0)
+            h.vm.openCell(99, 0)
             assertNull(h.vm.state.value.sheet)
         }
     }

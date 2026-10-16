@@ -351,22 +351,18 @@ The pure API the phone reuses, all in `rostrum_core::ci` unless noted:
   `ci::classify_rerun`, `ci::job_log_path`, `ci::CI_CHECKS`,
   `ci::CONTEXTS_PER_COMMIT`.
 
-What the Android UI (open PR #32, `feat/android-ci-ui`) has to change for the
-matrix — the FFI records changed shape in this branch:
-
-- `CiGrid.sections` is gone. Columns are `CiGrid.columns` (one set),
-  `CiGrid.groups` (`CiColumnGroup { workflow?, start, end }`) for a
-  workflow band, and rows are `CiGrid.rows`, each with its `repo`.
-- `CiLine` is only `Stack(members)` and `Row(row)` (an index into `rows`);
-  `Header`, `Notice` and `Spacer` lines are gone. Draw one header above the
-  list, and the empty state from `rows` being empty.
-- Per-repository load state and counts are `CiGrid.repos` (`CiRepo { repo,
-  load, rows, hidden }`); show failed repositories from there. The total
-  filtered-out count is `CiGrid.hidden`.
-- Look a cell up by `(row.repo, row.number)` and the column's index in
-  `CiGrid.columns`; re-run targets are still asked for by repository, number
-  and `CiCheckKey`.
-- Drafts no longer arrive, so a draft toggle has nothing to do on the grid.
+The Android app draws the matrix as the desktop does (see
+`docs/features/android_ci_config.md`): the FFI's `CiGrid { columns, groups,
+rows, repos, lines, hidden, ticks, anyRunning }` maps one to one to the
+Kotlin model; one header (workflow band over job names) sits above the
+list and shares one horizontal scroll with every row; rows are labelled
+`owner/name #N`, a repository's first line is ruled off, stack lines are
+kept, repositories whose checks failed to load are listed in a strip from
+`CiGrid.repos`, and an empty grid says "Loading checks…", "Nothing failing
+or running" or "No open pull requests outside drafts". A cell is opened by
+its row and column index; re-run targets are still asked for by
+repository, number and `CiCheckKey`. Opened from a repository, the phone
+narrows the matrix to that repository's rows and the columns they ran.
 
 ## Files
 

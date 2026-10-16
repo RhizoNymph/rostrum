@@ -6,6 +6,7 @@ import io.github.rhizonymph.rostrum.data.model.CiCell
 import io.github.rhizonymph.rostrum.data.model.CiCheckKey
 import io.github.rhizonymph.rostrum.data.model.CiCheckOutput
 import io.github.rhizonymph.rostrum.data.model.CiColumn
+import io.github.rhizonymph.rostrum.data.model.CiColumnGroup
 import io.github.rhizonymph.rostrum.data.model.CiGrid
 import io.github.rhizonymph.rostrum.data.model.CiGridFilter
 import io.github.rhizonymph.rostrum.data.model.CiJobLog
@@ -15,13 +16,13 @@ import io.github.rhizonymph.rostrum.data.model.CiLogGroup
 import io.github.rhizonymph.rostrum.data.model.CiLogLine
 import io.github.rhizonymph.rostrum.data.model.CiLogStep
 import io.github.rhizonymph.rostrum.data.model.CiNotRerunnable
+import io.github.rhizonymph.rostrum.data.model.CiRepo
 import io.github.rhizonymph.rostrum.data.model.CiRerun
 import io.github.rhizonymph.rostrum.data.model.CiRerunChoice
 import io.github.rhizonymph.rostrum.data.model.CiRerunOption
 import io.github.rhizonymph.rostrum.data.model.CiRollup
 import io.github.rhizonymph.rostrum.data.model.CiRollupState
 import io.github.rhizonymph.rostrum.data.model.CiRow
-import io.github.rhizonymph.rostrum.data.model.CiSection
 import io.github.rhizonymph.rostrum.data.model.CiSource
 import io.github.rhizonymph.rostrum.data.model.CiStackPlace
 import io.github.rhizonymph.rostrum.data.model.CiStatus
@@ -31,6 +32,7 @@ import uniffi.rostrum_ffi.CiCell as FfiCiCell
 import uniffi.rostrum_ffi.CiCheckKey as FfiCiCheckKey
 import uniffi.rostrum_ffi.CiCheckOutput as FfiCiCheckOutput
 import uniffi.rostrum_ffi.CiColumn as FfiCiColumn
+import uniffi.rostrum_ffi.CiColumnGroup as FfiCiColumnGroup
 import uniffi.rostrum_ffi.CiGrid as FfiCiGrid
 import uniffi.rostrum_ffi.CiGridFilter as FfiCiGridFilter
 import uniffi.rostrum_ffi.CiJobLog as FfiCiJobLog
@@ -40,13 +42,13 @@ import uniffi.rostrum_ffi.CiLogGroup as FfiCiLogGroup
 import uniffi.rostrum_ffi.CiLogLine as FfiCiLogLine
 import uniffi.rostrum_ffi.CiLogStep as FfiCiLogStep
 import uniffi.rostrum_ffi.CiNotRerunnable as FfiCiNotRerunnable
+import uniffi.rostrum_ffi.CiRepo as FfiCiRepo
 import uniffi.rostrum_ffi.CiRerun as FfiCiRerun
 import uniffi.rostrum_ffi.CiRerunChoice as FfiCiRerunChoice
 import uniffi.rostrum_ffi.CiRerunOption as FfiCiRerunOption
 import uniffi.rostrum_ffi.CiRollup as FfiCiRollup
 import uniffi.rostrum_ffi.CiRollupState as FfiCiRollupState
 import uniffi.rostrum_ffi.CiRow as FfiCiRow
-import uniffi.rostrum_ffi.CiSection as FfiCiSection
 import uniffi.rostrum_ffi.CiSource as FfiCiSource
 import uniffi.rostrum_ffi.CiStackPlace as FfiCiStackPlace
 import uniffi.rostrum_ffi.CiStatus as FfiCiStatus
@@ -56,17 +58,22 @@ import uniffi.rostrum_ffi.CiStatus as FfiCiStatus
 internal fun CiGridFilter.toFfi() = FfiCiGridFilter(needsAttention)
 
 internal fun FfiCiGrid.toModel() = CiGrid(
-    sections = sections.map { it.toModel() },
+    columns = columns.map { it.toModel() },
+    groups = groups.map { it.toModel() },
+    rows = rows.map { it.toModel() },
+    repos = repos.map { it.toModel() },
     lines = lines.map { it.toModel() },
+    hidden = hidden.toInt(),
     ticks = ticks,
     anyRunning = anyRunning,
 )
 
-internal fun FfiCiSection.toModel() = CiSection(
+internal fun FfiCiColumnGroup.toModel() = CiColumnGroup(workflow, start.toInt(), end.toInt())
+
+internal fun FfiCiRepo.toModel() = CiRepo(
     repo = repo,
-    columns = columns.map { it.toModel() },
-    rows = rows.map { it.toModel() },
     load = load.toModel(),
+    rows = rows.toInt(),
     hidden = hidden.toInt(),
 )
 
@@ -77,6 +84,7 @@ internal fun FfiCiCheckKey.toModel() = CiCheckKey(workflow, name)
 internal fun CiCheckKey.toFfi() = FfiCiCheckKey(workflow, name)
 
 internal fun FfiCiRow.toModel() = CiRow(
+    repo = repo,
     number = number.toInt(),
     title = title,
     headSha = headSha,
@@ -143,11 +151,8 @@ internal fun FfiCiSource.toModel(): CiSource = when (this) {
 }
 
 internal fun FfiCiLine.toModel(): CiLine = when (this) {
-    is FfiCiLine.Header -> CiLine.Header(section.toInt())
-    is FfiCiLine.Stack -> CiLine.Stack(section.toInt(), members.toInt())
-    is FfiCiLine.Row -> CiLine.Row(section.toInt(), row.toInt())
-    is FfiCiLine.Notice -> CiLine.Notice(section.toInt())
-    is FfiCiLine.Spacer -> CiLine.Spacer
+    is FfiCiLine.Stack -> CiLine.Stack(members.toInt())
+    is FfiCiLine.Row -> CiLine.Row(row.toInt())
 }
 
 internal fun FfiCiJobLog.toModel() = CiJobLog(

@@ -12,9 +12,9 @@ import io.github.rhizonymph.rostrum.data.model.CiRerunOption
 import io.github.rhizonymph.rostrum.ui.common.UiState
 
 /**
- * The CI grid screen. [content] is the grid as shown (one repository's
- * section only when the screen was opened from a repository); [sheet] is the
- * cell opened, if any.
+ * The CI grid screen. [content] is the matrix as shown (narrowed to one
+ * repository's rows when the screen was opened from a repository); [sheet]
+ * is the cell opened, if any.
  */
 data class CiGridUiState(
     val content: UiState<CiGrid> = UiState.Loading,
@@ -95,7 +95,7 @@ sealed interface RetryState {
 interface CiGridActions {
     fun refresh()
     fun setNeedsAttention(on: Boolean)
-    fun openCell(section: Int, row: Int, column: Int)
+    fun openCell(row: Int, column: Int)
     fun closeSheet()
     fun retryDetail()
     fun loadFullLog()
@@ -113,7 +113,7 @@ interface CiGridActions {
 object NoCiGridActions : CiGridActions {
     override fun refresh() = Unit
     override fun setNeedsAttention(on: Boolean) = Unit
-    override fun openCell(section: Int, row: Int, column: Int) = Unit
+    override fun openCell(row: Int, column: Int) = Unit
     override fun closeSheet() = Unit
     override fun retryDetail() = Unit
     override fun loadFullLog() = Unit

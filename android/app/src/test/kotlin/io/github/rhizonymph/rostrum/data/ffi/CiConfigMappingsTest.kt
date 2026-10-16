@@ -3,10 +3,12 @@ package io.github.rhizonymph.rostrum.data.ffi
 import io.github.rhizonymph.rostrum.data.BackendError
 import io.github.rhizonymph.rostrum.data.RemoteErrorCode
 import io.github.rhizonymph.rostrum.data.model.CiCheckKey
+import io.github.rhizonymph.rostrum.data.model.CiColumnGroup
 import io.github.rhizonymph.rostrum.data.model.CiGridFilter
 import io.github.rhizonymph.rostrum.data.model.CiLine
 import io.github.rhizonymph.rostrum.data.model.CiLineKind
 import io.github.rhizonymph.rostrum.data.model.CiNotRerunnable
+import io.github.rhizonymph.rostrum.data.model.CiRepo
 import io.github.rhizonymph.rostrum.data.model.CiRerun
 import io.github.rhizonymph.rostrum.data.model.CiRerunChoice
 import io.github.rhizonymph.rostrum.data.model.CiRollupState
@@ -24,6 +26,7 @@ import org.junit.jupiter.api.Test
 import uniffi.rostrum_ffi.CiCell as FCell
 import uniffi.rostrum_ffi.CiCheckKey as FKey
 import uniffi.rostrum_ffi.CiColumn as FColumn
+import uniffi.rostrum_ffi.CiColumnGroup as FColumnGroup
 import uniffi.rostrum_ffi.CiGrid as FGrid
 import uniffi.rostrum_ffi.CiJobLog as FJobLog
 import uniffi.rostrum_ffi.CiLine as FLine
@@ -32,13 +35,13 @@ import uniffi.rostrum_ffi.CiLogGroup as FGroup
 import uniffi.rostrum_ffi.CiLogLine as FLogLine
 import uniffi.rostrum_ffi.CiLogStep as FStep
 import uniffi.rostrum_ffi.CiNotRerunnable as FNotRerunnable
+import uniffi.rostrum_ffi.CiRepo as FRepo
 import uniffi.rostrum_ffi.CiRerun as FRerun
 import uniffi.rostrum_ffi.CiRerunChoice as FChoice
 import uniffi.rostrum_ffi.CiRerunOption as FOption
 import uniffi.rostrum_ffi.CiRollup as FRollup
 import uniffi.rostrum_ffi.CiRollupState as FRollupState
 import uniffi.rostrum_ffi.CiRow as FRow
-import uniffi.rostrum_ffi.CiSection as FSection
 import uniffi.rostrum_ffi.CiSource as FSource
 import uniffi.rostrum_ffi.CiStackPlace as FStackPlace
 import uniffi.rostrum_ffi.CiStatus as FStatus
@@ -61,43 +64,41 @@ class CiConfigMappingsTest {
     )
 
     @Test
-    fun `a grid maps section by section, with not-run cells and every line kind`() {
+    fun `a grid maps as one matrix, with groups, repositories, not-run cells and both line kinds`() {
         val grid = FGrid(
-            sections = listOf(
-                FSection(
-                    repo = "a/one",
-                    columns = listOf(FColumn(FKey("CI", "test"), "CI / test"), FColumn(FKey(null, "Coverage"), "Coverage")),
-                    rows = listOf(
-                        FRow(
-                            7u, "Fix it", "abc1234",
-                            FRollup(1u, 0u, 0u, 0u, FRollupState.FAILING, "1 failing", FColorRole.DANGER),
-                            listOf(cell(FStatus.FAILURE, FSource.Actions(9_000_000_000uL, 42uL, 2u)), null),
-                            FStackPlace.BOTTOM, true, false,
-                        ),
-                    ),
-                    load = FRepoLoad.Loaded(at),
-                    hidden = 3u,
+            columns = listOf(FColumn(FKey(null, "Coverage"), "Coverage"), FColumn(FKey("CI", "test"), "CI / test")),
+            groups = listOf(FColumnGroup(null, 0u, 1u), FColumnGroup("CI", 1u, 2u)),
+            rows = listOf(
+                FRow(
+                    "a/one", 7u, "Fix it", "abc1234",
+                    FRollup(1u, 0u, 0u, 0u, FRollupState.FAILING, "1 failing", FColorRole.DANGER),
+                    listOf(null, cell(FStatus.FAILURE, FSource.Actions(9_000_000_000uL, 42uL, 2u))),
+                    FStackPlace.BOTTOM, true, false,
                 ),
             ),
-            lines = listOf(FLine.Header(0u), FLine.Stack(0u, 2u), FLine.Row(0u, 0u), FLine.Notice(0u), FLine.Spacer),
+            repos = listOf(FRepo("a/one", FRepoLoad.Loaded(at), 1u, 3u), FRepo("b/two", FRepoLoad.Failed("502", at), 0u, 0u)),
+            lines = listOf(FLine.Stack(2u), FLine.Row(0u)),
+            hidden = 3u,
             ticks = true,
             anyRunning = false,
         ).toModel()
-        val section = grid.sections.single()
-        assertEquals(CiCheckKey(null, "Coverage"), section.columns[1].key)
-        assertEquals(RepoLoad.Loaded(at), section.load)
-        assertEquals(3, section.hidden)
-        val row = section.rows.single()
+        assertEquals(CiCheckKey(null, "Coverage"), grid.columns[0].key)
+        assertEquals(listOf(CiColumnGroup(null, 0, 1), CiColumnGroup("CI", 1, 2)), grid.groups)
+        assertEquals(
+            listOf(CiRepo("a/one", RepoLoad.Loaded(at), 1, 3), CiRepo("b/two", RepoLoad.Failed("502", at), 0, 0)),
+            grid.repos,
+        )
+        assertEquals(3, grid.hidden)
+        val row = grid.rows.single()
+        assertEquals("a/one", row.repo)
+        assertEquals(7, row.number)
         assertEquals(CiRollupState.Failing, row.rollup.state)
         assertEquals(CiStackPlace.Bottom, row.stack)
-        assertEquals(CiStatus.Failure, row.cells[0]?.status)
-        assertEquals(ColorRole.Danger, row.cells[0]?.role)
-        assertEquals(CiSource.Actions(9_000_000_000L, 42L, 2), row.cells[0]?.source)
-        assertNull(row.cells[1])
-        assertEquals(
-            listOf(CiLine.Header(0), CiLine.Stack(0, 2), CiLine.Row(0, 0), CiLine.Notice(0), CiLine.Spacer),
-            grid.lines,
-        )
+        assertNull(row.cells[0])
+        assertEquals(CiStatus.Failure, row.cells[1]?.status)
+        assertEquals(ColorRole.Danger, row.cells[1]?.role)
+        assertEquals(CiSource.Actions(9_000_000_000L, 42L, 2), row.cells[1]?.source)
+        assertEquals(listOf(CiLine.Stack(2), CiLine.Row(0)), grid.lines)
         assertEquals(true, grid.ticks)
     }
 

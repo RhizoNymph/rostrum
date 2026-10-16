@@ -4,7 +4,6 @@ import io.github.rhizonymph.rostrum.data.BackendError
 import io.github.rhizonymph.rostrum.data.Outcome
 import io.github.rhizonymph.rostrum.data.model.CiCheckKey
 import io.github.rhizonymph.rostrum.data.model.CiGridFilter
-import io.github.rhizonymph.rostrum.data.model.CiLine
 import io.github.rhizonymph.rostrum.data.model.CiRerun
 import io.github.rhizonymph.rostrum.data.model.GitHubStatus
 import io.github.rhizonymph.rostrum.data.model.StackPlanRequest
@@ -276,9 +275,10 @@ class HostSmokeTest {
 
         val repos = backend.settings().orFail().repos
         val grid = backend.ciGrid(CiGridFilter()).orFail()
-        assertEquals(repos.toSet(), grid.sections.map { it.repo }.toSet())
-        assertTrue(grid.sections.all { it.rows.isEmpty() })
-        assertEquals(grid.sections.size, grid.lines.count { it is CiLine.Header })
+        assertEquals(repos.toSet(), grid.repos.map { it.repo }.toSet())
+        assertTrue(grid.rows.isEmpty())
+        assertTrue(grid.columns.isEmpty())
+        assertTrue(grid.lines.isEmpty())
         assertFalse(grid.ticks)
         assertFalse(grid.anyRunning)
         assertEquals(BackendError.NotSignedIn, backend.refreshCi(CiGridFilter(needsAttention = true)).error())
