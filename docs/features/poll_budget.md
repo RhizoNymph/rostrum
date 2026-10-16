@@ -1,8 +1,10 @@
 # Feature: poll_budget
 
-Keeping the desktop's background polling inside GitHub's rate limit, which
-it shares with the `gh` CLI and a paired phone (one token, one 5,000
+Keeping the desktop's and the phone's background polling inside GitHub's
+rate limit, which they share with the `gh` CLI (one token, one 5,000
 points-per-hour GraphQL budget and one 5,000 requests-per-hour REST budget).
+The phone runs the same rules from the same crates; see
+[Android](#android).
 
 ## Scope
 
@@ -25,12 +27,19 @@ points-per-hour GraphQL budget and one 5,000 requests-per-hour REST budget).
   time, coloured by level, or "paused until HH:MM".
 - **Spend log.** Every five minutes, an info line with the points each
   feature spent.
+- **Android.** The same planner, pacing, pauses, batches and spend log in
+  `rostrum-ffi`; the budget per profile to Kotlin, a chip and explanation
+  sheet on the feed, and the WorkManager check skipping a paused profile.
 
 ## Non-scope
 
-- The Android core's own poller (`crates/rostrum-ffi`). The policy lives in
-  `rostrum-core` and the batched client methods in `rostrum-github` so it
-  can adopt them; see [What Android needs](#what-android-needs).
+- Persisting a pause across processes on the phone. The budget lives in
+  the client's memory; a WorkManager run in a fresh process learns of a
+  pause from its first refusal.
+- Knowing for certain where a phone profile's token came from. A desktop
+  profile's token is taken to be the desktop's (handed over when paired, the
+  usual case); a token pasted into a desktop profile is described the same
+  way.
 - Batching the Closed tab's lists (fetched only while that tab shows) and
   the stacks REST reads (REST core budget, separate from GraphQL).
 - Skipping divergence when nothing moved. It now costs one point per poll
@@ -281,31 +290,82 @@ INFO rostrum::budget: GitHub budget spent minutes=5 feed=25 issues=3 ci=3 closed
   from an earlier window never overwrite a later one.
 - The token never reaches a log; the tracker logs only the hit and status.
 
-## What Android needs
+## Android
 
-`rostrum-ffi` still polls with the one-repository methods
-(`crates/rostrum-ffi/src/feed/refresh.rs`, four concurrent fetches) and
-keeps compiling unchanged. To adopt this:
+`rostrum-ffi` (`docs/features/android_core.md`) adopts the same rules; each
+profile's `RostrumCore` has its own session and so its own token's budget.
 
-1. **Read the budget.** Its `GitHubClient` already records every response;
-   read `client.budget()` and tag clients with `client.for_feature(..)`.
-2. **Gate on the pause.** Before every background fetch (feed, issues, CI
-   poll in `ci/mod.rs`, merge probes, the WorkManager notification check),
-   skip while `budget.active_pause(now)` is `Some`; surface `Pause::until`
-   to Kotlin (a field on the feed snapshot) for a "paused until" line.
-3. **Pace.** Replace the fixed foreground interval with
-   `rostrum_core::budget::pace(base, budget.budgets.graphql.as_ref(),
-   poll_cost_estimate(..), now).delay`.
-4. **Plan.** Use `rostrum_core::poll::plan_poll` for the feed and issues
-   (add `issue_refresh_secs` to the phone's settings, default
-   `DEFAULT_ISSUE_INTERVAL`), and `plan_ci` / `running_repos` against its
-   `CiChecks` for the CI grid's poll.
-5. **Batch.** Replace per-repository `open_pull_requests`/`open_issues`/
-   `ci_checks`/`divergences` with the `*_batch` methods, chunked by
-   `rostrum_github::batch::chunk_size`, and the per-repository merge probes
-   with one probe per cycle over every computing repository.
-6. **Readout.** Draw remaining/limit and reset from `BudgetState` with the
-   same thresholds (`BudgetLevel`), and the shared-token explanation.
+```
+Kotlin FeedViewModel.autoRefreshWhileVisible:
+  loop { delay(pollSchedule().delaySecs); pollFeed() }
+                    │                          │
+  budget::schedule ─┘                          ▼
+   pause in force → its remaining time   begin_refresh(Scope::Poll(Timer))
+   else pace(settings interval,            plan_poll(feed.repos, PollContext)
+        graphql, poll_cost_estimate)        ├─ Paused → snapshot as it stands
+                                            └─ Run → land_pulls ║ land_issues  (batches, ≤4 in flight)
+                                                       last pull chunk landed:
+                                                         land_divergences ║ land_stacks
+                                                         schedule_probe (one per cycle)
+                                                         log_spend_if_due
+```
+
+- **Read the budget.** `CoreState::budget_state` is `client.budget()`;
+  clients are tagged per feature with `for_feature` (`Feed`, `Issues`,
+  `Divergence`, `Stacks`, `Probes`, `Ci`; on-demand calls stay `Detail`).
+- **Gate on the pause.** `begin_refresh` (feed, issues, the notification
+  check), `land_divergences`, `land_stacks`, the probe, `refresh_issues` and
+  `plan_checks` (the CI grid, and the re-fetches after a re-run) all ask for
+  the pause first and send nothing while one holds. Explicit requests
+  (`refreshFeed`, `refreshRepo`, `refreshCi`, `refreshCiRepo`,
+  `checkNotifications`) fail with `GitHubRateLimited { resets_at: until }`;
+  the timer's `pollFeed` and the grid's `openCi`/`watchCi` return quietly.
+- **Pace.** `pollSchedule()` (and the snapshot's `budget.schedule`) is the
+  pause's remaining time, or `pace(settings interval, graphql budget,
+  poll_cost_estimate(..))`; Kotlin waits it between `pollFeed` calls instead
+  of the fixed interval. A change of pace is logged.
+- **Plan.** `plan_poll` decides the feed and issues for `pollFeed`
+  (`Trigger::Timer`: issues once older than `issue_refresh_secs`, a phone
+  setting, default `DEFAULT_ISSUE_INTERVAL`, clamped 10 s – 1 day) and
+  `refreshFeed` (`Explicit`: everything). The grid uses `plan_ci` when it
+  opens (`Timer`) and on pull to refresh (`Explicit`), and `running_repos`
+  for its 15 s watch.
+- **Batch.** Pull requests, issues, checks and divergence go out through the
+  `*_batch` methods, chunked by `chunk_size`; one alias failing is that
+  repository's error; a whole document failing is each of its
+  repositories'. Merge probes are one per cycle over every repository still
+  computing. The notification check reads pull requests only (no
+  divergence).
+- **Readout.** `ApiBudget` — GraphQL and REST `RateWindow`s (remaining as
+  of now, limit, reset or none once reset, `ApiBudgetLevel` by
+  `BudgetLevel`) and the `PollSchedule` (`Normal`, `Stretched(level)`,
+  `UntilReset`, `Paused(until, reason)`) — from `apiBudget()` and on every
+  `FeedSnapshot`. The feed shows a chip right of the filter chips
+  (`ui/feed/BudgetChip.kt`): `API 4123/5000 · resets 14:05` (neutral,
+  warning below 20%, danger below 10% or spent), `API 5000/5000` once
+  reset, `paused until 14:32` (danger). Tapping it opens a sheet saying the
+  budget is shared with the desktop and `gh` when the profile's token came
+  from a desktop (`BudgetSharing.of(ProfileKind)`), each window, and how
+  refreshing adapts.
+- **Notifications.** `NotificationCheck` asks each profile's
+  `apiBudget().pausedUntil` first and records `ProfileCheck.Paused(until)`
+  without a request; the other profiles (other tokens) go ahead. The core
+  refuses as well, should it be asked.
+- **Spend log.** The same structured line (target `rostrum::budget`), at
+  most every five minutes, checked at the end of each refresh and CI fetch.
+
+| File | Role | Key exports |
+|---|---|---|
+| `crates/rostrum-ffi/src/budget/mod.rs` | Budget, pause checks, poll cost and schedule, exports | `RostrumCore::{api_budget, poll_schedule}` |
+| `crates/rostrum-ffi/src/budget/types.rs` | Records and pure conversions | `ApiBudget`, `RateWindow`, `PollSchedule`, `PollPace`, `schedule`, `api_budget` |
+| `crates/rostrum-ffi/src/budget/spend.rs` | The spend log | `SpendLog` |
+| `crates/rostrum-ffi/src/feed/refresh.rs` | `plan_poll`, the pause, running a refresh | `Scope`, `Refreshed` |
+| `crates/rostrum-ffi/src/feed/{batch,land,apply,probe}.rs` | Chunked batches, landing, applying, the probe cycle | `land_pulls`, `ProbeCycle`, … |
+| `crates/rostrum-ffi/src/ci/fetch.rs` | `plan_ci`/`running_repos`, the pause, checks batches | `CiFetch`, `land_checks` |
+| `crates/rostrum-ffi/src/settings.rs` | `issue_refresh_secs` | `set_issue_refresh_interval` |
+| `android/.../data/BudgetApi.kt`, `data/model/Budget.kt`, `data/ffi/BudgetMappings.kt` | The budget in Kotlin | `BudgetApi`, `ApiBudget`, … |
+| `android/.../ui/feed/BudgetChip.kt`, `BudgetSheet.kt` | Chip wording, colours, sheet | `budgetChip`, `budgetExplanation`, `BudgetSharing` |
+| `android/.../notifications/NotificationWorker.kt` | Skipping a paused profile | `ProfileCheck.Paused` |
 
 ## Testing
 
@@ -320,3 +380,15 @@ keeps compiling unchanged. To adopt this:
   `client::budget` (headers, primary/secondary hits, sharing across clones).
 - `rostrum-config`: default, clamp, not shared.
 - `rostrum`: `budget_chip` wording and tones.
+- `rostrum-ffi`: `budget::types` (windows, levels, every pace, pauses,
+  rounding), `budget::spend`, `feed::batch` (chunk sizes), settings; and
+  `tests/poll_budget.rs` against the GitHub stand-in (which now answers
+  batched documents and can send rate-limit headers and secondary-limit
+  refusals): batched documents per kind, the issue cadence, the readout and
+  a stretched schedule, the CI skip rules (open, watch, explicit), one probe
+  for every computing repository, and a pause stopping the timer, the
+  notification check and the grid while explicit calls say until when.
+- Android (JVM): `BudgetChipTest` (chip wording and colours, the sheet),
+  `BudgetMappingsTest`, `FakeBudgetTest`, `FeedViewModelTest` (the paced
+  timer, a pause, the sheet), `CiGridViewModelTest` (each fetch's trigger),
+  `NotificationsTest` (a paused profile skipped), and the host smoke test.

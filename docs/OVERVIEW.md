@@ -263,7 +263,12 @@ Overview:
     writer task, and feed changes reach Kotlin through a `FeedObserver` in
     revision order. Tokens arrive from Kotlin (the Keystore) and never touch
     disk on the Rust side. The paired desktop is reached through
-    `rostrum-remote`'s pinned client.
+    `rostrum-remote`'s pinned client. The phone polls GitHub by the
+    desktop's rules (`rostrum_core::{poll, budget}`, batched documents from
+    `rostrum-github`): Kotlin's timer waits the core's `pollSchedule` and
+    calls `pollFeed`, every background fetch (and the WorkManager check,
+    per profile) stops while GitHub has paused the token, and the feed shows
+    the token's budget.
 
     On Android, the Kotlin app reaches the same Rust crates through
     `rostrum-ffi`: Kotlin calls the UniFFI-generated bindings, which call into
@@ -388,8 +393,11 @@ Features Index:
       Staying inside the GitHub rate limit shared with gh and the phone —
       multi-repository batches chosen by a cost model, CI skip rules, the
       issue cadence, budget tracking from every response, pacing and
-      rate-limit pauses, the status bar readout, and the spend log.
-    entry_points: [crates/rostrum-core/src/budget/mod.rs, crates/rostrum-core/src/poll/mod.rs, crates/rostrum-github/src/batch/mod.rs, crates/rostrum-github/src/client/budget.rs, crates/rostrum/src/sync/poll.rs, crates/rostrum/src/budget_chip.rs]
+      rate-limit pauses, the status bar readout, and the spend log — on the
+      desktop and in the Android core and app (the feed's budget chip and
+      sheet, paced foreground polling, the notification check skipping a
+      paused profile).
+    entry_points: [crates/rostrum-core/src/budget/mod.rs, crates/rostrum-core/src/poll/mod.rs, crates/rostrum-github/src/batch/mod.rs, crates/rostrum-github/src/client/budget.rs, crates/rostrum/src/sync/poll.rs, crates/rostrum/src/budget_chip.rs, crates/rostrum-ffi/src/budget/mod.rs, crates/rostrum-ffi/src/feed/refresh.rs, crates/rostrum-ffi/src/ci/fetch.rs, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/feed/BudgetChip.kt]
     depends_on: [github_sync, repo_feed, issues, ci_grid]
     doc: docs/features/poll_budget.md
   local_git:
@@ -436,9 +444,11 @@ Features Index:
       "load earlier" paging, a repository's own screen with its branch
       tree and trunks, the CI grid with logs and re-runs, diff rows, pending
       review, desktop pairing and jobs, sharing settings with the desktop
-      both ways, and background notifications, all render-ready for Compose.
-    entry_points: [crates/rostrum-ffi/src/lib.rs, crates/rostrum-ffi/src/profiles/mod.rs, crates/rostrum-ffi/src/engine/mod.rs, crates/rostrum-ffi/src/issues/mod.rs, crates/rostrum-ffi/src/repo_view/mod.rs, crates/rostrum-ffi/src/stack_actions/mod.rs, crates/rostrum-ffi/src/ci/mod.rs, crates/rostrum-ffi/src/remote/push.rs, crates/rostrum-ffi/src/remote/branch_push.rs]
-    depends_on: [repo_feed, pr_detail, diff_review, diff_overview, author_filter, github_sync, remote_protocol, feed_sort, issues, stacks, repo_view, ci_grid]
+      both ways, and background notifications, all render-ready for Compose;
+      polling GitHub in batches by the desktop's planner, paced to the
+      token's rate-limit budget, which it exposes per profile.
+    entry_points: [crates/rostrum-ffi/src/lib.rs, crates/rostrum-ffi/src/budget/mod.rs, crates/rostrum-ffi/src/profiles/mod.rs, crates/rostrum-ffi/src/engine/mod.rs, crates/rostrum-ffi/src/issues/mod.rs, crates/rostrum-ffi/src/repo_view/mod.rs, crates/rostrum-ffi/src/stack_actions/mod.rs, crates/rostrum-ffi/src/ci/mod.rs, crates/rostrum-ffi/src/remote/push.rs, crates/rostrum-ffi/src/remote/branch_push.rs]
+    depends_on: [repo_feed, pr_detail, diff_review, diff_overview, author_filter, github_sync, remote_protocol, feed_sort, issues, stacks, repo_view, ci_grid, poll_budget]
     doc: docs/features/android_core.md
   android_build:
     description: Gradle project, cargo-ndk + UniFFI pipeline, signing, and APK publishing for the Android app.
@@ -446,9 +456,9 @@ Features Index:
     depends_on: []
     doc: docs/features/android_build.md
   android_app:
-    description: Compose UI, RostrumBackend over the Rust core (FfiRostrumBackend), Keystore secrets, session, deep links, notifications.
+    description: Compose UI, RostrumBackend over the Rust core (FfiRostrumBackend), Keystore secrets, session, deep links, notifications, the GitHub budget chip and paced polling.
     entry_points: [android/app/src/main/kotlin/io/github/rhizonymph/rostrum/RostrumApplication.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/RostrumBackend.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/data/ffi/FfiRostrumBackend.kt, android/app/src/main/kotlin/io/github/rhizonymph/rostrum/ui/navigation/RostrumNavHost.kt]
-    depends_on: [android_build, android_core, android_profiles]
+    depends_on: [android_build, android_core, android_profiles, poll_budget]
     doc: docs/features/android_app.md
   android_issues_repo:
     description: Feed sort sheet and Pull requests | Issues tabs, issue screen with editing and new-issue form, stacks in the feed with their actions on the paired desktop, load earlier, repository screen with branch tree and trunk editor, on Android.

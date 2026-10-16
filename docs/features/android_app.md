@@ -235,7 +235,10 @@ one first (details in `android_profiles.md`). Per profile:
   `onNotificationSettingsChanged()` after a toggle of any profile changes.
 - `NotificationWorker` → `NotificationCheck.run()`: start the profiles
   (restoring each), then for every profile: signed out → skipped;
-  both toggles off → skipped; otherwise `backend.checkNotifications()` (the
+  both toggles off → skipped; GitHub has paused that profile's token for
+  rate limiting (`apiBudget().pausedUntil`) → `ProfileCheck.Paused(until)`,
+  skipped without a request (budgets are per token, so the other profiles
+  go ahead; the core refuses too); otherwise `backend.checkNotifications()` (the
   core filters by the toggles and never reports your own pull requests; the
   first check is a baseline) and post each event. The result is per profile
   (`ProfileCheck`); the work retries when any profile hit a network or
@@ -384,13 +387,17 @@ composables, a pure mapping file with its own tests, and previews.
 ### Feed (`ui/feed/`)
 
 - `FeedViewModel(backend, session, clock)`: paints `cachedFeed()`, then
-  `refreshFeed()` and `markNotificationsSeen()`; follows `feedUpdates`,
+  `refreshFeed()` (explicit: everything) and `markNotificationsSeen()`; follows `feedUpdates`,
   keeping the highest revision; debounces the search text 250 ms into
   `setQuery`; chips and sheet switches go through `setFilter`, author toggles
   and Clear through the backend; the roster is `authorRoster(5)` until "Show
   all" asks for `authorRoster(null)`; the desktop pill asks `machineInfo()`
-  and again when pairing changes; auto-refresh repeats on the settings
-  interval while the screen is started. A sign-in error shows a "Sign in
+  and again when pairing changes; while the screen is started,
+  auto-refresh waits `pollSchedule().delaySecs` (the settings interval,
+  stretched by the core as the GitHub budget runs down, or until a
+  rate-limit pause lifts) and then calls `pollFeed()` (only what is due;
+  nothing while paused). Pull to refresh while paused keeps the feed and
+  says "GitHub's rate limit is used up until HH:MM". A sign-in error shows a "Sign in
   again" banner (sign out); other errors go to the snackbar, and become the
   error state only when nothing is on screen.
   Tabs and the Sort sheet: see `android_issues_repo.md`.
@@ -406,6 +413,17 @@ composables, a pure mapping file with its own tests, and previews.
   items so long repos stay lazy; the header's name opens the repository),
   the shared rows in `ui/items/`, `FeedSortSheet`, `FeedFilterSheet`,
   `FeedActions`, `FeedPreviews`, and the "New issue" FAB on the Issues tab.
+- The GitHub budget chip, right of the filter chips (`BudgetChip.kt`, pure
+  and unit-tested; `BudgetSheet.kt`): from the snapshot's `budget`, `API
+  4123/5000 · resets 14:05` (neutral at 20% or more, warning below, danger
+  below 10% or spent), `API 5000/5000` once the window has reset, or `paused
+  until 14:32` (danger) — nothing before GitHub has reported. Tapping it
+  opens the budget sheet (`FeedUiState.budgetOpen`): who shares the budget
+  (`BudgetSharing.of(ProfileKind)`: a desktop profile's token was handed over
+  from that desktop, so rostrum and `gh` there spend the same budget; a
+  pasted token's budget is the token's), what is left of GraphQL and REST,
+  and how refreshing adapts (the interval, stretched, waiting for the reset,
+  or paused and why). The nav host passes the active profile's kind.
 
 ### Pull request (`ui/pr/`)
 
@@ -468,6 +486,8 @@ composables, a pure mapping file with its own tests, and previews.
   token" when paired), repositories (add with inline `InvalidRepo`/
   `DuplicateRepo` errors then `refreshRepo`; remove; sublines from the
   desktop's clones and the feed's hidden repos), desktop row, refresh
+  (and, under Sync, "Refresh issues": `setIssueRefreshInterval`, 2 min to
+  1 h, default 5 min),
   interval choice, notification toggles (and the permission prompt when one
   turns on). Files: `SettingsModels`, `SettingsSections`, `SettingsScreen`.
 - `DesktopViewModel(backend, session, clock)`: machine card ("Connected ·
@@ -558,6 +578,10 @@ What the core does not provide, and what the app does instead:
 | `MainActivity.kt` | Single activity; hands intents to `AppLinkInbox` |
 | `di/AppContainer.kt` | Object graph (`profiles`); notification schedule sync |
 | `data/RostrumBackend.kt` | The backend interface (every signature) |
+| `data/BudgetApi.kt` | `pollSchedule`, `apiBudget` (part of the backend) |
+| `data/model/Budget.kt` | `ApiBudget`, `RateWindow`, `BudgetLevel`, `PollPace`, `PauseReason`, `PollSchedule` |
+| `data/ffi/BudgetMappings.kt` | Budget records ↔ model |
+| `data/fake/FakeBudget.kt` | The fake's budget: settable windows and pause; pauses stop the fake's background fetches |
 | `data/BackendError.kt` | `BackendError`, `RemoteErrorCode`, `describe()`, `requiresSignIn`, `requiresPairing` |
 | `data/Outcome.kt` | `Outcome` (`Ok`/`Err`) and `map`, `andThen`, `onOk`, `onErr`, `valueOrNull`, `errorOrNull` |
 | `data/RostrumLog.kt` | `RostrumLog` key=value logging, `Outcome.logErr` |
@@ -585,7 +609,7 @@ What the core does not provide, and what the app does instead:
 | `notifications/NotificationContent.kt` | `RostrumChannel`, `NotificationSpec`, `NotificationContent.of`, `tapExtras`, `NotificationTap` |
 | `notifications/NotificationScheduler.kt` | `BackgroundWork`, `WorkManagerBackgroundWork`, `NotificationScheduler` |
 | `notifications/NotificationPoster.kt` | Channels and posting |
-| `notifications/NotificationWorker.kt` | `NotificationCheck` (every profile), `ProfileCheck`, `CheckResult`, `NotificationWorker` |
+| `notifications/NotificationWorker.kt` | `NotificationCheck` (every profile, skipping paused ones), `ProfileCheck` (incl. `Paused`), `CheckResult`, `NotificationWorker` |
 | `notifications/NotificationPermission.kt` | `rememberNotificationPermission`, `RequestNotificationPermissionOnce` |
 | `ui/app/RostrumApp.kt` | Root: splash, the graph keyed by profile and sign-in, scaffold, bottom bar, snackbar, profile switcher, link routing and draining |
 | `ui/app/GraphViewModelStores.kt` | `GraphKey`; one ViewModel store per graph, cleared when the graph changes |
@@ -659,8 +683,10 @@ JVM unit tests (JUnit 5, `kotlinx-coroutines-test`) cover the data layer
 (secret envelope and the per-profile file store with a fake cipher, the
 legacy wipe, session restore/sign-in/pairing/unpair, `ProfileManager` over
 `FakeProfileRegistry`, the fake backend's behaviour, markdown, feed
-assembly),
-formatting, links, notification content/scheduling/check, and every
+assembly, the fake's budget and pauses),
+formatting, links, notification content/scheduling/check (including a
+paused profile), the budget chip's wording and colours and the sheet's text
+(`BudgetChipTest`), the budget mappings (`BudgetMappingsTest`), and every
 ViewModel. ViewModels run on `FakeRostrumBackend` with `failNext` for error
 paths and a fixed clock. `FfiMappingsTest` covers every error variant and
 the records of each area. To observe `Messages.flow` in a test, collect it with
@@ -679,7 +705,8 @@ carries the host's `libjnidispatch`). `HostSmokeTest` opens one real core on
 a temp directory and drives it through `FfiRostrumBackend`: status and
 warnings, settings, `addRepo` validation errors, the cached feed, the
 observer reaching `feedUpdates`, `parsePairingLink` on a sample link,
-`renderMarkdown`, error mapping (`NotSignedIn`, `NotPaired`, including
+`renderMarkdown`, the budget and schedule signed out and the issue cadence
+setter, error mapping (`NotSignedIn`, `NotPaired`, including
 `desktopConfig` and `copyDesktopConfig` unpaired), that a
 token never reaches the data directory, and the profile registry through
 `FfiProfileRegistry` (see `android_profiles.md`). No network. The normal unit run

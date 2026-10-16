@@ -77,8 +77,10 @@ each.
   a secret.
 - OAuth device flow. Tokens come from pairing or pasting.
 - Scheduling. Kotlin's WorkManager calls `checkNotifications`; foreground
-  polling is Kotlin's timer calling `refreshFeed` every
-  `settings.refreshIntervalSecs`.
+  polling is Kotlin's timer calling `pollFeed`, waiting `pollSchedule()`
+  between calls (the core decides the wait: the settings interval, stretched
+  as the GitHub budget runs down, or until a rate-limit pause lifts — see
+  `docs/features/poll_budget.md`).
 - Serving the desktop API (`rostrumd`) and running git — the desktop.
 - Cross-compiling. The Android pipeline builds `-p rostrum-ffi` with
   cargo-ndk; this crate only guarantees it can: no C beyond bundled SQLite,
@@ -97,8 +99,9 @@ Kotlin names are camelCase; every call that touches state or I/O is
 | profiles | `ProfileRegistry.open(rootDir)` (not suspend), `profiles()`, `activeProfile()`, `setActiveProfile(id)`, `renameProfile(id, label)`, `setProfileLogin(id, login?)` (not suspend); `core(id) → RostrumCore`, `createTokenProfile(label)`, `pairDesktopWithLink(uri, deviceName) → ProfilePairing`, `pairDesktopManual(host, port, fingerprint, code, deviceName) → ProfilePairing`, `removeProfile(id)`; `parsePairingLink(uri)` (not suspend) and `probeDesktop(host, port)` for the Pair screen before any profile exists — the same code as the core's |
 | lifecycle | `RostrumCore.open(dataDir)`, `warnings()` |
 | session | `setGithubToken(token?) → GitHubStatus`, `githubStatus()`, `viewer() → UserRef` |
-| settings | `settings()`, `addRepo(input) → "owner/name"`, `removeRepo(repo) → Boolean`, `setRefreshInterval(s)`, `setPrsPerRepo(n)`, `setIssuesPerRepo(n)`, `setNotifications(newPullRequests, reviewRequests)`, `setAutostash(b)` — setters return `Settings` |
-| feed | `cachedFeed()`, `refreshFeed()`, `refreshRepo(repo)`, `setQuery(q)`, `setFilter(FeedPreferences)`, `toggleAuthor(login)`, `clearFilter()` (keeps the sort), `toggleCollapsed(repo)`, `setFeedTab(FeedTab)` — all return `FeedSnapshot`; `authorRoster(limit?) → AuthorRoster` (the active tab's authors), `setFeedObserver(FeedObserver?)` |
+| settings | `settings()`, `addRepo(input) → "owner/name"`, `removeRepo(repo) → Boolean`, `setRefreshInterval(s)`, `setPrsPerRepo(n)`, `setIssuesPerRepo(n)`, `setIssueRefreshInterval(s)`, `setNotifications(newPullRequests, reviewRequests)`, `setAutostash(b)` — setters return `Settings` |
+| budget | `apiBudget() → ApiBudget?` (GraphQL and REST windows, the next poll's `PollSchedule` with its `PollPace`, `Paused(until, reason)` while GitHub refuses; `None` signed out), `pollSchedule() → PollSchedule` — no network; the snapshot carries the same `budget` |
+| feed | `cachedFeed()`, `refreshFeed()` (explicit: everything; `GitHubRateLimited` while paused), `pollFeed()` (the timer's: what is due; while paused nothing is sent and the snapshot returns), `refreshRepo(repo)`, `setQuery(q)`, `setFilter(FeedPreferences)`, `toggleAuthor(login)`, `clearFilter()` (keeps the sort), `toggleCollapsed(repo)`, `setFeedTab(FeedTab)` — all return `FeedSnapshot`; `authorRoster(limit?) → AuthorRoster` (the active tab's authors), `setFeedObserver(FeedObserver?)` |
 | sort | `sortSettings() → SortSettings`; `setRepoSort(RepoSortKey, SortDirection?)`, `setItemSort(ItemSortKey, SortDirection?)` → `FeedSnapshot` (no direction: a new key starts at its default, the same key keeps its direction) |
 | issues | `issueDetail(repo, n) → IssueDetail`, `cachedIssueDetail(repo, n) → IssueDetail?`, `loadEarlierIssue(repo, n) → IssueDetail`, `editIssue(repo, n, title, body, baseUpdatedAt, overwrite) → IssueDetail` (throws `EditConflict(title, body, updatedAt)`), `commentOnIssue(repo, n, body)`, `closeIssue(repo, n, CloseIssueAs)`, `reopenIssue(repo, n)`, `addIssueLabel(repo, n, label)`, `removeIssueLabel(repo, n, label)`, `assignableUsers(repo) → List<UserRef>`, `addIssueAssignee(repo, n, login)`, `removeIssueAssignee(repo, n, login)`, `createIssue(repo, title, body, labels, assignees) → UInt` (the new number); labels to offer come from `repositoryLabels(repo)` |
 | stack actions | `planStackRewrite(StackPlanRequest) → StackRewritePlan` (desktop dry run), `checkStackPlan(StackPlanRequest) → StackPlanCheck` and `stackCandidates(repo, stack) → List<StackCandidate>` (local, no network); `makeStack(repo, prs, trunk)`, `arrangeStack(repo, prs, trunk, confirmRewrite)`, `extendStack(repo, stack, prs, confirmRewrite)`, `mergeStack(repo, stack, StackMergeMethod)`, `unstack(repo, stack)`, `stackJob(id: ULong)` → `StackJob` |
@@ -107,7 +110,7 @@ Kotlin names are camelCase; every call that touches state or I/O is
 | files | `filesOverview(repo, n) → FilesOverview`, `fileDiff(repo, n, fileIndex) → FileDiff` |
 | review | `pendingReview`, `addDraft(repo, n, anchor, rangeStart?, body)`, `editDraft(…, draftId, body)`, `removeDraft(…, draftId)`, `discardDrafts` — all return `PendingReview`; `submitReview(repo, n, event, body, includeDrafts)` |
 | remote | `parsePairingLink(uri)` (not suspend), `pairWithLink(uri, deviceName)`, `probeDesktop(host, port)`, `pairManual(host, port, fingerprint, code, deviceName)`, `setRemote(endpoint, deviceToken)`, `clearRemote()`, `remoteStatus()`, `machineInfo()`, `localStatus(repo, n)`, `runLocalJob(repo, n, op, autostash)`, `abortLocal(repo, n)`, `startSyncAll(op, autostash)`, `syncAllStatus()`, `planBranchPush(repo, n) → PushPlanItem`, `pushBranch(repo, n, confirm?) → PushItemResult`, `planPushAll() → [PushPlanItem]`, `pushAll(confirms) → [PushItemResult]`, `handoffs()`, `refreshGithubTokenFromDesktop()`, `unpair()`, `desktopConfig() → DesktopConfigPreview`, `copyDesktopConfig() → Settings`, `pushConfigToDesktop(base) → ConfigPushResult` |
-| ci | `ciGrid(CiGridFilter) → CiGrid` (no network), `refreshCi(filter)`, `refreshCiRepo(repo, filter)` → `CiGrid`, `jobLog(repo, jobId, full) → CiJobLog`, `checkOutput(repo, checkRunId) → CiCheckOutput`, `rerunTargets(repo, pr, CiCheckKey) → CiRerunChoice`, `rerun(repo, CiRerun)` |
+| ci | `ciGrid(CiGridFilter) → CiGrid` (no network), `openCi(filter, repo?)` (the grid opening: what could have changed), `watchCi(filter, repo?)` (the 15 s watch: what is running), `refreshCi(filter)`, `refreshCiRepo(repo, filter)` (pull to refresh) → `CiGrid`, `jobLog(repo, jobId, full) → CiJobLog`, `checkOutput(repo, checkRunId) → CiCheckOutput`, `rerunTargets(repo, pr, CiCheckKey) → CiRerunChoice`, `rerun(repo, CiRerun)` |
 | notifications | `checkNotifications() → List<NotificationEvent>`, `markNotificationsSeen()` |
 | logging | top-level `installLogSink(LogSink, LogLevel)` |
 | markdown | top-level `renderMarkdown(source, repo) → List<MdBlock>`: the composer's Preview, rendered exactly as the timeline will show it |
@@ -304,8 +307,8 @@ Compose UI ──suspend call──▶ UniFFI scaffolding (async_runtime = "toki
   registered observer receives the current feed at once.
 - **Background work dies with the core.** Merge-state probes hold a weak
   actor handle and upgrade it only to report; dropping `RostrumCore` closes
-  the mailbox, ends the actor, drops the probe slots (which abort their
-  tasks), and lets the writer drain and stop.
+  the mailbox, ends the actor, drops the probe cycle (which aborts its
+  task), and lets the writer drain and stop.
 - **Runtime.** Everything runs on the Tokio context UniFFI's
   `async_runtime = "tokio"` provides (async-compat's runtime on device, the
   test runtime in tests). CPU work uses `spawn_blocking`. No threads are
@@ -313,36 +316,71 @@ Compose UI ──suspend call──▶ UniFFI scaffolding (async_runtime = "toki
 
 ### Feed refresh
 
+The rules are `rostrum_core::{poll, budget}`'s and the batched documents
+`rostrum-github`'s, both shared with the desktop
+(`docs/features/poll_budget.md`).
+
 1. `ensure_hydrated` fills repositories that have nothing yet from SQLite,
    once (never over network data).
-2. The actor issues a plan: the client, the per-repository limit, and a
-   sequence number per repository (a full refresh also starts a new probe
-   cycle). Repositories with nothing to show get a spinner.
-3. Up to four repositories are fetched at once; each fetch is the feed query
-   followed by the batched `Ref.compare` divergence query. A failed batch
-   leaves the counts to carry forward.
-4. Each result is applied as it lands, and only if no newer fetch of that
-   repository landed first: `carry_forward_divergence`, the viewer (which
-   verifies the session), the `known` map (pull requests are remembered after
-   they leave the feed, so a merged one's detail still opens), and a cache
-   write. A 401 marks the session rejected and fails the call with
-   `GitHubAuthFailed`; any other failure stays in that repository's section.
-5. Repositories still waiting on GitHub's merge computation get a background
-   re-check per `rostrum_core::MergeProbeBudget` (2s, 4s, 8s, then quiet until
-   the next full refresh), applied through the same path and delivered to the
-   observer. `mergeStatesSettling` says one is pending.
+2. The actor plans (`CoreState::begin_refresh`, `feed/refresh.rs`): no
+   token is `NotSignedIn`; a rate-limit pause in force (`client.budget()`)
+   sends nothing — `refreshFeed`, `refreshRepo` and `checkNotifications`
+   fail with `GitHubRateLimited` (until when), `pollFeed` returns the
+   snapshot. Otherwise `plan_poll` names every repository's pull requests
+   and the issues that are due: never fetched, failed, or older than
+   `issue_refresh_secs` for the timer (`Scope::Poll(Timer)`), all of them for
+   `refreshFeed` (`Explicit`); one repository is both (`Scope::One`); the
+   notification check is pull requests alone (`Scope::Background`). Each
+   pull request fetch gets a sequence number, and a refresh of everything
+   starts a new probe cycle. Repositories with nothing to show get a spinner.
+3. Pull requests and issues go out together (`feed/land.rs`), each chunked
+   by `chunk_size` (`feed/batch.rs`): pull requests one repository per
+   document at 25 a repository (a lone repository rounds down to one point),
+   issues all together; four documents in flight at most. Clients are tagged
+   per feature (`for_feature`) for the spend tally.
+4. Each chunk is applied as it lands (`feed/apply.rs`), and each repository
+   only if no newer fetch of it landed first: `carry_forward_divergence`, the
+   viewer (which verifies the session), the `known` map (pull requests are
+   remembered after they leave the feed, so a merged one's detail still
+   opens), and a cache write. A failure of the whole document is each of its
+   repositories'. A 401 marks the session rejected and fails the call with
+   `GitHubAuthFailed`; a rate-limit refusal of a repository that has data
+   changes nothing (the budget readout says why); any other failure stays in
+   that repository's section.
+5. Once every pull request chunk has landed (not for the notification
+   check): one divergence document for every landed repository (`Ref.compare`
+   costs one point however many, twenty repositories a document), applied by
+   number and only while the fetch it was read from is still the newest; and
+   the stacks of each landed repository (REST). Both check the pause first.
+6. Merge states GitHub is still computing get one probe per cycle
+   (`feed/probe.rs`): after 2 s, 4 s, then 8 s, every repository still
+   computing is re-queried in one feed batch (tallied as `probes`), with no
+   divergence or stacks after it, then quiet until the next refresh of
+   everything. A probe sends nothing while paused. `mergeStatesSettling`
+   says one is pending.
+7. Every refresh ends by logging the spend per feature when five minutes
+   have passed since the last report (`budget/spend.rs`, target
+   `rostrum::budget`).
 
-Issues and stacks ride the same refresh. On a full refresh (not the
-background notification check, which stays pull-requests-only) each
-repository's fetch is the pull request query joined with the open-issues
-query (`issuesPerRepo`, default 25), then — when it has open pull requests
-— the Stacks API. A 404 there means the repository has no stacks; it is
+A 404 from the Stacks API means the repository has no stacks; it is
 remembered for an hour and not asked again. A failed stacks read keeps the
 last answer; a failed issues read keeps the issues and fails only the
-Issues tab's load. The pull request result decides staleness: a fetch whose
-pull requests lost to a newer one applies nothing. Each part is cached
-(`Write::Issues`, `Write::Stacks`, `Write::RepoMeta`) and hydrated with the
-pull requests on the next launch.
+Issues tab's load. Each part is cached (`Write::Issues`, `Write::Stacks`,
+`Write::RepoMeta`) and hydrated with the pull requests on the next launch.
+After an issue changes, `refresh_issues` re-reads that repository's issues
+as a batch of one (skipped while paused).
+
+### Budget
+
+`budget/` turns the client's `BudgetState` into `ApiBudget` (per profile:
+each core has its own session and so its own token's budget): each window's
+remainder as of now (full, with no reset time, once its window has reset),
+its `BudgetLevel` by the desktop's thresholds, and `PollSchedule` — while a
+pause holds, its remaining time and `Paused(until, reason)`; otherwise
+`rostrum_core::budget::pace(settings interval, GraphQL budget,
+poll_cost_estimate(..))` with its `Normal` / `Stretched(level)` /
+`UntilReset`. `pollSchedule` logs when the pace changes. Every
+`FeedSnapshot` carries `budget` as of when it was built.
 
 ### Sort, tabs and stacks in the snapshot
 
@@ -525,10 +563,19 @@ own and are not copied; the search box is never touched.
 
 ### CI grid
 
-- Checks are fetched only on `refreshCi`/`refreshCiRepo` (one `ci_checks`
-  request per repository, four at a time; a failure stays in that
-  repository's `CiGrid::repos` entry, a 401 fails the call), never with the feed or the notification check, and
-  held in `CoreState::ci` (`rostrum_core::ci::CiChecks`).
+- Checks are fetched only by the grid, never with the feed or the
+  notification check, and only where `rostrum_core::poll` says they could
+  have changed (`ci/fetch.rs`): `openCi` plans with `plan_ci` (the timer's
+  trigger: never fetched, failed, a pull request added, a head moved,
+  something running, or older than ten minutes), `watchCi` takes
+  `running_repos`, and `refreshCi`/`refreshCiRepo` plan explicitly (every
+  repository whose pull requests have loaded). The chosen repositories go out
+  as `ci_checks_batch` documents chunked by `chunk_size` (all together at 25
+  per repository). While paused nothing is sent: `openCi`/`watchCi` return
+  the grid, the explicit calls fail with `GitHubRateLimited`. A failure
+  stays in that repository's `CiGrid::repos` entry (a rate-limit refusal
+  keeps held checks unmarked); a 401 fails the call. Checks are held in
+  `CoreState::ci` (`rostrum_core::ci::CiChecks`).
 - `ciGrid` runs `build_grid` over the feed's repositories, search, authors,
   sort and stack grouping (drafts always out, collapse ignored) and converts it with `Timing::of(entry, now)`.
   `ticks` says some cell's label changes every second (Kotlin rebuilds once
@@ -542,13 +589,15 @@ own and are not copied; the search box is never touched.
   the covered cells to queued (`mark_requeued`), sends the request, and
   re-fetches the repository 4 s later on success (a weak actor handle, so it
   dies with the core) or at once on a refusal, which puts the old result
-  back. `RerunError` maps to `CiNoPermission`, `CiNotRerunnable`,
+  back — both skipped while paused. `RerunError` maps to `CiNoPermission`, `CiNotRerunnable`,
   `CiNotFound`, or the usual GitHub errors.
 
 ### Notifications
 
-`checkNotifications` refreshes every repository (without disturbing a
-foreground probe cycle), folds the feed into the seen set
+`checkNotifications` refreshes every repository's pull requests in batches
+(without disturbing a foreground probe cycle, and nothing else: no issues,
+divergence or stacks) — or, while GitHub has paused polling, sends nothing
+and fails with `GitHubRateLimited` — folds the feed into the seen set
 (`rostrum_core::Baseline`, persisted in SQLite and acknowledged before the
 call returns), and turns the arrivals into events: filtered by the two
 settings, never the viewer's own new pull requests, at most one per pull
@@ -648,10 +697,17 @@ the data directory for every secret that passed through.
 | `src/engine/state.rs` | `CoreState`, `PullKey`, input parsing, `publish`, `forget_repo` | — |
 | `src/engine/recent.rs` | Bounded in-memory caches | `Recent` |
 | `src/session.rs` | Token, trust, viewer; GitHub API root | `GitHubStatus`, `Session`, `GitHubApi` |
-| `src/settings.rs` | Settings screen | `Settings` |
+| `src/settings.rs` | Settings screen, the issue cadence | `Settings`, `refresh_interval` |
+| `src/budget/mod.rs` | Budget readout, pause checks, poll cost and schedule, spend log trigger | `RostrumCore::{api_budget, poll_schedule}`, `is_rate_limit`, `paused_error` |
+| `src/budget/types.rs` | Budget records and their pure conversions | `ApiBudget`, `RateWindow`, `ApiBudgetLevel`, `PollSchedule`, `PollPace`, `PauseReason`, `schedule`, `api_budget` |
+| `src/budget/spend.rs` | The five-minute spend log | `SpendLog`, `SPEND_LOG_INTERVAL` |
 | `src/feed/types.rs` | Feed records and the observer trait | `FeedSnapshot`, `RepoSection`, `RepoBody`, `PrSummary`, `FeedObserver`, … |
 | `src/feed/state.rs` | Feed state, fetch sequencing, `set_repos`, issues and stacks, hydration, snapshot from `flatten_tab` | `FeedState`, `Applied`, `Cached` |
-| `src/feed/refresh.rs` | Fetch pipeline (pull requests, issues, stacks) and merge-state probes | `fetch_repo`, `fetch_all`, `RepoFetch`, `Scope`, `Probes`, `ProbeSlot` |
+| `src/feed/refresh.rs` | Planning a refresh (`plan_poll`, pause), running it, hydration, issue re-reads | `Scope`, `Refreshed`, `Begun`, `Plan` |
+| `src/feed/batch.rs` | Chunked batch requests (pull requests, issues, checks, divergence) | `pulls`, `issues`, `checks`, `divergences`, `DivergenceAsk`, `CONCURRENT_BATCHES` |
+| `src/feed/land.rs` | Sending batches and applying each as it lands | `land_pulls`, `land_issues`, `land_divergences`, `land_stacks`, `PullsLanded` |
+| `src/feed/apply.rs` | Applying batch answers per repository, rate-limit tolerant | `CoreState::{apply_pulls_batch, apply_issues_batch, divergence_asks, apply_divergence_batch, apply_stacks_read}` |
+| `src/feed/probe.rs` | One merge-state probe per cycle | `ProbeCycle`, `CoreState::schedule_probe` |
 | `src/feed/chips.rs` | Chip text and colour roles (the desktop's rules) | `merge_chip`, `behind_chip`, `base_divergence`, … |
 | `src/feed/summary.rs` | Feed row | `summarize` |
 | `src/sort.rs` | The two sorts: records, conversions, setters | `SortSettings`, `RepoSortKey`, `ItemSortKey`, `SortDirection`, `settings`, `chosen` |
@@ -695,7 +751,9 @@ the data directory for every secret that passed through.
 | `src/remote/push.rs` | Pushing the phone's shareable settings with a revision | `ConfigPushResult` |
 | `src/ci/types.rs` | CI records | `CiGrid`, `CiCell`, `CiJobLog`, `CiCheckOutput`, `CiRerun`, `CiRerunChoice`, … |
 | `src/ci/convert.rs` | Core grid, timing, logs, output and re-runs → records | `grid`, `cell`, `job_log`, `check_output`, `rerun_choice` |
-| `src/ci/mod.rs` | Fetching checks, the grid, logs, output, re-runs | — |
+| `src/ci/mod.rs` | The grid's exports: fetches, the grid, logs, output, re-runs | — |
+| `src/ci/fetch.rs` | Which checks to fetch (`plan_ci`, `running_repos`, pause) and fetching them in batches | `CiFetch`, `CiPlan`, `land_checks` |
+| `tests/poll_budget.rs` | Batched documents, the issue cadence, the budget readout and pacing, the CI skip rules, one probe per cycle, and the pause stopping every background fetch against the GitHub stand-in (with rate-limit headers and refusals) | — |
 | `tests/ci_grid.rs` | The grid, timing and tick hint, logs, output, re-run eligibility, optimistic flips and typed refusals against the GitHub stand-in | — |
 | `tests/config_push.rs` | Preview with revision and both diffs, push applied, push refused on a changed desktop, copying sorts/trunks/issues against a TLS stand-in | — |
 | `tests/remote_pairing.rs` | Pairing, every desktop call, and copying the desktop's config against a TLS stand-in | — |
@@ -782,6 +840,14 @@ against the library `cargo test` builds and checks the surface.
   `rostrum_core::sort`'s, shared with the desktop; the sort survives
   `clearFilter`.
 - **Background checks stay cheap.** The notification check reads pull
-  requests only; issues and stacks are fetched on full refreshes.
+  requests only; issues, divergence and stacks are fetched on foreground
+  refreshes, issues only when due.
+- **Nothing in the background is sent while GitHub refuses.** Every
+  background fetch (timer poll, notification check, probes, divergence,
+  stacks, the CI grid's own fetches, issue re-reads) asks for the pause first;
+  explicit requests say `GitHubRateLimited` instead of sending.
+- **Several repositories per document.** Pull requests, issues, checks and
+  divergence go out as batched documents chunked by the cost model; one
+  alias failing fails only its repository.
 - **No exported method is named `close` or `destroy`**, which UniFFI's
   Kotlin objects reserve for releasing the Rust side.
