@@ -157,11 +157,46 @@ ranges.
 GPUI has **no built-in drag-selection for read-only text**. `InteractiveText`
 supports click, hover, and tooltips only.
 
-`crates/rostrum-ui/src/input.rs` implements selection for *editable* text — a
+`crates/rostrum-ui/src/input/` implements the *editable* text input — a
 byte-range selection, mouse drag handling, `position_for_index` /
 `index_for_position` hit-testing against wrapped lines, a painted selection quad
-per visual row, and clipboard integration — because a text input needs all of it
-regardless.
+per visual row, IME composition, and clipboard integration.
+
+## Text input
+
+Split by concern:
+
+| File | Role | Key items |
+|---|---|---|
+| `input/buffer.rs` | gpui-free editing state | `TextBuffer`, `Edit`, `InvariantViolation`, `floor_char_boundary` |
+| `input/geometry.rs` | Offset ⇄ pixel mapping over a cached layout | `TextLayoutCache`, `LayoutSource`, `line_starts`, `run_lengths` |
+| `input/element.rs` | Shaping, painting, IME handler install | `TextElement`, `shape` |
+| `input/mod.rs` | The `TextInput` view: actions, mouse, `EntityInputHandler`, `bind_keys` | `TextInput`, `InputEvent` |
+| `input/buffer/tests.rs`, `input/buffer/fuzz.rs` | Regression tests and a deterministic fuzzer (xorshift, fixed seeds) | — |
+
+Control flow: every action, mouse event and IME call on `TextInput` turns into
+one `TextBuffer` call, then `cx.notify()` and — when the call returns
+`Edit::Changed` — `InputEvent::Changed`. `TextElement` reads the buffer to shape
+the text (or the placeholder when the text is empty), paints selection and
+caret from the freshly shaped lines, and stores the layout on the view at paint
+time tagged with a `LayoutSource`: `Content { revision }` or `Placeholder`.
+
+**Offsets are untrusted.** They arrive as UTF-16 ranges from the platform IME
+(possibly reversed or past the end), from a layout shaped for older text or for
+the placeholder, and from mouse positions. `TextBuffer` therefore clamps every
+incoming offset into the text and back onto a `char` boundary and orders every
+range before using it. The IME's `new_selected_range` is relative to the
+pre-edit string and is converted within it, not within the whole text.
+
+**Stale geometry.** The buffer bumps `revision` on every text change. The view
+hit-tests (Up/Down, mouse, `bounds_for_range`) only against a layout whose
+source is the current revision; a placeholder layout maps any click to offset 0.
+Anything that slips through is clamped by the buffer anyway.
+
+Caret movement (left/right, backspace/delete) steps over whole grapheme
+clusters; End stops before a `\r\n`. The invariant is deliberately only `char`
+boundaries, because an IME may put the caret between a base character and a
+combining mark it is composing.
 
 `crates/rostrum-ui/src/selection.rs` adds `SelectableText` for read-only text:
 click-drag to select, double-click for a word, triple-click for the block, and
@@ -214,6 +249,13 @@ navigate the feed without hijacking typing in the composer.
 - Subscriptions are retained in a field or detached; dropping unsubscribes.
 - Long-lived `Task`s are held in a field; dropping cancels them.
 - Markdown is parsed off the render path.
+- `TextBuffer`: `selected` and `marked` are ordered ranges within the text whose
+  ends are `char` boundaries, after any sequence of public calls; checked by
+  `debug_assert` after each mutation and by the fuzzer after each step.
+- `TextBuffer::revision` changes whenever the text changes; the input never
+  hit-tests against a layout of a different revision or of the placeholder.
+- Text runs built for shaping tile the displayed string exactly
+  (`geometry::run_lengths` clamps the marked range).
 
 ## Files
 
@@ -223,6 +265,7 @@ navigate the feed without hijacking typing in the composer.
 | `crates/rostrum/src/workspace.rs` | Root view, split layout |
 | `crates/rostrum-ui/src/theme/mod.rs` | `Theme`, `cx.theme()`, light/dark |
 | `crates/rostrum-ui/src/components/` | Button, label, chip, avatar, card, tabs, ... |
+| `crates/rostrum-ui/src/input/` | Editable text input; see *Text input* above |
 | `crates/rostrum-ui/src/selection.rs` | Byte-range selection, hit-testing, clipboard |
 | `crates/rostrum-ui/src/markdown.rs` | `MarkdownBlock` → elements |
 | `crates/rostrum-md/src/lib.rs` | `pulldown-cmark` → `MarkdownBlock`, GitHub extensions |
