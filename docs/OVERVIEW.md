@@ -15,8 +15,10 @@ Overview:
   subsystems:
     ui_foundation: >
       Theme, typography, and the local component layer built directly on `gpui`.
-      Owns text rendering, the hand-rolled selection/copy primitive, and the
-      markdown renderer. No dependency on Zed's `ui`/`theme` crates (GPL).
+      Owns text rendering, the hand-rolled text input (a gpui-free
+      `TextBuffer` that clamps every untrusted offset, behind a thin GPUI
+      view), the selection/copy primitive, and the markdown renderer. No
+      dependency on Zed's `ui`/`theme` crates (GPL).
     repo_feed: >
       The primary screen. Flattens all repos and their PRs — or, on the Issues
       tab, their issues — into a single row stream rendered by one virtualized
@@ -334,8 +336,8 @@ Overview:
 
 Features Index:
   ui_foundation:
-    description: Theme, components, text rendering, selection, markdown.
-    entry_points: [crates/rostrum-ui/src/lib.rs, crates/rostrum-md/src/lib.rs]
+    description: Theme, components, text rendering, text input, selection, markdown.
+    entry_points: [crates/rostrum-ui/src/lib.rs, crates/rostrum-ui/src/input/mod.rs, crates/rostrum-md/src/lib.rs]
     depends_on: []
     doc: docs/features/ui_foundation.md
   repo_feed:
