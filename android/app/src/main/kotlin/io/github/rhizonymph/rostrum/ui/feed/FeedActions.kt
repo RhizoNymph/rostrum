@@ -36,6 +36,8 @@ class FeedActions(
     val closeSearch: () -> Unit = {},
     val queryChange: (String) -> Unit = {},
     val signOut: () -> Unit = {},
+    /** The GitHub budget chip: its explanation. */
+    val openBudget: () -> Unit = {},
 )
 
 /** What the Sort sheet can ask for. */

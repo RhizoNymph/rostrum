@@ -40,7 +40,6 @@ pub(crate) struct Cached {
 /// What one repository fetch brought back.
 pub(crate) struct Fetched {
     pub prs: Vec<PullRequest>,
-    pub viewer: Option<User>,
     /// The repository's own facts, which `flatten` sorts repositories by.
     pub meta: Option<RepoMeta>,
 }
@@ -94,21 +93,43 @@ impl FeedState {
         self.repos.iter().map(|repo| repo.id.clone()).collect()
     }
 
-    /// Start a fetch of `repo`: its sequence number, and a spinner if it has
-    /// nothing to show yet. `None` if the repository is not watched.
+    pub(crate) fn repo(&self, id: &RepoId) -> Option<&RepoState> {
+        self.repos.iter().find(|state| &state.id == id)
+    }
+
+    pub(crate) fn repo_mut(&mut self, id: &RepoId) -> Option<&mut RepoState> {
+        self.repos.iter_mut().find(|state| &state.id == id)
+    }
+
+    /// The sequence number of the newest fetch applied to `repo`.
+    pub(crate) fn applied_seq(&self, repo: &RepoId) -> Option<u64> {
+        self.applied.get(repo).copied()
+    }
+
+    /// Start a fetch of `repo`'s pull requests: its sequence number, and a
+    /// spinner if it has nothing to show yet. `None` if the repository is
+    /// not watched.
     pub(crate) fn begin_fetch(&mut self, repo: &RepoId) -> Option<u64> {
-        let state = self.repos.iter_mut().find(|state| &state.id == repo)?;
+        let state = self.repo_mut(repo)?;
         // A background refresh of a repository that already has data must
         // not blank its card.
         if state.prs.is_empty() {
             state.load = LoadState::Loading;
         }
-        if state.issues.is_empty() && !matches!(state.issues_load, LoadState::Loaded { .. }) {
-            state.issues_load = LoadState::Loading;
-        }
         let seq = self.next_seq;
         self.next_seq += 1;
         Some(seq)
+    }
+
+    /// Start a fetch of `repo`'s issues: a spinner on the Issues tab if it
+    /// has never shown any.
+    pub(crate) fn begin_issues(&mut self, repo: &RepoId) {
+        if let Some(state) = self.repo_mut(repo)
+            && state.issues.is_empty()
+            && !matches!(state.issues_load, LoadState::Loaded { .. })
+        {
+            state.issues_load = LoadState::Loading;
+        }
     }
 
     /// Apply a fetch that was started with `seq`.
@@ -377,6 +398,7 @@ impl FeedState {
             filter_active: self.filter.is_active(),
             merge_states_settling: settling,
             viewer: viewer.map(UserRef::from),
+            budget: None,
         }
     }
 }
@@ -548,15 +570,7 @@ mod tests {
         let id = repo_id(name);
         let seq = state.begin_fetch(&id).expect("watched");
         assert_eq!(
-            state.apply_fetch(
-                &id,
-                seq,
-                Ok(Fetched {
-                    prs,
-                    viewer: None,
-                    meta: None,
-                })
-            ),
+            state.apply_fetch(&id, seq, Ok(Fetched { prs, meta: None })),
             Applied::Loaded
         );
     }
@@ -647,7 +661,6 @@ mod tests {
         let newer = state.begin_fetch(&id).expect("watched");
         let fetched = |numbers: &[u32]| Fetched {
             prs: numbers.iter().copied().map(pull).collect(),
-            viewer: None,
             meta: None,
         };
         assert_eq!(

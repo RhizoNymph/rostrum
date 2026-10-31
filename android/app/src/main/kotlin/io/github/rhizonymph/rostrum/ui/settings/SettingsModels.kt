@@ -53,6 +53,8 @@ data class SettingsContent(
     val prsPerRepo: Int = 30,
     /** Open issues fetched per repository. */
     val issuesPerRepo: Int = 25,
+    /** Seconds before a background refresh fetches open issues again. */
+    val issueRefreshSecs: Long = 300,
 )
 
 /** The "Add a repository" field. [error] is only ever an input problem. */
@@ -78,6 +80,13 @@ object FetchLimitChoices {
 
 /** The foreground refresh choices offered, in seconds. */
 val RefreshIntervalChoices: List<Long> = listOf(30, 60, 300, 900)
+
+/** How often a background refresh fetches issues, in seconds, with the current value slotted in. */
+object IssueRefreshChoices {
+    private val standard = listOf(120L, 300L, 900L, 1800L, 3600L)
+
+    fun forValue(current: Long): List<Long> = (standard + current).distinct().sorted()
+}
 
 /**
  * Each watched repository with what the phone knows about it: a clone on the

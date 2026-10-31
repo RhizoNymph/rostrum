@@ -77,13 +77,13 @@ list fields (repositories, authors, trunks; `a, b` or `(none)`) become
 ```
 CiRoute(repo?) ─ CiGridViewModel(backend, repo)
   init: ciGrid(filter)              (held checks, no network; shown at once)
-        refreshCi(filter) | refreshCiRepo(repo, filter)   (refreshing = true)
+        refreshCi(filter, Opened) | refreshCiRepo(repo, filter, Opened)   (refreshing = true)
         each result → CiGridLayout.only(grid, repo) → content
   LifecycleStartEffect: start() … stop()
         every tickMillis (1 s):  if grid.ticks      → ciGrid(filter)
-        every pollMillis (15 s): if grid.anyRunning → fetch again
+        every pollMillis (15 s): if grid.anyRunning → fetch (Watch)
   Needs attention ─ setNeedsAttention(on) → ciGrid(new filter)
-  Pull to refresh ─ refresh() → fetch (one at a time)
+  Pull to refresh ─ refresh() → fetch (Explicit, one at a time)
   A failed fetch with a grid on screen → snackbar; without one → ErrorView
 ```
 
@@ -194,6 +194,12 @@ logs, output and re-runs, `InvalidInput` for an unfetched cell's re-runs).
   is worth it (`ticks`, `anyRunning`). At most one fetch runs at a time.
 - **Rebuilding is local.** The one-second loop calls `ciGrid` only; only
   pull to refresh, opening and the 15-second poll touch the network.
+- **Each fetch says why** (`CiTrigger`), and the core sends only what that
+  calls for by the desktop's skip rules (`docs/features/poll_budget.md`):
+  `Opened` (`openCi`) what could have changed since the last fetch, `Watch`
+  (`watchCi`) what is queued or running, `Explicit` (`refreshCi`/
+  `refreshCiRepo`) everything; in batched documents, and nothing while
+  GitHub has paused polling (an explicit fetch then says until when).
 - **A re-run is always confirmed** with the core's `confirmPrompt`; the
   phone never flips a cell itself (the core does, and puts it back on a
   refusal).

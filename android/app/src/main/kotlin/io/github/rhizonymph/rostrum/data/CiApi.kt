@@ -7,6 +7,7 @@ import io.github.rhizonymph.rostrum.data.model.CiGridFilter
 import io.github.rhizonymph.rostrum.data.model.CiJobLog
 import io.github.rhizonymph.rostrum.data.model.CiRerun
 import io.github.rhizonymph.rostrum.data.model.CiRerunChoice
+import io.github.rhizonymph.rostrum.data.model.CiTrigger
 
 /**
  * The CI grid (`ci/mod.rs`): every open pull request's checks in the feed's
@@ -18,11 +19,16 @@ interface CiApi {
     /** The grid from the checks held, as of now. No network. */
     suspend fun ciGrid(filter: CiGridFilter): Outcome<CiGrid>
 
-    /** Fetch every watched repository's checks, then the grid. A failing repository says so in its [CiGrid.repos] entry. */
-    suspend fun refreshCi(filter: CiGridFilter): Outcome<CiGrid>
+    /**
+     * Fetch the checks [trigger] calls for across every watched repository,
+     * then the grid. A failing repository says so in its [CiGrid.repos]
+     * entry. While GitHub has paused polling nothing is sent; an
+     * [CiTrigger.Explicit] fetch then fails with [BackendError.GitHubRateLimited].
+     */
+    suspend fun refreshCi(filter: CiGridFilter, trigger: CiTrigger = CiTrigger.Explicit): Outcome<CiGrid>
 
     /** [refreshCi] for one watched repository. */
-    suspend fun refreshCiRepo(repo: String, filter: CiGridFilter): Outcome<CiGrid>
+    suspend fun refreshCiRepo(repo: String, filter: CiGridFilter, trigger: CiTrigger = CiTrigger.Explicit): Outcome<CiGrid>
 
     /** An Actions job's log, parsed; the last 20 000 lines unless [full]. */
     suspend fun jobLog(repo: String, jobId: Long, full: Boolean): Outcome<CiJobLog>

@@ -30,6 +30,8 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import io.github.rhizonymph.rostrum.data.model.BudgetLevel
+import io.github.rhizonymph.rostrum.data.model.RateWindow
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
@@ -43,12 +45,18 @@ private class CountingBackend(val inner: FakeRostrumBackend) : RostrumBackend by
     val updates = MutableSharedFlow<FeedSnapshot>(extraBufferCapacity = 16)
     override val feedUpdates: Flow<FeedSnapshot> = updates
     var refreshes = 0
+    var polls = 0
     var queries = mutableListOf<String>()
     var seen = 0
 
     override suspend fun refreshFeed(): Outcome<FeedSnapshot> {
         refreshes++
         return inner.refreshFeed()
+    }
+
+    override suspend fun pollFeed(): Outcome<FeedSnapshot> {
+        polls++
+        return inner.pollFeed()
     }
 
     override suspend fun setQuery(query: String): Outcome<FeedSnapshot> {
@@ -322,7 +330,7 @@ class FeedViewModelTest {
     }
 
     @Test
-    fun `auto refresh follows the settings interval`() = runTest(main.dispatcher) {
+    fun `auto refresh waits the core's schedule and fetches only what is due`() = runTest(main.dispatcher) {
         val backend = CountingBackend(testBackend())
         backend.inner.setRefreshInterval(30)
         val vm = viewModel(backend)
@@ -331,11 +339,67 @@ class FeedViewModelTest {
         backgroundScope.launch { vm.autoRefreshWhileVisible() }
         runCurrent()
         advanceTimeBy(29_000)
-        assertEquals(1, backend.refreshes)
+        assertEquals(0, backend.polls)
         advanceTimeBy(2_000)
-        assertEquals(2, backend.refreshes)
+        assertEquals(1, backend.polls)
         advanceTimeBy(30_000)
-        assertEquals(3, backend.refreshes)
+        assertEquals(2, backend.polls)
+        // The timer's refreshes are polls, never the explicit refresh.
+        assertEquals(1, backend.refreshes)
+    }
+
+    @Test
+    fun `a low budget stretches the wait between refreshes`() = runTest(main.dispatcher) {
+        val backend = CountingBackend(testBackend())
+        backend.inner.setRefreshInterval(30)
+        backend.inner.budget.graphql = RateWindow(700, 5000, TEST_NOW.plusSeconds(1800), BudgetLevel.Low)
+        val vm = viewModel(backend)
+        advanceUntilIdle()
+        backgroundScope.launch { vm.autoRefreshWhileVisible() }
+        runCurrent()
+        advanceTimeBy(31_000)
+        assertEquals(0, backend.polls)
+        advanceTimeBy(30_000)
+        assertEquals(1, backend.polls)
+    }
+
+    @Test
+    fun `while GitHub has paused polling the timer waits for the pause to lift`() = runTest(main.dispatcher) {
+        val backend = CountingBackend(testBackend())
+        backend.inner.budget.pausedUntil = TEST_NOW.plusSeconds(600)
+        val vm = viewModel(backend)
+        advanceUntilIdle()
+        assertEquals(TEST_NOW.plusSeconds(600), vm.feed().budget?.pausedUntil)
+        backgroundScope.launch { vm.autoRefreshWhileVisible() }
+        runCurrent()
+        advanceTimeBy(599_000)
+        assertEquals(0, backend.polls)
+        advanceTimeBy(2_000)
+        assertEquals(1, backend.polls)
+    }
+
+    @Test
+    fun `pull to refresh while paused keeps the feed and says until when`() = runTest(main.dispatcher) {
+        val backend = testBackend()
+        val vm = viewModel(backend)
+        val messages = messagesOf(vm)
+        advanceUntilIdle()
+        backend.budget.pausedUntil = TEST_NOW.plusSeconds(600)
+        vm.refresh()
+        advanceUntilIdle()
+        assertInstanceOf(UiState.Loaded::class.java, vm.state.value.feed)
+        assertTrue(messages.single().startsWith("Couldn't refresh. GitHub's rate limit is used up until"), messages.single())
+    }
+
+    @Test
+    fun `the budget chip opens and closes its explanation`() = runTest(main.dispatcher) {
+        val vm = viewModel(testBackend())
+        advanceUntilIdle()
+        assertEquals(4123, vm.feed().budget?.graphql?.remaining)
+        vm.openBudget()
+        assertTrue(vm.state.value.budgetOpen)
+        vm.closeBudget()
+        assertFalse(vm.state.value.budgetOpen)
     }
 
     @Test

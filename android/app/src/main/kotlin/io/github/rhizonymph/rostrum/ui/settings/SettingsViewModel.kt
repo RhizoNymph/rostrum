@@ -33,6 +33,7 @@ interface SettingsActions {
     fun setRefreshInterval(seconds: Long)
     fun setPrsPerRepo(count: Int)
     fun setIssuesPerRepo(count: Int)
+    fun setIssueRefreshInterval(seconds: Long)
     fun setNotifyNewPullRequests(enabled: Boolean)
     fun setNotifyReviewRequests(enabled: Boolean)
     fun signOut()
@@ -47,6 +48,7 @@ object NoSettingsActions : SettingsActions {
     override fun setRefreshInterval(seconds: Long) = Unit
     override fun setPrsPerRepo(count: Int) = Unit
     override fun setIssuesPerRepo(count: Int) = Unit
+    override fun setIssueRefreshInterval(seconds: Long) = Unit
     override fun setNotifyNewPullRequests(enabled: Boolean) = Unit
     override fun setNotifyReviewRequests(enabled: Boolean) = Unit
     override fun signOut() = Unit
@@ -139,6 +141,7 @@ class SettingsViewModel(
                         notifyReviewRequests = settings.notifyReviewRequests,
                         prsPerRepo = settings.prsPerRepo,
                         issuesPerRepo = settings.issuesPerRepo,
+                        issueRefreshSecs = settings.issueRefreshSecs,
                     ),
                 ),
             )
@@ -206,6 +209,10 @@ class SettingsViewModel(
         viewModelScope.launch { applySettings(backend.setIssuesPerRepo(count), notify = false) }
     }
 
+    override fun setIssueRefreshInterval(seconds: Long) {
+        viewModelScope.launch { applySettings(backend.setIssueRefreshInterval(seconds), notify = false) }
+    }
+
     override fun setNotifyNewPullRequests(enabled: Boolean) {
         val content = loaded() ?: return
         viewModelScope.launch {
@@ -238,6 +245,7 @@ class SettingsViewModel(
                                 notifyReviewRequests = settings.notifyReviewRequests,
                                 prsPerRepo = settings.prsPerRepo,
                                 issuesPerRepo = settings.issuesPerRepo,
+                                issueRefreshSecs = settings.issueRefreshSecs,
                             ),
                         ),
                     )

@@ -20,6 +20,7 @@
 //! | [`stacks`] | stacks of pull requests, grouped in the feed and on a repository |
 //! | [`repo_view`] | one repository's screen and its branch tree |
 //! | [`profiles`] | one profile per paired desktop or token, each its own core |
+//! | [`budget`] | the GitHub rate-limit budget, pacing and pauses |
 //!
 //! Everything returned is render-ready: markdown is flattened into blocks,
 //! diffs into highlighted rows with their comment anchors, chips carry text
@@ -29,6 +30,7 @@
 
 uniffi::setup_scaffolding!();
 
+pub mod budget;
 pub mod ci;
 pub mod detail;
 pub mod diff;

@@ -8,7 +8,7 @@ use crate::{
         writer::{Write, settled},
     },
     error::RostrumError,
-    feed::{Probes, Scope},
+    feed::Scope,
 };
 
 /// Something worth a system notification.
@@ -141,7 +141,10 @@ impl RostrumCore {
     /// never reported, and a pull request is reported at most once per
     /// check, as a review request when it is both.
     pub async fn check_notifications(&self) -> Result<Vec<NotificationEvent>, RostrumError> {
-        self.refresh(Scope::Background, Probes::Skip).await?;
+        // While GitHub has paused polling nothing is sent, and the check
+        // fails with `GitHubRateLimited` (until when) rather than report
+        // stale news.
+        self.refresh(Scope::Background).await?.asked()?;
         let events = self.observe_arrivals().await?;
         tracing::info!(events = events.len(), "notification check");
         Ok(events)

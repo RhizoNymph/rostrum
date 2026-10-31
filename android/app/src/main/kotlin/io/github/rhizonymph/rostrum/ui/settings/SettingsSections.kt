@@ -285,7 +285,7 @@ fun FetchSection(
     }
 }
 
-/** Refresh cadence, the background check, and the two notification switches. */
+/** Refresh cadences (the feed's, and the slower one for issues), the background check, and the two notification switches. */
 @Composable
 fun SyncSection(
     refreshIntervalSecs: Long,
@@ -295,11 +295,15 @@ fun SyncSection(
     onNotifyNewChange: (Boolean) -> Unit,
     onNotifyReviewsChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    issueRefreshSecs: Long = 300,
+    onChooseIssueInterval: () -> Unit = {},
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SectionHeader("Sync")
         RostrumCard(Modifier.fillMaxWidth()) {
             ValueRow("Refresh while open", refreshIntervalLabel(refreshIntervalSecs), onClick = onChooseInterval)
+            CardDivider()
+            ValueRow("Refresh issues", refreshIntervalLabel(issueRefreshSecs), onClick = onChooseIssueInterval)
             CardDivider()
             ValueRow("Background check", "every 15 min", onClick = null)
             CardDivider()

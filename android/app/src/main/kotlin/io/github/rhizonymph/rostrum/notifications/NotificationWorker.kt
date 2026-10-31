@@ -13,6 +13,8 @@ import io.github.rhizonymph.rostrum.data.profiles.ProfileManager
 import io.github.rhizonymph.rostrum.data.profiles.ProfilesState
 import io.github.rhizonymph.rostrum.data.requiresSignIn
 import io.github.rhizonymph.rostrum.data.session.isSignedIn
+import io.github.rhizonymph.rostrum.data.valueOrNull
+import java.time.Instant
 
 /** What one background check decided for one profile. */
 sealed interface ProfileCheck {
@@ -23,6 +25,12 @@ sealed interface ProfileCheck {
     data object NotificationsOff : ProfileCheck
 
     data class Posted(val count: Int) : ProfileCheck
+
+    /**
+     * GitHub has paused this profile's token for rate limiting until [until]:
+     * nothing was sent. Budgets are per token, so other profiles go ahead.
+     */
+    data class Paused(val until: Instant) : ProfileCheck
 
     /** Worth trying again later (network, rate limit). */
     data class Retry(val error: BackendError) : ProfileCheck
@@ -48,7 +56,8 @@ sealed interface CheckResult {
 /**
  * The periodic check, free of WorkManager: load and restore every profile,
  * then ask each one that is signed in with a notification toggle on what is
- * new, and post it under that profile's name. The core already filters by
+ * new, and post it under that profile's name. A profile whose token GitHub
+ * has paused for rate limiting is skipped without a request. The core already filters by
  * the notification settings and never reports your own pull requests.
  */
 class NotificationCheck(
@@ -73,6 +82,10 @@ class NotificationCheck(
             is Outcome.Ok -> loaded.value
         }
         if (!settings.notifyNewPullRequests && !settings.notifyReviewRequests) return ProfileCheck.NotificationsOff
+        handle.backend.apiBudget().valueOrNull()?.pausedUntil?.let { until ->
+            RostrumLog.i(TAG, "notification_check_paused", "profile" to profile.id.value, "until" to until)
+            return ProfileCheck.Paused(until)
+        }
         return when (val events = handle.backend.checkNotifications()) {
             is Outcome.Ok -> {
                 events.value.map { NotificationContent.of(it, profile) }.forEach(post)
@@ -111,8 +124,7 @@ class NotificationWorker(context: Context, params: WorkerParameters) : Coroutine
             }
         }
     }
-
-    private companion object {
-        const val TAG = "RostrumNotify"
-    }
 }
+
+private const val TAG = "RostrumNotify"
+

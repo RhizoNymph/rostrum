@@ -9,6 +9,7 @@ import io.github.rhizonymph.rostrum.data.model.CiNotRerunnable
 import io.github.rhizonymph.rostrum.data.model.CiRerun
 import io.github.rhizonymph.rostrum.data.model.CiRerunChoice
 import io.github.rhizonymph.rostrum.data.model.CiStatus
+import io.github.rhizonymph.rostrum.data.model.CiTrigger
 import io.github.rhizonymph.rostrum.testing.MainDispatcherExtension
 import io.github.rhizonymph.rostrum.testing.testBackend
 import io.github.rhizonymph.rostrum.ui.common.UiState
@@ -68,6 +69,21 @@ class CiGridViewModelTest {
             assertEquals(1, h.backend.ci.fetches)
             assertFalse(h.vm.state.value.refreshing)
             assertEquals(CiStatus.Failure, h.status(SamplePulls.ROSTRUM, 10, "CI / test"))
+        }
+
+        @Test
+        fun `opening, the watch and pull to refresh each say why they fetch`() = runTest(main.dispatcher) {
+            val h = harness()
+            advanceUntilIdle()
+            assertEquals(listOf(CiTrigger.Opened), h.backend.ci.triggers)
+            h.vm.start()
+            advanceTimeBy(15_500)
+            runCurrent()
+            h.vm.stop()
+            assertEquals(listOf(CiTrigger.Opened, CiTrigger.Watch), h.backend.ci.triggers)
+            h.vm.refresh()
+            advanceUntilIdle()
+            assertEquals(listOf(CiTrigger.Opened, CiTrigger.Watch, CiTrigger.Explicit), h.backend.ci.triggers)
         }
 
         @Test

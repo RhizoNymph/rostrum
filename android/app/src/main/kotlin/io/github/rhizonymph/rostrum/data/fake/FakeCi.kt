@@ -23,6 +23,7 @@ import io.github.rhizonymph.rostrum.data.model.CiRow
 import io.github.rhizonymph.rostrum.data.model.CiSource
 import io.github.rhizonymph.rostrum.data.model.CiStackPlace
 import io.github.rhizonymph.rostrum.data.model.CiStatus
+import io.github.rhizonymph.rostrum.data.model.CiTrigger
 import io.github.rhizonymph.rostrum.data.model.ColorRole
 import io.github.rhizonymph.rostrum.data.model.RepoLoad
 import java.time.Clock
@@ -39,6 +40,7 @@ internal class FakeCi(
     private val host: FakeHost,
     private val clock: Clock,
     private val started: Instant,
+    private val budget: FakeBudget,
 ) : CiApi {
     private data class Spot(val repo: String, val number: Int, val column: Int)
 
@@ -58,27 +60,35 @@ internal class FakeCi(
     var fetches = 0
         private set
 
+    /** Why each fetch was asked for, in order (including ones a pause skipped), for tests. */
+    val triggers = mutableListOf<CiTrigger>()
+
     override suspend fun ciGrid(filter: CiGridFilter): Outcome<CiGrid> =
         host.call(FakeCall.CiGrid) { host.signedIn { Outcome.Ok(grid(filter)) } }
 
-    override suspend fun refreshCi(filter: CiGridFilter): Outcome<CiGrid> = host.call(FakeCall.RefreshCi) {
-        host.signedIn {
-            fetch(host.watchedRepos)
-            Outcome.Ok(grid(filter))
-        }
+    override suspend fun refreshCi(filter: CiGridFilter, trigger: CiTrigger): Outcome<CiGrid> = host.call(FakeCall.RefreshCi) {
+        host.signedIn { fetchUnlessPaused(host.watchedRepos, filter, trigger) }
     }
 
-    override suspend fun refreshCiRepo(repo: String, filter: CiGridFilter): Outcome<CiGrid> =
+    override suspend fun refreshCiRepo(repo: String, filter: CiGridFilter, trigger: CiTrigger): Outcome<CiGrid> =
         host.call(FakeCall.RefreshCiRepo) {
             host.signedIn {
                 if (host.watchedRepos.none { it == repo }) {
                     Outcome.Err(BackendError.InvalidInput("$repo isn't watched"))
                 } else {
-                    fetch(listOf(repo))
-                    Outcome.Ok(grid(filter))
+                    fetchUnlessPaused(listOf(repo), filter, trigger)
                 }
             }
         }
+
+    /** As the core: nothing is sent while GitHub has paused polling; an explicit fetch says so. */
+    private fun fetchUnlessPaused(repos: List<String>, filter: CiGridFilter, trigger: CiTrigger): Outcome<CiGrid> {
+        triggers += trigger
+        val refusal = budget.refusal()
+        if (refusal != null) return if (trigger == CiTrigger.Explicit) Outcome.Err(refusal) else Outcome.Ok(grid(filter))
+        fetch(repos)
+        return Outcome.Ok(grid(filter))
+    }
 
     override suspend fun jobLog(repo: String, jobId: Long, full: Boolean): Outcome<CiJobLog> =
         host.call(FakeCall.JobLog) {
