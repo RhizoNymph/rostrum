@@ -15,6 +15,10 @@ has been running or how long since it finished, its log, and re-running it.
 - Row headers: the pull request's repository and number (`owner/name #123`),
   title, short head sha, and a rollup.
 - One header row for the whole grid: workflow names over their jobs.
+- Folded workflows: every workflow starts folded into one summary column
+  (the row's failing, running and passing counts in it), so the grid opens
+  without sideways scrolling; each opens in place, and all open or fold at
+  once.
 - A failing-or-running filter.
 - Fetching the checks after the feed's poll for the repositories whose checks
   could have changed (`rostrum_core::poll::ci_due`), in multi-repository
@@ -46,6 +50,10 @@ has been running or how long since it finished, its log, and re-running it.
 - Drafts. They never appear, whatever the feed's draft toggle says.
 - A per-repository layout, or a toggle between it and the matrix. The
   matrix replaced it; the user declined a toggle.
+- Remembering which workflows are open across restarts. The folds last
+  for the session; every launch opens folded.
+- Folding on Android. The phone still draws every check; the fold model is
+  pure and in `rostrum_core::ci` for it to adopt.
 - Android's drawing. The rules are pure, in the shared crates, for it to
   reuse; see [For Android](#for-android).
 
@@ -91,11 +99,41 @@ read correctly — a stack never crosses repositories — and keeps the feed's
 order familiar. A repository's first row is ruled off from the previous
 repository's last with a heavier top border.
 
+### Folded workflows
+
+Even with one column per check, a few repositories with a workflow each
+make a matrix several windows wide. So the grid is drawn through a fold
+layer (`crates/rostrum-core/src/ci/grid/fold.rs`), on top of the unchanged
+`CiGrid`:
+
+- `Folds` is the set of open workflows by name (`None` names apps' checks
+  and statuses). It starts empty, so **every workflow starts folded**, and a
+  workflow that first appears after a refresh is folded too.
+- `ColumnLayout::new(grid, folds)` is the drawn columns, left to right: a
+  folded workflow is one `ShownColumn::Workflow { group }`, an open one its
+  `ShownColumn::Check { column }`s, in place. The horizontal scroll,
+  virtualization and header are all over the drawn columns.
+- A folded cell is `GridRow::summary(group)` — a `Rollup` over the row's
+  checks in that workflow plus how many it did not run — drawn as
+  `✗ 2  ● 1  ✓ 9`, tinted by the rollup's state, with "N not run" below and
+  the failing and running checks (`GridRow::attention`) named on hover. A
+  row that ran none of the workflow's checks reads "not run".
+- The selection is a `SlotRef { repo, number, column: ColumnRef }`, where
+  `ColumnRef` is a check or a folded workflow; on a check, `SlotRef::cell`
+  is the `CellRef` the log and re-run flows take.
+  `ColumnLayout::step` moves over the drawn columns with the same rules as
+  `CiGrid::step`. When folds change, `ColumnLayout::resolve` keeps the
+  selection on its row: a check whose workflow folded lands on that
+  summary; a summary whose workflow opened lands on the row's first failing
+  check in it, else its first running one, else the workflow's first check.
+- Re-running needs a check: on a summary, `r` says to open the workflow.
+
 ### Header and scrolling
 
 One header row sits above the list, outside it: a corner with "N pull
-requests · M checks · K hidden", then a workflow band (each `ColumnGroup`'s
-name spanning its columns) over a job-name band. The list scrolls
+requests · M checks in W workflows · K hidden", then a workflow band (each
+workflow's name spanning its drawn columns, `▸` folded or `▾` open, a click
+toggling it) over a job-name band ("N checks" under a folded workflow). The list scrolls
 vertically on its own and the header stays put.
 
 Horizontal scrolling is the view's own (`HScroll`, in
@@ -300,14 +338,21 @@ the new attempt; on failure, at once, which puts the old result back.
   repository whose checks failed to load; the header row; the rows. With no
   rows, a message instead: "Loading checks…", "Nothing failing or running",
   or "No open pull requests outside drafts".
+- **Folding:** every workflow starts folded into one summary column.
+  Click a workflow's name in the header, press `space` on a cell, or
+  double-click (or `enter` on) a summary to open it; `space` on one of its
+  checks folds it again. `e`, or the toolbar's "Open workflows" / "Fold
+  workflows" button, opens or folds them all.
 - **Scrolling:** the wheel scrolls rows; a horizontal wheel, a trackpad, or
   shift with the wheel scrolls the check columns, with the row headers and
   header row staying aligned.
 - **Keys** (key context `CiGrid`): `h`/`j`/`k`/`l` or the arrows move between
   cells, `enter` opens the log (or confirms a pending re-run), `r` re-runs,
-  `f` toggles failing-or-running only, `escape` closes the confirmation, then
+  `space` opens or folds the selected cell's workflow, `e` opens or folds
+  every workflow, `f` toggles failing-or-running only, `escape` closes the confirmation, then
   the log, then the view.
-- **Mouse:** click selects a cell; double-click opens its log.
+- **Mouse:** click selects a cell; double-click opens its log, or opens a
+  folded workflow; clicking a workflow's header opens or folds it.
 - **Log pane:** 640 px on the right while open.
 
 ## Invariants and constraints
@@ -324,6 +369,10 @@ the new attempt; on failure, at once, which puts the old result back.
 - **Header and row headers stay aligned**: the header row and every row
   draw their check columns with the same horizontal offset.
 - **Selection is by identity**, never by line index.
+- **Folding never changes the grid**: `CiGrid` holds every check whatever
+  is folded; folds only change the drawn columns, and a folded cell is
+  computed from the row's cells in its workflow's range.
+- **Every workflow starts folded**; only ones the user opened are open.
 - **Time is a function of `now`.** Nothing in `rostrum-core::ci` reads the
   clock.
 - **No re-run is offered on a run still going**, and none on a legacy status.
@@ -341,6 +390,9 @@ The pure API the phone reuses, all in `rostrum_core::ci` unless noted:
   (`producer`, `run_id`), `PrChecks` (`latest`, `rollup`), `Rollup`
   (`of`, `state`, `describe`), `RollupState`, `CheckOutput`, `Annotation`
   (`location`), `AnnotationLevel`.
+- Folding: `Folds`, `ColumnLayout` (`new`, `shown`, `column_ref`,
+  `index_of`, `resolve`, `step`), `ShownColumn`, `ColumnRef`, `SlotRef`,
+  `GroupSummary`, `GridRow::{summary, attention}`.
 - Grid: `CiChecks` (`begin`, `loaded`, `failed`, `forget`, `repo`, `pr`,
   `pr_mut`, `any_running`), `RepoChecks`, `build_grid`, `GridFilter`,
   `CiGrid` (`columns`, `column_groups`, `rows`, `row`, `repos`, `lines`,
@@ -380,6 +432,7 @@ narrows the matrix to that repository's rows and the columns they ran.
 | `crates/rostrum-core/src/ci/model.rs` | Statuses, keys, sources, entries, latest-attempt, rollups, check output | `CheckStatus`, `CheckKey`, `CheckSource`, `CheckEntry`, `PrChecks`, `Rollup`, `RollupState`, `CheckOutput`, `Annotation` |
 | `crates/rostrum-core/src/ci/grid/mod.rs` | The matrix's types, lookup and cell movement | `CiGrid`, `GridRow`, `ColumnGroup`, `GridRepo`, `GridLine`, `GridPos`, `CellRef`, `CellMove`, `GridFilter` |
 | `crates/rostrum-core/src/ci/grid/build.rs` | Building the matrix: rows filter, columns, groups, lines | `build_grid` |
+| `crates/rostrum-core/src/ci/grid/fold.rs` | Folded workflows: open set, drawn columns, summaries, movement and selection over them | `Folds`, `ColumnLayout`, `ShownColumn`, `ColumnRef`, `SlotRef`, `GroupSummary` |
 | `crates/rostrum-core/src/ci/grid/store.rs` | Stored checks per repository | `CiChecks`, `RepoChecks` |
 | `crates/rostrum-core/src/ci/grid/tests.rs` | Matrix tests | — |
 | `crates/rostrum-core/src/ci/time.rs` | Elapsed and since-finished labels against `now` | `Timing`, `format_duration`, `format_ago` |
@@ -409,7 +462,10 @@ narrows the matrix to that repository's rows and the columns they ran.
   excluded (also from columns, also inside a stack), the feed's search and
   authors applied, the attention filter without column shifts, collapse
   ignored, unfetched rows, per-repository load summaries, stack lines,
-  cell movement across repositories, resolving cells and lines,
+  cell movement across repositories, resolving cells and lines, folded
+  workflows (starting folded, opening in place, open and fold all, the
+  summary counts and not-run, attention order, movement over drawn columns,
+  the selection following a fold or an open),
   any-running, load states; the whole pipeline on captured data; and the
   FFI grid end to end, drafts included.
 - **Horizontal scroll**: clamping, wheel deltas, a shrunk grid, revealing a

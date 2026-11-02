@@ -471,3 +471,218 @@ fn a_line_accounts_for_stack_headers() {
     let grid = build_grid(&[a], &FeedFilter::default(), &held, GridFilter::default());
     assert_eq!(grid.line_of(&cell("a/b", 2, ci("build"))), Some(2));
 }
+
+// Folded workflows: the grid opens with every workflow summarised in one
+// column, so a wide matrix reads at a glance without scrolling sideways.
+
+/// The fixture's workflows, in column order: apps and statuses (Coverage),
+/// then CI (build, lint, test).
+fn workflows() -> (ColumnRef, ColumnRef) {
+    (
+        ColumnRef::Workflow(None),
+        ColumnRef::Workflow(Some("CI".into())),
+    )
+}
+
+fn slot(repo: &str, number: u32, column: ColumnRef) -> SlotRef {
+    SlotRef {
+        repo: id(repo),
+        number: PrNumber(number),
+        column,
+    }
+}
+
+#[test]
+fn every_workflow_starts_folded_into_one_column() {
+    let grid = grid(GridFilter::default());
+    let layout = ColumnLayout::new(&grid, &Folds::default());
+    assert_eq!(
+        layout.shown(),
+        &[
+            ShownColumn::Workflow { group: 0 },
+            ShownColumn::Workflow { group: 1 }
+        ]
+    );
+    let (apps, ci_flow) = workflows();
+    assert_eq!(layout.column_ref(&grid, 0), Some(apps));
+    assert_eq!(layout.column_ref(&grid, 1), Some(ci_flow));
+}
+
+#[test]
+fn opening_a_workflow_shows_its_checks_in_place() {
+    let grid = grid(GridFilter::default());
+    let mut folds = Folds::default();
+    folds.toggle(&Some("CI".into()));
+    let layout = ColumnLayout::new(&grid, &folds);
+    assert_eq!(
+        layout.shown(),
+        &[
+            ShownColumn::Workflow { group: 0 },
+            ShownColumn::Check { column: 1 },
+            ShownColumn::Check { column: 2 },
+            ShownColumn::Check { column: 3 },
+        ]
+    );
+    assert_eq!(
+        layout.column_ref(&grid, 2),
+        Some(ColumnRef::Check(ci("lint")))
+    );
+    folds.toggle(&Some("CI".into()));
+    assert_eq!(
+        ColumnLayout::new(&grid, &folds).len(),
+        2,
+        "toggling twice folds it back"
+    );
+}
+
+#[test]
+fn opening_everything_shows_every_check_and_folding_everything_undoes_it() {
+    let grid = grid(GridFilter::default());
+    let mut folds = Folds::default();
+    folds.open_all(&grid);
+    let layout = ColumnLayout::new(&grid, &folds);
+    assert_eq!(layout.len(), grid.columns().len());
+    assert!(
+        layout
+            .shown()
+            .iter()
+            .all(|c| matches!(c, ShownColumn::Check { .. }))
+    );
+    assert!(folds.any_open());
+    folds.fold_all();
+    assert!(!folds.any_open());
+    assert_eq!(ColumnLayout::new(&grid, &folds).len(), 2);
+}
+
+/// A folded workflow's cell sums the row's checks in it; checks the row did
+/// not run are counted apart, and a row that ran none of them is "not run".
+#[test]
+fn a_folded_cell_summarises_the_rows_checks_in_that_workflow() {
+    let grid = grid(GridFilter::default());
+    let groups = grid.column_groups();
+    // a/b #1: CI build ok, test failing, lint not run.
+    let first = grid.rows()[0].summary(&groups[1]);
+    assert_eq!(
+        first,
+        GroupSummary {
+            rollup: Rollup {
+                failing: 1,
+                passing: 1,
+                ..Rollup::default()
+            },
+            not_run: 1,
+        }
+    );
+    assert_eq!(first.rollup.state(), RollupState::Failing);
+    // a/b #1 ran nothing outside a workflow.
+    let apps = grid.rows()[0].summary(&groups[0]);
+    assert_eq!(apps.rollup.state(), RollupState::Empty);
+    assert_eq!(apps.not_run, 1);
+    // c/d #3: Coverage neutral.
+    assert_eq!(grid.rows()[2].summary(&groups[0]).rollup.other, 1);
+}
+
+#[test]
+fn a_folded_cell_lists_what_needs_attention_first() {
+    let grid = grid(GridFilter::default());
+    let row = &grid.rows()[0];
+    let group = &grid.column_groups()[1];
+    let attention: Vec<_> = row.attention(group).map(|e| e.key.clone()).collect();
+    assert_eq!(attention, vec![ci("test")]);
+}
+
+#[test]
+fn movement_runs_over_the_columns_as_drawn() {
+    let grid = grid(GridFilter::default());
+    let layout = ColumnLayout::new(&grid, &Folds::default());
+    let (apps, ci_flow) = workflows();
+    assert_eq!(
+        layout.step(&grid, None, CellMove::Down),
+        Some(slot("a/b", 1, apps.clone())),
+        "no selection enters at the first drawn column"
+    );
+    let from = slot("a/b", 1, apps.clone());
+    assert_eq!(
+        layout.step(&grid, Some(&from), CellMove::Right),
+        Some(slot("a/b", 1, ci_flow.clone()))
+    );
+    assert_eq!(
+        layout.step(
+            &grid,
+            Some(&slot("a/b", 1, ci_flow.clone())),
+            CellMove::Right
+        ),
+        Some(slot("a/b", 1, ci_flow.clone())),
+        "nothing wraps"
+    );
+    assert_eq!(
+        layout.step(
+            &grid,
+            Some(&slot("a/b", 2, ci_flow.clone())),
+            CellMove::Down
+        ),
+        Some(slot("c/d", 3, ci_flow)),
+        "down keeps the column across repositories"
+    );
+}
+
+/// Folding the workflow a selected check belongs to keeps the selection on
+/// that row, now on the workflow's summary.
+#[test]
+fn a_selected_check_whose_workflow_folds_lands_on_the_summary() {
+    let grid = grid(GridFilter::default());
+    let layout = ColumnLayout::new(&grid, &Folds::default());
+    let (_, ci_flow) = workflows();
+    let inside = slot("a/b", 1, ColumnRef::Check(ci("test")));
+    assert_eq!(layout.index_of(&grid, &inside.column), Some(1));
+    assert_eq!(
+        layout.resolve(&grid, &inside),
+        Some(slot("a/b", 1, ci_flow))
+    );
+}
+
+/// Opening the workflow a summary is selected on keeps the selection on that
+/// row: on its first failing check, else its first running one, else the
+/// workflow's first check.
+#[test]
+fn opening_a_selected_summary_selects_the_check_that_needs_attention() {
+    let grid = grid(GridFilter::default());
+    let mut folds = Folds::default();
+    folds.toggle(&Some("CI".into()));
+    let layout = ColumnLayout::new(&grid, &folds);
+    let (_, ci_flow) = workflows();
+    assert_eq!(
+        layout.resolve(&grid, &slot("a/b", 1, ci_flow.clone())),
+        Some(slot("a/b", 1, ColumnRef::Check(ci("test"))))
+    );
+    assert_eq!(
+        layout.resolve(&grid, &slot("a/b", 2, ci_flow.clone())),
+        Some(slot("a/b", 2, ColumnRef::Check(ci("lint"))))
+    );
+    assert_eq!(
+        layout.resolve(&grid, &slot("c/d", 3, ci_flow)),
+        Some(slot("c/d", 3, ColumnRef::Check(ci("build")))),
+        "nothing needs attention: the workflow's first check"
+    );
+}
+
+#[test]
+fn a_slot_on_a_check_is_that_cell() {
+    let at = slot("a/b", 1, ColumnRef::Check(ci("test")));
+    assert_eq!(at.cell(), Some(cell("a/b", 1, ci("test"))));
+    assert_eq!(slot("a/b", 1, workflows().1).cell(), None);
+}
+
+#[test]
+fn a_slot_on_a_row_gone_from_the_grid_does_not_resolve() {
+    let grid = grid(GridFilter::default());
+    let layout = ColumnLayout::new(&grid, &Folds::default());
+    assert_eq!(layout.resolve(&grid, &slot("a/b", 99, workflows().1)), None);
+    assert_eq!(
+        layout.resolve(
+            &grid,
+            &slot("a/b", 1, ColumnRef::Workflow(Some("Gone".into())))
+        ),
+        None
+    );
+}
