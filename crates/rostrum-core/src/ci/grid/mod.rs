@@ -14,6 +14,7 @@
 //! index, so a refresh that reorders rows cannot move it.
 
 mod build;
+mod fold;
 mod store;
 
 #[cfg(test)]
@@ -30,6 +31,7 @@ use crate::{
 use super::model::{CheckEntry, CheckKey, Rollup, RollupState};
 
 pub use build::build_grid;
+pub use fold::{ColumnLayout, ColumnRef, Folds, GroupSummary, ShownColumn, SlotRef};
 pub use store::{CiChecks, RepoChecks};
 
 /// The grid's own narrowing, on top of the feed's search and authors.

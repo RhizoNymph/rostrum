@@ -42,6 +42,19 @@ impl CiView {
                 Checkbox::new("ci-attention", "failing or running only (f)", attention)
                     .on_toggle(cx.listener(|this, _, _window, cx| this.toggle_attention(cx))),
             )
+            .child(
+                Button::new(
+                    "ci-folds",
+                    if self.folds.any_open() {
+                        "Fold workflows"
+                    } else {
+                        "Open workflows"
+                    },
+                )
+                .style(ButtonStyle::Subtle)
+                .tooltip("Fold every workflow into one column, or open them all (e)")
+                .on_click(cx.listener(|this, _, _window, cx| this.toggle_all_workflows(cx))),
+            )
             .child(div().flex_1())
             .when(running, |el| {
                 el.child(
@@ -55,7 +68,7 @@ impl CiView {
                 div()
                     .text_size(rems(0.7))
                     .text_color(theme.text_subtle)
-                    .child("hjkl move · enter log · r re-run"),
+                    .child("hjkl move · enter log or open · space fold · r re-run"),
             )
     }
 
@@ -202,7 +215,7 @@ impl Render for CiView {
 
         let banner = self.render_banner(cx);
         let failures = self.render_failures(cx);
-        let header = self.render_header(&theme);
+        let header = self.render_header(&theme, cx);
         let body = if self.grid.rows().is_empty() {
             div()
                 .flex_1()
@@ -234,6 +247,8 @@ impl Render for CiView {
             .on_action(cx.listener(Self::on_open))
             .on_action(cx.listener(Self::on_retry))
             .on_action(cx.listener(Self::on_toggle_attention))
+            .on_action(cx.listener(Self::on_toggle_workflow))
+            .on_action(cx.listener(Self::on_toggle_all_workflows))
             .on_action(cx.listener(Self::on_dismiss))
             .on_action(cx.listener(Self::on_leave))
             .child(self.render_toolbar(cx))

@@ -5,7 +5,8 @@
 //! Everything this view decides is decided in `rostrum_core::ci`: the grid
 //! ([`build_grid`]), cell movement ([`CiGrid::step`]), timing labels, which
 //! re-runs a check offers ([`rerun_targets`]) and the optimistic flip to
-//! queued. This module holds the entity, its keys, the horizontal scroll and
+//! queued, and which columns are drawn with workflows folded
+//! ([`ColumnLayout`]). This module holds the entity, its keys, the horizontal scroll and
 //! the re-run request.
 
 mod hscroll;
@@ -21,7 +22,8 @@ use gpui::{
 };
 use gpui_tokio::Tokio;
 use rostrum_core::ci::{
-    CellMove, CellRef, CiGrid, GridFilter, RerunTarget, build_grid, rerun_targets,
+    CellMove, CellRef, CiGrid, ColumnLayout, ColumnRef, Folds, GridFilter, RerunTarget, SlotRef,
+    build_grid, rerun_targets,
 };
 use rostrum_github::ci::RerunError;
 
@@ -40,6 +42,8 @@ actions!(
         OpenLog,
         Retry,
         ToggleAttention,
+        ToggleWorkflow,
+        ToggleAllWorkflows,
         Dismiss,
         LeaveCi,
     ]
@@ -61,6 +65,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("enter", OpenLog, Some(CI_CONTEXT)),
         KeyBinding::new("r", Retry, Some(CI_CONTEXT)),
         KeyBinding::new("f", ToggleAttention, Some(CI_CONTEXT)),
+        KeyBinding::new("space", ToggleWorkflow, Some(CI_CONTEXT)),
+        KeyBinding::new("e", ToggleAllWorkflows, Some(CI_CONTEXT)),
         KeyBinding::new("escape", Dismiss, Some(CI_CONTEXT)),
         KeyBinding::new("shift-c", LeaveCi, Some(CI_CONTEXT)),
     ]);
@@ -90,12 +96,18 @@ pub struct CiView {
     grid: Rc<CiGrid>,
     list: ListState,
     filter: GridFilter,
+    /// Which workflows are open. Every workflow starts folded into one
+    /// summary column, so the grid opens without scrolling sideways; kept
+    /// for the session, not saved.
+    folds: Folds,
+    /// The columns drawn under `folds`.
+    layout: ColumnLayout,
     /// How far the check columns (and their header) are scrolled left.
     hscroll: HScroll,
     /// Width the check columns were last drawn in, for revealing a selected
     /// column from a key press.
     columns_viewport: f32,
-    selected: Option<CellRef>,
+    selected: Option<SlotRef>,
     confirm: Option<PendingRerun>,
     /// The last re-run's outcome or refusal.
     notice: Option<(bool, String)>,
@@ -121,12 +133,16 @@ impl CiView {
         let filter = GridFilter::default();
         let grid = Rc::new(Self::build(&store, filter, cx));
         let list = ListState::new(grid.lines().len(), ListAlignment::Top, px(300.));
+        let folds = Folds::default();
+        let layout = ColumnLayout::new(&grid, &folds);
         Self {
             _subscriptions: vec![cx.observe(&store, |this, _, cx| this.rebuild(cx))],
             store,
             grid,
             list,
             filter,
+            folds,
+            layout,
             hscroll: HScroll::default(),
             columns_viewport: 0.,
             selected: None,
@@ -153,6 +169,7 @@ impl CiView {
             self.list
                 .splice(0..self.grid.lines().len(), grid.lines().len());
         }
+        self.layout = ColumnLayout::new(&grid, &self.folds);
         self.grid = Rc::new(grid);
         cx.notify();
     }
@@ -174,35 +191,103 @@ impl CiView {
         });
     }
 
-    /// Total width of the check columns.
+    /// Total width of the drawn columns.
     pub(crate) fn columns_width(&self) -> f32 {
-        CELL_WIDTH * self.grid.columns().len() as f32
+        CELL_WIDTH * self.layout.len() as f32
     }
 
-    fn select(&mut self, cell: CellRef, cx: &mut Context<Self>) {
-        if let Some(line) = self.grid.line_of(&cell) {
+    pub(crate) fn select(&mut self, slot: SlotRef, cx: &mut Context<Self>) {
+        let line = self
+            .grid
+            .rows()
+            .iter()
+            .position(|r| r.repo == slot.repo && r.number == slot.number)
+            .and_then(|row| {
+                self.grid
+                    .lines()
+                    .iter()
+                    .position(|line| *line == rostrum_core::ci::GridLine::Row { row })
+            });
+        if let Some(line) = line {
             self.list.scroll_to_reveal_item(line);
         }
-        if let Some(pos) = self.grid.position(&cell) {
+        if let Some(column) = self.layout.index_of(&self.grid, &slot.column) {
             self.hscroll.reveal(
-                CELL_WIDTH * pos.column as f32,
+                CELL_WIDTH * column as f32,
                 CELL_WIDTH,
                 self.columns_viewport,
             );
         }
-        self.selected = Some(cell);
+        self.selected = Some(slot);
         self.confirm = None;
         cx.notify();
     }
 
     fn step(&mut self, step: CellMove, cx: &mut Context<Self>) {
-        if let Some(cell) = self.grid.step(self.selected.as_ref(), step) {
-            self.select(cell, cx);
+        if let Some(slot) = self.layout.step(&self.grid, self.selected.as_ref(), step) {
+            self.select(slot, cx);
         }
     }
 
-    fn open_log(&mut self, cx: &mut Context<Self>) {
-        let Some(cell) = self.selected.clone() else {
+    /// Re-lay the columns after the folds changed, keeping the selection on
+    /// its row: on the summary its check folded into, or on the check that
+    /// needs attention in the workflow it opened.
+    fn refold(&mut self, cx: &mut Context<Self>) {
+        self.layout = ColumnLayout::new(&self.grid, &self.folds);
+        self.hscroll
+            .clamp(self.columns_width(), self.columns_viewport);
+        match self
+            .selected
+            .as_ref()
+            .and_then(|slot| self.layout.resolve(&self.grid, slot))
+        {
+            Some(slot) => self.select(slot, cx),
+            None => cx.notify(),
+        }
+    }
+
+    /// Open or fold one workflow, by name.
+    pub(crate) fn toggle_workflow(&mut self, workflow: &Option<String>, cx: &mut Context<Self>) {
+        self.folds.toggle(workflow);
+        self.refold(cx);
+    }
+
+    /// `space`: open the selected summary's workflow, or fold the selected
+    /// check's.
+    fn toggle_selected_workflow(&mut self, cx: &mut Context<Self>) {
+        let workflow = match self.selected.as_ref().map(|slot| &slot.column) {
+            Some(ColumnRef::Workflow(workflow)) => workflow.clone(),
+            Some(ColumnRef::Check(key)) => key.workflow.clone(),
+            None => return,
+        };
+        self.toggle_workflow(&workflow, cx);
+    }
+
+    /// `e`: fold everything when anything is open, else open everything.
+    pub(crate) fn toggle_all_workflows(&mut self, cx: &mut Context<Self>) {
+        if self.folds.any_open() {
+            self.folds.fold_all();
+        } else {
+            self.folds.open_all(&self.grid);
+        }
+        self.refold(cx);
+    }
+
+    /// `enter` or a double click: a check's log, or a folded workflow
+    /// opened.
+    pub(crate) fn open_selected(&mut self, cx: &mut Context<Self>) {
+        match self.selected.as_ref().map(|slot| slot.column.clone()) {
+            Some(ColumnRef::Workflow(workflow)) => {
+                self.folds.open(&workflow);
+                self.refold(cx);
+            }
+            Some(ColumnRef::Check(_)) => self.open_log(cx),
+            None => {}
+        }
+    }
+
+    pub(crate) fn open_log(&mut self, cx: &mut Context<Self>) {
+        let Some(cell) = self.selected.as_ref().and_then(SlotRef::cell) else {
             return;
         };
         let Some(entry) = self.grid.entry(&cell).cloned() else {
@@ -227,7 +312,15 @@ impl CiView {
     /// Ask to re-run the selected check: show the re-runs it offers, or why
     /// it offers none.
     fn ask_retry(&mut self, cx: &mut Context<Self>) {
-        let Some(cell) = self.selected.clone() else {
+        let Some(slot) = self.selected.as_ref() else {
+            return;
+        };
+        let Some(cell) = slot.cell() else {
+            self.notice = Some((
+                false,
+                "Open the workflow (space) to re-run one of its checks".into(),
+            ));
+            cx.notify();
             return;
         };
         let store = self.store.read(cx);
@@ -334,7 +427,7 @@ impl CiView {
             .and_then(|c| c.targets.first().copied())
         {
             Some(target) => self.rerun(target, cx),
-            None => self.open_log(cx),
+            None => self.open_selected(cx),
         }
     }
     fn on_retry(&mut self, _: &Retry, _: &mut Window, cx: &mut Context<Self>) {
@@ -342,6 +435,17 @@ impl CiView {
     }
     fn on_toggle_attention(&mut self, _: &ToggleAttention, _: &mut Window, cx: &mut Context<Self>) {
         self.toggle_attention(cx);
+    }
+    fn on_toggle_workflow(&mut self, _: &ToggleWorkflow, _: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_selected_workflow(cx);
+    }
+    fn on_toggle_all_workflows(
+        &mut self,
+        _: &ToggleAllWorkflows,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_all_workflows(cx);
     }
     fn on_dismiss(&mut self, _: &Dismiss, _: &mut Window, cx: &mut Context<Self>) {
         self.dismiss(cx);
