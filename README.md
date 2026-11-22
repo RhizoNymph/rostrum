@@ -50,6 +50,8 @@ cargo run -p rostrum --example review -- zed-industries/zed 62051
 bash scripts/install-rostrum.sh   # build, install to ~/.local/bin, register rostrum://
 ```
 
+After that, `make install` rebuilds and reinstalls just the binary.
+
 This also installs a desktop entry that makes rostrum the handler for
 `rostrum://pr?repo=owner%2Fname&number=42` and `rostrum://issue?…` links
 (Orchestral's "Open in Rostrum"). A link opens that pull request or issue in
